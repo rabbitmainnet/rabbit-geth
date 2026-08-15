@@ -19,6 +19,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -661,6 +662,17 @@ func (p *Peer) RequestTxs(hashes []common.Hash) error {
 	return p2p.Send(p.rw, GetPooledTransactionsMsg, &GetPooledTransactionsPacket{
 		RequestId:                    id,
 		GetPooledTransactionsRequest: hashes,
+	})
+}
+
+// SendNewBlock sends a freshly imported/mined block to the peer.
+func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
+	if block == nil || td == nil {
+		return nil
+	}
+	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket{
+		Block: block,
+		TD:    td,
 	})
 }
 

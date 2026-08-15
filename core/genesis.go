@@ -46,6 +46,37 @@ import (
 
 var errGenesisNoConfig = errors.New("genesis has no chain configuration")
 
+func validateRabbitGenesisConfig(cfg *params.ChainConfig) error {
+	if cfg == nil || cfg.LQC == nil {
+		return nil
+	}
+	if cfg.ChainID == nil || cfg.ChainID.Cmp(big.NewInt(928)) != 0 {
+		return errors.New("rabbit genesis requires chainId 928")
+	}
+	if cfg.Ethash != nil {
+		return errors.New("rabbit genesis cannot enable ethash")
+	}
+	if cfg.Clique != nil {
+		return errors.New("rabbit genesis cannot enable clique")
+	}
+	if cfg.LondonBlock == nil || cfg.LondonBlock.Cmp(common.Big0) != 0 {
+		return errors.New("rabbit genesis requires londonBlock = 0")
+	}
+	if cfg.LQC.CommitteeMin == 0 {
+		return errors.New("rabbit genesis requires lqc.committeeMin > 0")
+	}
+	if cfg.LQC.CommitteeMax < cfg.LQC.CommitteeMin {
+		return errors.New("rabbit genesis requires lqc.committeeMax >= lqc.committeeMin")
+	}
+	if cfg.LQC.FallbackSlots == 0 {
+		return errors.New("rabbit genesis requires lqc.fallbackSlots > 0")
+	}
+	if cfg.LQC.TargetBlockTimeMs == 0 {
+		return errors.New("rabbit genesis requires lqc.targetBlockTimeMs > 0")
+	}
+	return nil
+}
+
 // Deprecated: use types.Account instead.
 type GenesisAccount = types.Account
 
@@ -330,6 +361,11 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 	if genesis != nil && genesis.Config == nil {
 		return nil, common.Hash{}, nil, errGenesisNoConfig
 	}
+	if genesis != nil {
+		if err := validateRabbitGenesisConfig(genesis.Config); err != nil {
+			return nil, common.Hash{}, nil, err
+		}
+	}
 	// Commit the genesis if the database is empty
 	ghash := rawdb.ReadCanonicalHash(db, 0)
 	if (ghash == common.Hash{}) {
@@ -438,6 +474,9 @@ func LoadChainConfig(db ethdb.Database, genesis *Genesis) (cfg *params.ChainConf
 		// Reject invalid genesis spec without valid chain config
 		if genesis.Config == nil {
 			return nil, common.Hash{}, errGenesisNoConfig
+		}
+		if err := validateRabbitGenesisConfig(genesis.Config); err != nil {
+			return nil, common.Hash{}, err
 		}
 		// If the canonical genesis header is present, but the chain
 		// config is missing(initialize the empty leveldb with an

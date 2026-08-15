@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
@@ -94,6 +95,11 @@ type Config struct {
 	// zero, the chain ID is used as network ID.
 	NetworkId uint64
 	SyncMode  SyncMode
+
+	// WorkTicketLabTransport is an explicit, non-persistent laboratory switch.
+	// It is intentionally excluded from TOML and rejected for the frozen Rabbit
+	// mainnet genesis by the Ethereum backend.
+	WorkTicketLabTransport bool `toml:"-"`
 
 	// HistoryMode configures chain history retention.
 	HistoryMode history.HistoryMode
@@ -236,6 +242,11 @@ type Config struct {
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
+	if config.LQC != nil {
+		engine := lqc.New(config.LQC, db)
+		engine.SetChainID(config.ChainID)
+		return engine, nil
+	}
 	if config.TerminalTotalDifficulty == nil {
 		log.Error("Geth only supports PoS networks. Please transition legacy networks using Geth v1.13.x.")
 		return nil, errors.New("'terminalTotalDifficulty' is not set in genesis block")

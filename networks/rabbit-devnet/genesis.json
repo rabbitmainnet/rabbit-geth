@@ -1,0 +1,57 @@
+{
+  "config": {
+    "chainId": 928,
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "berlinBlock": 0,
+    "londonBlock": 0,
+    "lqc": {
+      "committeeMin": 32,
+      "committeeMax": 128,
+      "committeeRatioBps": 3000,
+      "fallbackSlots": 5,
+      "fallbackWindowMs": 3000,
+      "targetBlockTimeMs": 15000,
+      "eraLength": 8409600,
+      "proofType": "lighthash-v1",
+      "proofDifficulty": 100000,
+      "activityWindow": 128,
+      "epochLength": 128,
+      "registryMode": "bootstrap",
+      "openRegistry": true,
+      "bootstrapOnlyUntil": 0,
+      "minBond": 25,
+      "activationDelay": 0,
+      "heartbeatWindow": 64,
+      "heartbeatGrace": 16,
+      "committeeSize": 2,
+      "fallbackCount": 2,
+      "jailBlocks": 256,
+      "maxMissedTurns": 3,
+      "minorSlashBps": 500,
+      "majorSlashBps": 2000,
+      "bootstrapParticipants": [
+        "0xCBf75087D7c294205d5d5567Ff4B575Fcdc38F1E"
+      ]
+    }
+  },
+  "nonce": "0x0",
+  "timestamp": "0x0",
+  "extraData": "0x4c5553545f4445564e45545f47454e455349535f5631",
+  "gasLimit": "0x1c9c380",
+  "difficulty": "0x1",
+  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "baseFeePerGas": "0x3b9aca00",
+  "alloc": {
+    "0x7c9AA336B2325C1e34c0d00D9b7d6aaDa61D8080": {
+      "balance": "15000000000000000000000000"
+    }
+  }
+}

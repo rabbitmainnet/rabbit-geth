@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/forkid"
@@ -177,6 +178,85 @@ type BlockHeadersRLPResponse []rlp.RawValue
 type BlockHeadersRLPPacket struct {
 	RequestId uint64
 	BlockHeadersRLPResponse
+}
+
+// NewBlockPacket is the network packet used by Rabbit LQC to propagate a
+// freshly produced block to peers. Its custom decoder keeps the block body in
+// RawList form until item-count limits have been checked. This preserves the
+// delayed-decoding memory hardening used by the rest of eth/69+.
+type NewBlockPacket struct {
+	Block *types.Block
+	TD    *big.Int
+}
+
+const (
+	maxNewBlockTransactions = 1 << 18
+	maxNewBlockUncles       = 1 << 10
+	maxNewBlockWithdrawals  = 1 << 16
+)
+
+type newBlockPacketWire struct {
+	Block rlp.RawValue
+	TD    *big.Int
+}
+
+type newBlockWire struct {
+	Header       *types.Header
+	Transactions rlp.RawList[*types.Transaction]
+	Uncles       rlp.RawList[*types.Header]
+	Withdrawals  *rlp.RawList[*types.Withdrawal] `rlp:"optional"`
+}
+
+func (p *NewBlockPacket) DecodeRLP(s *rlp.Stream) error {
+	var packet newBlockPacketWire
+	if err := s.Decode(&packet); err != nil {
+		return err
+	}
+	var block newBlockWire
+	if err := rlp.DecodeBytes(packet.Block, &block); err != nil {
+		return fmt.Errorf("invalid new block: %w", err)
+	}
+	if block.Header == nil {
+		return errors.New("invalid new block: missing header")
+	}
+	if block.Transactions.Len() > maxNewBlockTransactions {
+		return fmt.Errorf("invalid new block: too many transactions: %d", block.Transactions.Len())
+	}
+	if block.Uncles.Len() > maxNewBlockUncles {
+		return fmt.Errorf("invalid new block: too many uncles: %d", block.Uncles.Len())
+	}
+	if block.Withdrawals != nil && block.Withdrawals.Len() > maxNewBlockWithdrawals {
+		return fmt.Errorf("invalid new block: too many withdrawals: %d", block.Withdrawals.Len())
+	}
+	txs, err := block.Transactions.Items()
+	if err != nil {
+		return fmt.Errorf("invalid new block transactions: %w", err)
+	}
+	uncles, err := block.Uncles.Items()
+	if err != nil {
+		return fmt.Errorf("invalid new block uncles: %w", err)
+	}
+	var withdrawals []*types.Withdrawal
+	if block.Withdrawals != nil {
+		withdrawals, err = block.Withdrawals.Items()
+		if err != nil {
+			return fmt.Errorf("invalid new block withdrawals: %w", err)
+		}
+	}
+	p.Block = types.NewBlockWithHeader(block.Header).WithBody(types.Body{
+		Transactions: txs,
+		Uncles:       uncles,
+		Withdrawals:  withdrawals,
+	})
+	p.TD = packet.TD
+	return nil
+}
+
+func (p *NewBlockPacket) EncodeRLP(w io.Writer) error {
+	return rlp.Encode(w, struct {
+		Block *types.Block
+		TD    *big.Int
+	}{Block: p.Block, TD: p.TD})
 }
 
 // GetBlockBodiesRequest represents a block body query.
@@ -358,6 +438,9 @@ func (*GetBlockHeadersRequest) Kind() byte   { return GetBlockHeadersMsg }
 
 func (*BlockHeadersRequest) Name() string { return "BlockHeaders" }
 func (*BlockHeadersRequest) Kind() byte   { return BlockHeadersMsg }
+
+func (*NewBlockPacket) Name() string { return "NewBlock" }
+func (*NewBlockPacket) Kind() byte   { return NewBlockMsg }
 
 func (*GetBlockBodiesRequest) Name() string { return "GetBlockBodies" }
 func (*GetBlockBodiesRequest) Kind() byte   { return GetBlockBodiesMsg }

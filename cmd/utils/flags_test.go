@@ -22,6 +22,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/miner"
 	"github.com/urfave/cli/v2"
 )
 
@@ -101,6 +104,26 @@ func TestIsNetworkPresetUsesFlagValue(t *testing.T) {
 				t.Fatalf("IsNetworkPreset() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRabbitMiningFlagsConfigureProducer(t *testing.T) {
+	producer := "0x1000000000000000000000000000000000000001"
+	ctx := newTestContext(t, []string{
+		"--mine",
+		"--miner.pending.feeRecipient", producer,
+	}, MiningEnabledFlag, MinerPendingFeeRecipientFlag)
+
+	var mining miner.Config
+	setMiner(ctx, &mining)
+	if !mining.Enabled {
+		t.Fatal("--mine did not enable Rabbit LQC production")
+	}
+
+	var ethcfg ethconfig.Config
+	setEtherbase(ctx, &ethcfg)
+	if ethcfg.Miner.PendingFeeRecipient != common.HexToAddress(producer) {
+		t.Fatalf("producer = %s, want %s", ethcfg.Miner.PendingFeeRecipient, producer)
 	}
 }
 

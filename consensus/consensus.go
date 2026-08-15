@@ -55,6 +55,37 @@ type ChainReader interface {
 	GetBlock(hash common.Hash, number uint64) *types.Block
 }
 
+// LocalParticipant describes the local account selected by the
+// consensus engine and its deterministic position in the producer queue.
+type LocalParticipant struct {
+	Address  common.Address
+	QueuePos int
+	Allowed  bool
+}
+
+// LocalParticipantResolver is an optional interface implemented by
+// consensus engines capable of resolving the local participant from
+// the node's local accounts.
+type LocalParticipantResolver interface {
+	ResolveLocalParticipant(
+		chain ChainHeaderReader,
+		header *types.Header,
+		accounts []common.Address,
+	) LocalParticipant
+}
+
+// HeaderSignerFn signs the exact consensus-defined byte payload for a block
+// producer. Implementations must return a canonical 65-byte secp256k1
+// signature with recovery id 0 or 1.
+type HeaderSignerFn func(address common.Address, payload []byte) ([]byte, error)
+
+// HeaderSealer is implemented by engines that cryptographically bind a block
+// header to the selected producer account after execution has finalized every
+// signed header field, including the state and transaction roots.
+type HeaderSealer interface {
+	SealHeader(chainID *big.Int, header *types.Header, sign HeaderSignerFn) (*types.Header, error)
+}
+
 // Engine is an algorithm agnostic consensus engine.
 type Engine interface {
 	// Author retrieves the Ethereum address of the account that minted the given

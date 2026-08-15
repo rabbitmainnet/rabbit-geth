@@ -23,8 +23,132 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRabbitConsensusEraLength(t *testing.T) {
+	const want = uint64(8_409_600)
+	for name, config := range map[string]*ChainConfig{
+		"mainnet": RabbitChainConfig,
+		"devnet":  RabbitDevnetChainConfig,
+	} {
+		if config.LQC == nil {
+			t.Fatalf("%s has no LQC config", name)
+		}
+		if config.LQC.EraLength != want {
+			t.Fatalf("%s era length = %d, want %d", name, config.LQC.EraLength, want)
+		}
+	}
+}
+
+func TestRabbitRegistryProtocolConfigValidation(t *testing.T) {
+	participant := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	valid := &ChainConfig{LQC: &LQCConfig{
+		RegistryProtocolBlock: 1,
+		ProofDifficulty:       1,
+		BootstrapParticipants: []common.Address{participant},
+	}}
+	if err := valid.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("valid registry configuration rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		config *LQCConfig
+	}{
+		{
+			name: "zero proof difficulty",
+			config: &LQCConfig{
+				RegistryProtocolBlock: 1,
+				BootstrapParticipants: []common.Address{participant},
+			},
+		},
+		{
+			name: "missing bootstrap participants",
+			config: &LQCConfig{
+				RegistryProtocolBlock: 1,
+				ProofDifficulty:       1,
+			},
+		},
+		{
+			name: "zero bootstrap address",
+			config: &LQCConfig{
+				RegistryProtocolBlock: 1,
+				ProofDifficulty:       1,
+				BootstrapParticipants: []common.Address{{}},
+			},
+		},
+		{
+			name: "duplicate bootstrap address",
+			config: &LQCConfig{
+				RegistryProtocolBlock: 1,
+				ProofDifficulty:       1,
+				BootstrapParticipants: []common.Address{participant, participant},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := (&ChainConfig{LQC: test.config}).CheckConfigForkOrder(); err == nil {
+				t.Fatal("invalid registry configuration accepted")
+			}
+		})
+	}
+
+	// Disabled remains backward compatible and imposes no new genesis fields.
+	if err := (&ChainConfig{LQC: &LQCConfig{}}).CheckConfigForkOrder(); err != nil {
+		t.Fatalf("disabled registry protocol rejected: %v", err)
+	}
+}
+
+func TestRabbitRegistryProtocolConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{LQC: &LQCConfig{RegistryProtocolBlock: activation}}
+	}
+	if err := config(10).CheckCompatible(config(20), 9, 0); err != nil {
+		t.Fatalf("future activation change rejected before either fork: %v", err)
+	}
+	err := config(10).CheckCompatible(config(20), 20, 0)
+	if err == nil || err.What != "LQC registry protocol fork block" || err.RewindToBlock != 9 {
+		t.Fatalf("unexpected registry compatibility error: %+v", err)
+	}
+	if err := config(0).CheckCompatible(config(0), 1_000, 0); err != nil {
+		t.Fatalf("disabled registry configuration is incompatible with itself: %v", err)
+	}
+
+	stored := &ChainConfig{LQC: &LQCConfig{
+		RegistryProtocolBlock: 10,
+		ProofDifficulty:       100,
+		BootstrapParticipants: []common.Address{
+			common.HexToAddress("0x1000000000000000000000000000000000000001"),
+			common.HexToAddress("0x2000000000000000000000000000000000000002"),
+		},
+	}}
+	changedRules := &ChainConfig{LQC: &LQCConfig{
+		RegistryProtocolBlock: 10,
+		ProofDifficulty:       101,
+		BootstrapParticipants: append([]common.Address(nil), stored.LQC.BootstrapParticipants...),
+	}}
+	if err := stored.CheckCompatible(changedRules, 9, 0); err != nil {
+		t.Fatalf("future rule change rejected before activation: %v", err)
+	}
+	err = stored.CheckCompatible(changedRules, 10, 0)
+	if err == nil || err.What != "LQC registry protocol rules" || err.RewindToBlock != 9 {
+		t.Fatalf("unexpected registry-rules compatibility error: %+v", err)
+	}
+	reordered := &ChainConfig{LQC: &LQCConfig{
+		RegistryProtocolBlock: 10,
+		ProofDifficulty:       100,
+		BootstrapParticipants: []common.Address{
+			stored.LQC.BootstrapParticipants[1],
+			stored.LQC.BootstrapParticipants[0],
+		},
+	}}
+	if err := stored.CheckCompatible(reordered, 10, 0); err != nil {
+		t.Fatalf("canonical bootstrap reordering should be compatible: %v", err)
+	}
+}
 
 func TestCheckCompatible(t *testing.T) {
 	type test struct {

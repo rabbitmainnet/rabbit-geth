@@ -22,6 +22,7 @@ import (
 	"errors"
 	"maps"
 	"math"
+	"math/big"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -132,6 +133,16 @@ type handler struct {
 	networkID uint64
 	synced    atomic.Bool // Flag whether we're considered synchronised (enables transaction processing)
 
+	// LQC fork recovery is coordinated separately from the normal downloader.
+	// Multiple honest producers may announce competing heads during fallback
+	// windows. Keep the best pending target instead of dropping it merely because
+	// another recovery is already running.
+	lqcSyncMu      sync.Mutex
+	lqcSyncRunning bool
+	lqcSyncCurrent *lqcSyncTarget
+	lqcSyncPending *lqcSyncTarget
+	lqcSyncWake    chan struct{}
+
 	database ethdb.Database
 	txpool   txPool
 	blobpool blobPool
@@ -173,6 +184,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		txBroadcastKey: newBroadcastChoiceKey(),
 		requiredBlocks: config.RequiredBlocks,
 		quitSync:       make(chan struct{}),
+		lqcSyncWake:    make(chan struct{}, 1),
 		handlerDoneCh:  make(chan struct{}),
 		handlerStartCh: make(chan struct{}),
 	}
@@ -342,6 +354,28 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 			return err
 		}
 	}
+
+	if cfg := h.chain.Config(); cfg != nil && cfg.LQC != nil {
+		msg := h.blockRange.currentRange()
+		if msg.LatestBlock > 0 {
+			go func(p *eth.Peer, m eth.BlockRangeUpdatePacket) {
+				time.Sleep(1500 * time.Millisecond)
+				p.Log().Info("LQC bootstrap delayed block range to new peer",
+					"latest", m.LatestBlock,
+					"hash", m.LatestBlockHash,
+				)
+				if err := p.SendBlockRangeUpdate(m); err != nil {
+					p.Log().Warn("LQC bootstrap delayed block range failed", "err", err)
+				}
+			}(peer, msg)
+		} else {
+			peer.Log().Info("LQC bootstrap skipped zero block range",
+				"latest", msg.LatestBlock,
+				"hash", msg.LatestBlockHash,
+			)
+		}
+	}
+
 	// Propagate existing transactions. new transactions appearing
 	// after this will be sent via broadcasts.
 	h.syncTransactions(peer)
@@ -620,22 +654,48 @@ func newBlockRangeState(chain *core.BlockChain, dl *downloader.Downloader) *bloc
 // about imported blocks.
 func (h *handler) blockRangeLoop(st *blockRangeState) {
 	defer h.wg.Done()
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
 
 	for {
 		select {
 		case ev := <-st.syncCh:
 			if ev.Type == downloader.SyncStarted && ev.Mode == ethconfig.SnapSync {
+				if cfg := h.chain.Config(); cfg != nil && cfg.LQC != nil {
+					continue
+				}
 				h.blockRangeWhileSnapSyncing(st)
 			}
 		case <-st.headCh:
 			st.update(h.chain, h.chain.CurrentBlock())
-			if st.shouldSend() {
+			if h.shouldBroadcastBlockRange(st) {
 				h.broadcastBlockRange(st)
+				h.broadcastCurrentLQCBlock()
+			}
+		case <-tick.C:
+			st.update(h.chain, h.chain.CurrentBlock())
+			if h.shouldBroadcastBlockRange(st) {
+				h.broadcastBlockRange(st)
+				h.broadcastCurrentLQCBlock()
 			}
 		case <-st.headSub.Err():
 			return
 		}
 	}
+}
+
+func (h *handler) shouldBroadcastBlockRange(st *blockRangeState) bool {
+	if st.shouldSend() {
+		return true
+	}
+	cfg := h.chain.Config()
+	if cfg == nil || cfg.LQC == nil {
+		return false
+	}
+	curr := st.currentRange()
+	return curr.EarliestBlock != st.prev.EarliestBlock ||
+		curr.LatestBlock != st.prev.LatestBlock ||
+		curr.LatestBlockHash != st.prev.LatestBlockHash
 }
 
 // blockRangeWhileSnapSyncing announces block range updates during snap sync.
@@ -664,6 +724,40 @@ func (h *handler) blockRangeWhileSnapSyncing(st *blockRangeState) {
 	}
 }
 
+func (h *handler) broadcastCurrentLQCBlock() {
+	cfg := h.chain.Config()
+	if cfg == nil || cfg.LQC == nil {
+		return
+	}
+
+	head := h.chain.CurrentBlock()
+	if head == nil || head.Number == nil {
+		return
+	}
+
+	block := h.chain.GetBlock(head.Hash(), head.Number.Uint64())
+	if block == nil {
+		return
+	}
+
+	td := new(big.Int).SetUint64(block.NumberU64())
+	if td.Sign() == 0 {
+		td = big.NewInt(1)
+	}
+
+	h.peers.lock.Lock()
+	peerlist := slices.Collect(maps.Values(h.peers.peers))
+	h.peers.lock.Unlock()
+	if len(peerlist) == 0 {
+		return
+	}
+
+	log.Info("Sending NewBlock", "peers", len(peerlist), "number", block.NumberU64(), "hash", block.Hash())
+	for _, p := range peerlist {
+		_ = p.SendNewBlock(block, td)
+	}
+}
+
 // broadcastBlockRange sends a range update when one is due.
 func (h *handler) broadcastBlockRange(state *blockRangeState) {
 	h.peers.lock.Lock()
@@ -673,7 +767,7 @@ func (h *handler) broadcastBlockRange(state *blockRangeState) {
 		return
 	}
 	msg := state.currentRange()
-	log.Debug("Sending BlockRangeUpdate", "peers", len(peerlist), "earliest", msg.EarliestBlock, "latest", msg.LatestBlock)
+	log.Info("Sending BlockRangeUpdate", "peers", len(peerlist), "earliest", msg.EarliestBlock, "latest", msg.LatestBlock)
 	for _, p := range peerlist {
 		p.SendBlockRangeUpdate(msg)
 	}

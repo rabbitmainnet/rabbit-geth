@@ -271,6 +271,90 @@ var (
 		Clique:                  &CliqueConfig{Period: 0, Epoch: 30000},
 	}
 
+	// RabbitChainConfig contains the chain parameters for Rabbit Chain mainnet.
+	RabbitChainConfig = &ChainConfig{
+		ChainID:                 big.NewInt(928),
+		HomesteadBlock:          big.NewInt(0),
+		DAOForkBlock:            nil,
+		DAOForkSupport:          false,
+		EIP150Block:             big.NewInt(0),
+		EIP155Block:             big.NewInt(0),
+		EIP158Block:             big.NewInt(0),
+		ByzantiumBlock:          big.NewInt(0),
+		ConstantinopleBlock:     big.NewInt(0),
+		PetersburgBlock:         big.NewInt(0),
+		IstanbulBlock:           big.NewInt(0),
+		MuirGlacierBlock:        nil,
+		BerlinBlock:             big.NewInt(0),
+		LondonBlock:             big.NewInt(0),
+		ArrowGlacierBlock:       nil,
+		GrayGlacierBlock:        nil,
+		MergeNetsplitBlock:      nil,
+		ShanghaiTime:            nil,
+		CancunTime:              nil,
+		PragueTime:              nil,
+		OsakaTime:               nil,
+		TerminalTotalDifficulty: nil,
+		Ethash:                  nil,
+		Clique:                  nil,
+		LQC: &LQCConfig{
+			CommitteeMin:      32,
+			CommitteeMax:      128,
+			CommitteeRatioBps: 3000,
+			FallbackSlots:     5,
+			FallbackWindowMs:  3000,
+			TargetBlockTimeMs: 10000,
+			EraLength:         8409600,
+			ProofType:         "lighthash-v1",
+			ProofDifficulty:   100000,
+			ActivityWindow:    128,
+			EpochLength:       128,
+			RegistryMode:      "native",
+		},
+	}
+
+	// RabbitDevnetChainConfig contains the chain parameters for Rabbit Chain devnet.
+	RabbitDevnetChainConfig = &ChainConfig{
+		ChainID:                 big.NewInt(6923),
+		HomesteadBlock:          big.NewInt(0),
+		DAOForkBlock:            nil,
+		DAOForkSupport:          false,
+		EIP150Block:             big.NewInt(0),
+		EIP155Block:             big.NewInt(0),
+		EIP158Block:             big.NewInt(0),
+		ByzantiumBlock:          big.NewInt(0),
+		ConstantinopleBlock:     big.NewInt(0),
+		PetersburgBlock:         big.NewInt(0),
+		IstanbulBlock:           big.NewInt(0),
+		MuirGlacierBlock:        nil,
+		BerlinBlock:             big.NewInt(0),
+		LondonBlock:             big.NewInt(0),
+		ArrowGlacierBlock:       nil,
+		GrayGlacierBlock:        nil,
+		MergeNetsplitBlock:      nil,
+		ShanghaiTime:            nil,
+		CancunTime:              nil,
+		PragueTime:              nil,
+		OsakaTime:               nil,
+		TerminalTotalDifficulty: nil,
+		Ethash:                  nil,
+		Clique:                  nil,
+		LQC: &LQCConfig{
+			CommitteeMin:      32,
+			CommitteeMax:      128,
+			CommitteeRatioBps: 3000,
+			FallbackSlots:     5,
+			FallbackWindowMs:  3000,
+			TargetBlockTimeMs: 10000,
+			EraLength:         8409600,
+			ProofType:         "lighthash-v1",
+			ProofDifficulty:   100000,
+			ActivityWindow:    128,
+			EpochLength:       128,
+			RegistryMode:      "native",
+		},
+	}
+
 	// TestChainConfig contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers for testing purposes.
 	TestChainConfig = &ChainConfig{
@@ -416,10 +500,12 @@ var (
 
 // NetworkNames are user friendly names to use in the chain spec banner.
 var NetworkNames = map[string]string{
-	MainnetChainConfig.ChainID.String(): "mainnet",
-	SepoliaChainConfig.ChainID.String(): "sepolia",
-	HoleskyChainConfig.ChainID.String(): "holesky",
-	HoodiChainConfig.ChainID.String():   "hoodi",
+	MainnetChainConfig.ChainID.String():      "mainnet",
+	SepoliaChainConfig.ChainID.String():      "sepolia",
+	HoleskyChainConfig.ChainID.String():      "holesky",
+	HoodiChainConfig.ChainID.String():        "hoodi",
+	RabbitChainConfig.ChainID.String():       "rabbit",
+	RabbitDevnetChainConfig.ChainID.String(): "rabbit-devnet",
 }
 
 // ChainConfig is the core config which determines the blockchain settings.
@@ -488,6 +574,7 @@ type ChainConfig struct {
 	// Various consensus engines
 	Ethash             *EthashConfig       `json:"ethash,omitempty"`
 	Clique             *CliqueConfig       `json:"clique,omitempty"`
+	LQC                *LQCConfig          `json:"lqc,omitempty"`
 	BlobScheduleConfig *BlobScheduleConfig `json:"blobSchedule,omitempty"`
 }
 
@@ -508,6 +595,144 @@ type CliqueConfig struct {
 // String implements the stringer interface, returning the consensus engine details.
 func (c CliqueConfig) String() string {
 	return fmt.Sprintf("clique(period: %d, epoch: %d)", c.Period, c.Epoch)
+}
+
+// LQCConfig is the consensus engine config for Rabbit Queue Consensus.
+type LQCConfig struct {
+	CommitteeMin          uint64           `json:"committeeMin"`
+	CommitteeMax          uint64           `json:"committeeMax"`
+	CommitteeRatioBps     uint64           `json:"committeeRatioBps"`
+	FallbackSlots         uint64           `json:"fallbackSlots"`
+	FallbackWindowMs      uint64           `json:"fallbackWindowMs"`
+	TargetBlockTimeMs     uint64           `json:"targetBlockTimeMs"`
+	EraLength             uint64           `json:"eraLength"`
+	ProofType             string           `json:"proofType"`
+	ProofDifficulty       uint64           `json:"proofDifficulty"`
+	ActivityWindow        uint64           `json:"activityWindow"`
+	EpochLength           uint64           `json:"epochLength"`
+	RegistryMode          string           `json:"registryMode"`
+	BootstrapParticipants []common.Address `json:"bootstrapParticipants,omitempty"`
+	RegistryProtocolBlock uint64           `json:"registryProtocolBlock,omitempty"`
+
+	OpenRegistry       bool     `json:"openRegistry,omitempty"`
+	BootstrapOnlyUntil uint64   `json:"bootstrapOnlyUntil,omitempty"`
+	MinBond            *big.Int `json:"minBond,omitempty"`
+	ActivationDelay    uint64   `json:"activationDelay,omitempty"`
+	HeartbeatWindow    uint64   `json:"heartbeatWindow,omitempty"`
+	HeartbeatGrace     uint64   `json:"heartbeatGrace,omitempty"`
+	CommitteeSize      uint64   `json:"committeeSize,omitempty"`
+	FallbackCount      uint64   `json:"fallbackCount,omitempty"`
+	JailBlocks         uint64   `json:"jailBlocks,omitempty"`
+	MaxMissedTurns     uint64   `json:"maxMissedTurns,omitempty"`
+	MinorSlashBps      uint64   `json:"minorSlashBps,omitempty"`
+	MajorSlashBps      uint64   `json:"majorSlashBps,omitempty"`
+}
+
+// registryProtocolForkBlock converts the LQC registry activation into the
+// generic fork representation used by the chain-config compatibility checks.
+// Zero deliberately means "disabled", not activation at genesis.
+func (c *LQCConfig) registryProtocolForkBlock() *big.Int {
+	if c == nil || c.RegistryProtocolBlock == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.RegistryProtocolBlock)
+}
+
+func (c *LQCConfig) validateRegistryProtocol() error {
+	if c == nil || c.RegistryProtocolBlock == 0 {
+		return nil
+	}
+	if c.ProofDifficulty == 0 {
+		return errors.New("registryProtocolBlock requires non-zero proofDifficulty")
+	}
+	if len(c.BootstrapParticipants) == 0 {
+		return errors.New("registryProtocolBlock requires bootstrapParticipants")
+	}
+	seen := make(map[common.Address]struct{}, len(c.BootstrapParticipants))
+	for index, participant := range c.BootstrapParticipants {
+		if participant == (common.Address{}) {
+			return fmt.Errorf("bootstrapParticipants[%d] is the zero address", index)
+		}
+		if _, exists := seen[participant]; exists {
+			return fmt.Errorf("bootstrapParticipants[%d] duplicates %s", index, participant)
+		}
+		seen[participant] = struct{}{}
+	}
+	return nil
+}
+
+func (c *LQCConfig) registryProtocolRulesEqual(other *LQCConfig) bool {
+	if c == nil || other == nil {
+		return c == other
+	}
+
+	// RegistryProtocolBlock is checked separately by checkCompatible.
+	// Every other LQC field that can define or later influence protocol
+	// behaviour is frozen once the registry protocol is active.
+	if c.ProofType != other.ProofType ||
+		c.ProofDifficulty != other.ProofDifficulty ||
+		c.ActivityWindow != other.ActivityWindow ||
+		c.EpochLength != other.EpochLength ||
+		c.RegistryMode != other.RegistryMode ||
+		c.OpenRegistry != other.OpenRegistry ||
+		c.BootstrapOnlyUntil != other.BootstrapOnlyUntil ||
+		c.ActivationDelay != other.ActivationDelay ||
+		c.HeartbeatWindow != other.HeartbeatWindow ||
+		c.HeartbeatGrace != other.HeartbeatGrace ||
+		c.CommitteeMin != other.CommitteeMin ||
+		c.CommitteeMax != other.CommitteeMax ||
+		c.CommitteeSize != other.CommitteeSize ||
+		c.CommitteeRatioBps != other.CommitteeRatioBps ||
+		c.FallbackSlots != other.FallbackSlots ||
+		c.FallbackCount != other.FallbackCount ||
+		c.FallbackWindowMs != other.FallbackWindowMs ||
+		c.TargetBlockTimeMs != other.TargetBlockTimeMs ||
+		c.EraLength != other.EraLength ||
+		c.JailBlocks != other.JailBlocks ||
+		c.MaxMissedTurns != other.MaxMissedTurns ||
+		c.MinorSlashBps != other.MinorSlashBps ||
+		c.MajorSlashBps != other.MajorSlashBps ||
+		len(c.BootstrapParticipants) != len(other.BootstrapParticipants) {
+		return false
+	}
+
+	if (c.MinBond == nil) != (other.MinBond == nil) {
+		return false
+	}
+	if c.MinBond != nil && c.MinBond.Cmp(other.MinBond) != 0 {
+		return false
+	}
+
+	// Bootstrap participant order is not a protocol rule; membership is.
+	participants := make(map[common.Address]struct{}, len(c.BootstrapParticipants))
+	for _, participant := range c.BootstrapParticipants {
+		participants[participant] = struct{}{}
+	}
+	for _, participant := range other.BootstrapParticipants {
+		if _, exists := participants[participant]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+// String implements the stringer interface, returning the consensus engine details.
+func (c LQCConfig) String() string {
+	return fmt.Sprintf("lqc(committeeMin: %d, committeeMax: %d, committeeRatioBps: %d, fallbackSlots: %d, fallbackWindowMs: %d, targetBlockTimeMs: %d, eraLength: %d, proofType: %s, proofDifficulty: %d, activityWindow: %d, epochLength: %d, registryMode: %s, registryProtocolBlock: %d)",
+		c.CommitteeMin,
+		c.CommitteeMax,
+		c.CommitteeRatioBps,
+		c.FallbackSlots,
+		c.FallbackWindowMs,
+		c.TargetBlockTimeMs,
+		c.EraLength,
+		c.ProofType,
+		c.ProofDifficulty,
+		c.ActivityWindow,
+		c.EpochLength,
+		c.RegistryMode,
+		c.RegistryProtocolBlock,
+	)
 }
 
 // String implements the fmt.Stringer interface, returning a string representation
@@ -599,6 +824,9 @@ func (c *ChainConfig) String() string {
 	if c.UBTTime != nil {
 		result += fmt.Sprintf(", UBTTime: %v", *c.UBTTime)
 	}
+	if c.LQC != nil {
+		result += fmt.Sprintf(", LQC: %s", c.LQC.String())
+	}
 	result += "}"
 	return result
 }
@@ -614,6 +842,8 @@ func (c *ChainConfig) Description() string {
 	}
 	banner += fmt.Sprintf("Chain ID:  %v (%s)\n", c.ChainID, network)
 	switch {
+	case c.LQC != nil:
+		banner += "Consensus: LQC (Rabbit Queue Consensus)\n"
 	case c.Ethash != nil:
 		banner += "Consensus: Beacon (proof-of-stake), merged from Ethash (proof-of-work)\n"
 	case c.Clique != nil:
@@ -928,6 +1158,9 @@ func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64, time u
 // CheckConfigForkOrder checks that we don't "skip" any forks, geth isn't pluggable enough
 // to guarantee that forks can be implemented in a different order than on official networks
 func (c *ChainConfig) CheckConfigForkOrder() error {
+	if err := c.LQC.validateRegistryProtocol(); err != nil {
+		return fmt.Errorf("invalid LQC registry configuration: %v", err)
+	}
 	type fork struct {
 		name      string
 		block     *big.Int // forks up to - and including the merge - were defined with block numbers
@@ -1046,6 +1279,15 @@ func (bc *BlobConfig) validate() error {
 }
 
 func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, headTimestamp uint64) *ConfigCompatError {
+	storedRegistryFork := c.LQC.registryProtocolForkBlock()
+	newRegistryFork := newcfg.LQC.registryProtocolForkBlock()
+	if isForkBlockIncompatible(storedRegistryFork, newRegistryFork, headNumber) {
+		return newBlockCompatError("LQC registry protocol fork block", storedRegistryFork, newRegistryFork)
+	}
+	if (isBlockForked(storedRegistryFork, headNumber) || isBlockForked(newRegistryFork, headNumber)) &&
+		!c.LQC.registryProtocolRulesEqual(newcfg.LQC) {
+		return newBlockCompatError("LQC registry protocol rules", storedRegistryFork, newRegistryFork)
+	}
 	if isForkBlockIncompatible(c.HomesteadBlock, newcfg.HomesteadBlock, headNumber) {
 		return newBlockCompatError("Homestead fork block", c.HomesteadBlock, newcfg.HomesteadBlock)
 	}

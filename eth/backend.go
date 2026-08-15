@@ -18,8 +18,10 @@
 package eth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -31,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/history"
@@ -84,11 +87,83 @@ const (
 	// maxParallelENRRequests is the maximum number of parallel ENR requests that can be
 	// performed by a disc/v4 source.
 	maxParallelENRRequests = 16
+
+	// LQC nodes produce and import blocks without the downloader completing a
+	// traditional Ethereum sync cycle. A recent non-genesis head proves that the
+	// execution state is live enough to enable inbound transaction relay.
+	lqcHeadFreshness       = 10 * time.Minute
+	lqcHeadFutureTolerance = 30 * time.Second
 )
 
 // Config contains the configuration options of the ETH protocol.
 // Deprecated: use ethconfig.Config instead.
 type Config = ethconfig.Config
+
+const frozenRabbitMainnetGenesisMarker = "RABBIT_MAINNET_GENESIS_V1"
+
+func isFrozenRabbitMainnet(
+	chainConfig *params.ChainConfig,
+	genesis *types.Block,
+) bool {
+	return chainConfig != nil &&
+		chainConfig.ChainID != nil &&
+		chainConfig.ChainID.Cmp(big.NewInt(928)) == 0 &&
+		genesis != nil &&
+		bytes.Equal(
+			genesis.Extra(),
+			[]byte(frozenRabbitMainnetGenesisMarker),
+		)
+}
+
+func validateLQCWorkTicketLabTransport(config *ethconfig.Config, chainConfig *params.ChainConfig, genesis *types.Block) error {
+	if config == nil || !config.WorkTicketLabTransport {
+		return nil
+	}
+	if chainConfig == nil || chainConfig.ChainID == nil || chainConfig.LQC == nil {
+		return errors.New("lqc work-ticket laboratory transport requires an LQC chain")
+	}
+	if genesis == nil {
+		return errors.New("lqc work-ticket laboratory transport requires a genesis block")
+	}
+	if isFrozenRabbitMainnet(chainConfig, genesis) {
+		return errors.New("lqc work-ticket laboratory transport is forbidden on the frozen Rabbit mainnet genesis")
+	}
+	return nil
+}
+
+func lqcWorkV1TransportActivation(
+	config *ethconfig.Config,
+	chainConfig *params.ChainConfig,
+	genesis *types.Block,
+) (enabled bool, production bool, err error) {
+	if config == nil {
+		return false, false, errors.New("missing eth configuration")
+	}
+	if config.WorkTicketLabTransport {
+		if err := validateLQCWorkTicketLabTransport(
+			config,
+			chainConfig,
+			genesis,
+		); err != nil {
+			return false, false, err
+		}
+		return true, false, nil
+	}
+	if !isFrozenRabbitMainnet(chainConfig, genesis) {
+		return false, false, nil
+	}
+	if chainConfig.LQC == nil {
+		return false, false, errors.New(
+			"frozen Rabbit mainnet requires LQC consensus",
+		)
+	}
+	if !lqc.WorkV1ProductionEnabled() {
+		return false, false, errors.New(
+			"frozen Rabbit mainnet requires a production Work V1 build",
+		)
+	}
+	return true, true, nil
+}
 
 // Ethereum implements the Ethereum full node service.
 type Ethereum struct {
@@ -100,9 +175,12 @@ type Ethereum struct {
 	localTxTracker *locals.TxTracker
 	blockchain     *core.BlockChain
 
-	handler *handler
-	discmix *enode.FairMix
-	dropper *dropper
+	handler             *handler
+	registryNetwork     *lqcRegistryNetwork
+	workTicketTransport *lqcWorkTicketTransport
+	workV1Transport     *lqcWorkV1Transport
+	discmix             *enode.FairMix
+	dropper             *dropper
 
 	// DB interfaces
 	chainDb ethdb.Database // Block chain database
@@ -299,6 +377,50 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+	if lqcEngine, ok := eth.engine.(*lqc.LQC); ok && chainConfig.LQC != nil && chainConfig.LQC.RegistryProtocolBlock > 0 {
+		eth.registryNetwork = newLQCRegistryNetwork(lqcEngine, eth.blockchain, networkID)
+	}
+	workV1Enabled, workV1Production, err := lqcWorkV1TransportActivation(
+		config,
+		chainConfig,
+		eth.blockchain.Genesis(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if workV1Enabled {
+		lqcEngine, ok := eth.engine.(*lqc.LQC)
+		if !ok || lqcEngine == nil {
+			return nil, errors.New("LQC Work V1 transport requires LQC engine")
+		}
+		transport, err := newLQCWorkV1BackendTransport(
+			eth.blockchain,
+			lqcEngine,
+			chainConfig.ChainID,
+			networkID,
+			eth.chainDb,
+		)
+		if err != nil {
+			return nil, err
+		}
+		eth.workV1Transport = transport
+		if err := wireWorkV1EngineTicketProviderMaybeLab(
+			eth,
+			transport,
+		); err != nil {
+			transport.Close()
+			return nil, err
+		}
+		log.Info(
+			"LQC Work V1 RandomX transport enabled",
+			"protocol", lqcWorkV1ProtocolName,
+			"production", workV1Production,
+			"network", networkID,
+			"genesis", eth.blockchain.Genesis().Hash(),
+			"difficulty", "canonical-runtime",
+			"eligibility", "historical-registry",
+		)
+	}
 
 	// Initialize filtermaps log index.
 	fmConfig := filtermaps.Config{
@@ -412,6 +534,15 @@ func makeExtraData(extra []byte) []byte {
 // NOTE, some of these services probably need to be moved to somewhere else.
 func (s *Ethereum) APIs() []rpc.API {
 	apis := ethapi.GetAPIs(s.APIBackend)
+	if s.registryNetwork != nil {
+		apis = append(apis, rpc.API{Namespace: "lqc", Service: NewLQCRegistryAPI(s)})
+	}
+	if s.workTicketTransport != nil {
+		apis = append(apis, rpc.API{Namespace: "lqc", Service: newLQCWorkTicketTransportAPI(s.workTicketTransport)})
+	}
+	if s.workV1Transport != nil {
+		apis = append(apis, rpc.API{Namespace: "lqc", Service: newLQCWorkV1API(s.workV1Transport)})
+	}
 
 	// Append all the local APIs and return
 	return append(apis, []rpc.API{
@@ -459,6 +590,15 @@ func (s *Ethereum) EngineMaxReorgDepth() uint64        { return s.config.EngineM
 // network protocols to start.
 func (s *Ethereum) Protocols() []p2p.Protocol {
 	protos := eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.discmix)
+	if s.registryNetwork != nil {
+		protos = append(protos, s.registryNetwork.Protocol())
+	}
+	if s.workTicketTransport != nil {
+		protos = append(protos, s.workTicketTransport.Protocol())
+	}
+	if s.workV1Transport != nil {
+		protos = append(protos, s.workV1Transport.Protocol())
+	}
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.config.SnapV2)...)
 	}
@@ -488,7 +628,54 @@ func (s *Ethereum) Start() error {
 	// start log indexer
 	s.filterMaps.Start()
 	go s.updateFilterMapsHeads()
+
+	if s.blockchain != nil && s.blockchain.Config() != nil && s.blockchain.Config().LQC != nil && s.miner != nil {
+		go s.enableLQCTransactionRelayWhenReady()
+		if s.config != nil && s.config.Miner.Enabled {
+			s.miner.StartLQCDevnet()
+		} else {
+			log.Info("LQC producer loop disabled; node running in sync/P2P/RPC mode")
+		}
+	}
+
 	return nil
+}
+
+func isLiveLQCHead(header *types.Header, now time.Time) bool {
+	if header == nil || header.Number == nil || header.Number.Sign() == 0 {
+		return false
+	}
+	age := now.Sub(time.Unix(int64(header.Time), 0))
+	return age >= -lqcHeadFutureTolerance && age <= lqcHeadFreshness
+}
+
+func (s *Ethereum) enableLQCTransactionRelayWhenReady() {
+	if s.blockchain == nil {
+		return
+	}
+	headCh := make(chan core.ChainHeadEvent, 16)
+	sub := s.blockchain.SubscribeChainHeadEvent(headCh)
+	defer sub.Unsubscribe()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		if s.Synced() {
+			return
+		}
+		head := s.blockchain.CurrentBlock()
+		if isLiveLQCHead(head, time.Now()) {
+			s.SetSynced()
+			log.Info("LQC transaction relay enabled", "head", head.Number)
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-headCh:
+		case <-sub.Err():
+			return
+		}
+	}
 }
 
 func (s *Ethereum) newChainView(head *types.Header) *filtermaps.ChainView {
@@ -605,8 +792,21 @@ func (s *Ethereum) Stop() error {
 	// Stop all the peer-related stuff first.
 	s.discmix.Close()
 	s.dropper.Stop()
+	if s.registryNetwork != nil {
+		s.registryNetwork.Close()
+	}
+	if s.workTicketTransport != nil {
+		s.workTicketTransport.Close()
+	}
+	if s.workV1Transport != nil {
+		s.workV1Transport.Close()
+	}
 	s.handler.txTracker.Stop()
 	s.handler.Stop()
+
+	if s.miner != nil {
+		s.miner.StopLQCDevnet()
+	}
 
 	// Then stop everything else.
 	ch := make(chan struct{})

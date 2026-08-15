@@ -24,7 +24,9 @@ import (
 	"sort"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/cmd/utils"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/console/prompt"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/internal/debug"
@@ -42,7 +44,7 @@ import (
 )
 
 const (
-	clientIdentifier = "geth" // Client identifier to advertise over the network
+	clientIdentifier = "rabbit" // Client identifier to advertise over the network
 )
 
 var (
@@ -109,6 +111,8 @@ var (
 		utils.DiscoveryPortFlag,
 		utils.MaxPeersFlag,
 		utils.MaxPendingPeersFlag,
+		utils.MiningEnabledFlag,
+		utils.MinerEtherbaseFlag,
 		utils.MinerGasLimitFlag,
 		utils.MinerGasPriceFlag,
 		utils.MinerExtraDataFlag,
@@ -132,6 +136,7 @@ var (
 		utils.VMWitnessStatsFlag,
 		utils.VMStatelessSelfValidationFlag,
 		utils.NetworkIdFlag,
+		utils.LQCWorkTicketLabTransportFlag,
 		utils.EthStatsURLFlag,
 		utils.GpoBlocksFlag,
 		utils.GpoPercentileFlag,
@@ -329,6 +334,10 @@ func geth(ctx *cli.Context) error {
 // startNode boots up the system node and all registered protocols, after which
 // it starts the RPC/IPC interfaces and the miner.
 func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
+	// Unlock the explicitly selected Rabbit producer before lifecycle startup so
+	// the LQC producer loop cannot race its first signature against the unlock.
+	unlockRabbitLQCProducer(ctx, stack)
+
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
 
@@ -372,4 +381,49 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 			}
 		}
 	}()
+}
+
+// unlockRabbitLQCProducer unlocks only the explicitly configured producer and
+// only when a password file was deliberately supplied. External signers remain
+// supported and do not require local keystore unlocking.
+func unlockRabbitLQCProducer(ctx *cli.Context, stack *node.Node) {
+	if !ctx.Bool(utils.MiningEnabledFlag.Name) || stack == nil {
+		return
+	}
+	encoded := os.Getenv("RABBIT_LQC_COINBASE")
+	if encoded == "" && ctx.IsSet(utils.MinerPendingFeeRecipientFlag.Name) {
+		encoded = ctx.String(utils.MinerPendingFeeRecipientFlag.Name)
+	}
+	if encoded == "" && ctx.IsSet(utils.MinerEtherbaseFlag.Name) {
+		encoded = ctx.String(utils.MinerEtherbaseFlag.Name)
+	}
+	if encoded == "" {
+		return
+	}
+	if !common.IsHexAddress(encoded) {
+		utils.Fatalf("Invalid Rabbit LQC producer address %q", encoded)
+	}
+	address := common.HexToAddress(encoded)
+	password, supplied := readPasswordFromFile(ctx.Path(utils.PasswordFileFlag.Name))
+	if !supplied {
+		log.Info("Rabbit LQC producer will use an already unlocked wallet or external signer", "address", address)
+		return
+	}
+	backends := stack.AccountManager().Backends(keystore.KeyStoreType)
+	if len(backends) == 0 {
+		log.Info("Rabbit LQC producer has no local keystore; using another wallet backend", "address", address)
+		return
+	}
+	ks := backends[0].(*keystore.KeyStore)
+	for _, account := range ks.Accounts() {
+		if account.Address != address {
+			continue
+		}
+		if err := ks.Unlock(account, password); err != nil {
+			utils.Fatalf("Failed to unlock Rabbit LQC producer %s: %v", address, err)
+		}
+		log.Info("Rabbit LQC producer unlocked for block sealing", "address", address)
+		return
+	}
+	log.Info("Rabbit LQC producer is not in the local keystore; using another wallet backend", "address", address)
 }

@@ -19,6 +19,7 @@ package eth
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 
@@ -40,6 +41,15 @@ func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
 		return err
 	}
 	response := ServiceGetBlockHeadersQuery(backend.Chain(), query.GetBlockHeadersRequest, peer)
+	peer.Log().Debug("LQC serve headers",
+		"reqid", query.RequestId,
+		"origin_hash", query.Origin.Hash,
+		"origin_number", query.Origin.Number,
+		"amount", query.Amount,
+		"skip", query.Skip,
+		"reverse", query.Reverse,
+		"served", len(response),
+	)
 	return peer.ReplyBlockHeadersRLP(query.RequestId, response)
 }
 
@@ -346,6 +356,17 @@ func serviceGetReceiptsQuery70(chain *core.BlockChain, query GetReceiptsRequest,
 	return receipts, false
 }
 
+func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
+	if cfg := backend.Chain().Config(); cfg == nil || cfg.LQC == nil {
+		return errors.New("block broadcasts disallowed")
+	}
+	packet := new(NewBlockPacket)
+	if err := msg.Decode(packet); err != nil {
+		return err
+	}
+	return backend.Handle(peer, packet)
+}
+
 func handleBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
 	// A batch of headers arrived to one of our previous requests
 	res := new(BlockHeadersPacket)
@@ -368,6 +389,10 @@ func handleBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
 		}
 		return hashes
 	}
+	peer.Log().Debug("LQC received BlockHeaders packet",
+		"reqid", res.RequestId,
+		"count", len(headers),
+	)
 	return peer.dispatchResponse(&Response{
 		id:   res.RequestId,
 		code: BlockHeadersMsg,
@@ -683,9 +708,8 @@ func handleBlockRangeUpdate(backend Backend, msg Decoder, peer *Peer) error {
 	if err := update.Validate(); err != nil {
 		return err
 	}
-	// We don't do anything with these messages for now, just store them on the peer.
 	peer.lastRange.Store(&update)
-	return nil
+	return backend.Handle(peer, &update)
 }
 
 func handleGetCells(backend Backend, msg Decoder, peer *Peer) error {

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
@@ -229,6 +230,13 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	_, _, assembleSpanEnd := telemetry.StartSpan(ctx, "miner.AssembleBlock")
 	block := core.AssembleBlock(miner.chain, work.header, work.state, &body, work.receipts, work.bal)
 	assembleSpanEnd(nil)
+	if sealer, ok := miner.engine.(consensus.HeaderSealer); ok {
+		sealedHeader, err := sealer.SealHeader(miner.chainConfig.ChainID, block.Header(), miner.signConsensusHeader)
+		if err != nil {
+			return &newPayloadResult{err: err}
+		}
+		block = block.WithSeal(sealedHeader)
+	}
 
 	return &newPayloadResult{
 		block:    block,
@@ -324,10 +332,10 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 		}
 		header.SlotNumber = genParams.slotNum
 	}
-	// Could potentially happen if starting to mine in an odd state.
-	// Note genParams.coinbase can be different with header.Coinbase
-	// since clique algorithm can modify the coinbase field in header.
-	env, err := miner.makeEnv(parent, header, genParams.coinbase, witness)
+	// LQC stores the canonical producer and fee recipient in header.Coinbase.
+	// Transaction execution must use that same address or state roots diverge.
+	feeRecipient := workFeeRecipient(miner.chainConfig, header, genParams.coinbase)
+	env, err := miner.makeEnv(parent, header, feeRecipient, witness)
 	if err != nil {
 		log.Error("Failed to create sealing context", "err", err)
 		return nil, err
@@ -335,6 +343,13 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 	// Run pre-execution system calls
 	env.bal.Merge(core.PreExecution(ctx, header.ParentBeaconRoot, parent, miner.chainConfig, env.evm, header.Number, header.Time))
 	return env, nil
+}
+
+func workFeeRecipient(config *params.ChainConfig, header *types.Header, requested common.Address) common.Address {
+	if config != nil && config.LQC != nil && header != nil && header.Coinbase != (common.Address{}) {
+		return header.Coinbase
+	}
+	return requested
 }
 
 // makeEnv creates a new environment for the sealing block.

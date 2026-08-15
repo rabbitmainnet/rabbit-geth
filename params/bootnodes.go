@@ -18,6 +18,17 @@ package params
 
 import "github.com/ethereum/go-ethereum/common"
 
+// RabbitBootnodes are the default discovery-v4 bootstrap nodes for Rabbit Chain.
+//
+// Keep this list empty until the clean Rabbit mainnet bootstrap nodes are created.
+// Never place laboratory/test enodes here.
+var RabbitBootnodes = []string{}
+
+// RabbitV5Bootnodes are the default discovery-v5 bootstrap nodes for Rabbit Chain.
+//
+// Keep this list empty until permanent Rabbit mainnet ENRs are available.
+var RabbitV5Bootnodes = []string{}
+
 // MainnetBootnodes are the enode URLs of the P2P bootstrap nodes running on
 // the main Ethereum network.
 var MainnetBootnodes = []string{

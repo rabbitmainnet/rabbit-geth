@@ -142,6 +142,11 @@ var (
 		Value:    ethconfig.Defaults.NetworkId,
 		Category: flags.EthCategory,
 	}
+	LQCWorkTicketLabTransportFlag = &cli.BoolFlag{
+		Name:     "lqc.worktickets.labtransport",
+		Usage:    "Enable the isolated LQC work-ticket RPC/P2P transport (laboratory genesis only; rejected on Rabbit mainnet)",
+		Category: flags.DevCategory,
+	}
 	MainnetFlag = &cli.BoolFlag{
 		Name:     "mainnet",
 		Usage:    "Ethereum mainnet",
@@ -580,6 +585,16 @@ var (
 	}
 
 	// Miner settings
+	MiningEnabledFlag = &cli.BoolFlag{
+		Name:     "mine",
+		Usage:    "Enable local Rabbit LQC block production",
+		Category: flags.MinerCategory,
+	}
+	MinerEtherbaseFlag = &cli.StringFlag{
+		Name:     "miner.etherbase",
+		Usage:    "Rabbit LQC producer address (compatibility alias)",
+		Category: flags.MinerCategory,
+	}
 	MinerGasLimitFlag = &cli.Uint64Flag{
 		Name:     "miner.gaslimit",
 		Usage:    "Target gas ceiling for mined blocks",
@@ -1245,7 +1260,10 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 // 3. Network preset flags (e.g. --holesky)
 // 4. default to mainnet nodes
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
-	urls := params.MainnetBootnodes
+	// Rabbit is the default network identity of this client. Ethereum bootstrap
+	// infrastructure is used only when an Ethereum network preset is selected
+	// explicitly. --bootnodes and config-file values retain higher priority.
+	urls := params.RabbitBootnodes
 	if ctx.IsSet(BootnodesFlag.Name) {
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
 	} else {
@@ -1253,6 +1271,8 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 			return // Already set by config file, don't apply defaults.
 		}
 		switch {
+		case ctx.Bool(MainnetFlag.Name):
+			urls = params.MainnetBootnodes
 		case ctx.Bool(HoleskyFlag.Name):
 			urls = params.HoleskyBootnodes
 		case ctx.Bool(SepoliaFlag.Name):
@@ -1282,12 +1302,15 @@ func mustParseBootnodes(urls []string) []*enode.Node {
 // setBootstrapNodesV5 creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodesV5(ctx *cli.Context, cfg *p2p.Config) {
-	urls := params.V5Bootnodes
+	// Do not silently use Ethereum discovery-v5 infrastructure for Rabbit.
+	urls := params.RabbitV5Bootnodes
 	switch {
 	case ctx.IsSet(BootnodesFlag.Name):
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
 	case cfg.BootstrapNodesV5 != nil:
 		return // already set, don't apply defaults.
+	case ctx.Bool(MainnetFlag.Name):
+		urls = params.V5Bootnodes
 	}
 
 	cfg.BootstrapNodesV5 = make([]*enode.Node, 0, len(urls))
@@ -1477,14 +1500,20 @@ func MakeDatabaseHandles(max int) int {
 
 // setEtherbase retrieves the etherbase from the directly specified command line flags.
 func setEtherbase(ctx *cli.Context, cfg *ethconfig.Config) {
-	if !ctx.IsSet(MinerPendingFeeRecipientFlag.Name) {
-		return
+	if ctx.IsSet(MinerEtherbaseFlag.Name) {
+		addr := ctx.String(MinerEtherbaseFlag.Name)
+		if !common.IsHexAddress(addr) {
+			Fatalf("-%s: invalid Rabbit producer address %q", MinerEtherbaseFlag.Name, addr)
+		}
+		cfg.Miner.Etherbase = common.HexToAddress(addr)
 	}
-	addr := ctx.String(MinerPendingFeeRecipientFlag.Name)
-	if !common.IsHexAddress(addr) {
-		Fatalf("-%s: invalid pending block producer address %q", MinerPendingFeeRecipientFlag.Name, addr)
+	if ctx.IsSet(MinerPendingFeeRecipientFlag.Name) {
+		addr := ctx.String(MinerPendingFeeRecipientFlag.Name)
+		if !common.IsHexAddress(addr) {
+			Fatalf("-%s: invalid pending block producer address %q", MinerPendingFeeRecipientFlag.Name, addr)
+		}
+		cfg.Miner.PendingFeeRecipient = common.HexToAddress(addr)
 	}
-	cfg.Miner.PendingFeeRecipient = common.HexToAddress(addr)
 }
 
 func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
@@ -1714,6 +1743,7 @@ func setBlobPool(ctx *cli.Context, cfg *blobpool.Config) {
 }
 
 func setMiner(ctx *cli.Context, cfg *miner.Config) {
+	cfg.Enabled = ctx.Bool(MiningEnabledFlag.Name)
 	if ctx.IsSet(MinerExtraDataFlag.Name) {
 		cfg.ExtraData = []byte(ctx.String(MinerExtraDataFlag.Name))
 	}
@@ -1759,6 +1789,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
 	flags.CheckExclusive(ctx, MainnetFlag, DeveloperFlag, SepoliaFlag, HoleskyFlag, HoodiFlag, OverrideGenesisFlag)
 	flags.CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
+	cfg.WorkTicketLabTransport = ctx.Bool(LQCWorkTicketLabTransportFlag.Name)
 
 	// Set configurations from CLI flags
 	setEtherbase(ctx, cfg)
@@ -2093,10 +2124,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			Fatalf("Invalid genesis file: %v", err)
 		}
 		cfg.Genesis = genesis
-	default:
-		if ctx.Uint64(NetworkIdFlag.Name) == 1 {
-			SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
-		}
 	}
 	if ctx.IsSet(NetworkIdFlag.Name) {
 		// Typically it's best to automatically set the network ID to the chainID,

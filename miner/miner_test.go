@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/core"
@@ -55,6 +56,10 @@ func (m *mockBackend) BlockChain() *core.BlockChain {
 
 func (m *mockBackend) TxPool() *txpool.TxPool {
 	return m.txPool
+}
+
+func (m *mockBackend) AccountManager() *accounts.Manager {
+	return nil
 }
 
 type testBlockChain struct {

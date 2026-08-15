@@ -116,7 +116,7 @@ func Info() (version, vcs string) {
 func versionInfo(info *debug.BuildInfo) string {
 	// If the main package is from our repo, prefix version with "geth".
 	if strings.HasPrefix(info.Path, ourPath) {
-		return fmt.Sprintf("geth %s", info.Main.Version)
+		return fmt.Sprintf("rabbit %s", info.Main.Version)
 	}
 	// Not our main package, so explicitly print out the module path and
 	// version.
@@ -130,7 +130,7 @@ func versionInfo(info *debug.BuildInfo) string {
 		// If our module path wasn't imported, it's unclear which
 		// version of our code they are running. Fallback to hardcoded
 		// version.
-		return version + fmt.Sprintf("geth %s", WithMeta)
+		return version + fmt.Sprintf("rabbit %s", WithMeta)
 	}
 	// Our package is a dependency for the main module. Return path and
 	// version data for both.
