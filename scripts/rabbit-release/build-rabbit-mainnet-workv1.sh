@@ -110,7 +110,7 @@ mkdir -p "$SMOKE_DIR/production" "$SMOKE_DIR/default"
     >"$OUT/init-default.log" 2>&1
 
 set +e
-timeout 8 "$BIN" \
+timeout --foreground 8 "$BIN" \
     --datadir "$SMOKE_DIR/production" \
     --networkid 928 \
     --port 0 \
@@ -121,7 +121,7 @@ timeout 8 "$BIN" \
     >"$OUT/start-production.log" 2>&1
 PRODUCTION_STATUS="$?"
 
-timeout 8 "$DEFAULT_BIN" \
+timeout --foreground 8 "$DEFAULT_BIN" \
     --datadir "$SMOKE_DIR/default" \
     --networkid 928 \
     --port 0 \
