@@ -30,7 +30,7 @@ if (-not (Test-Path $Bash)) { throw "MSYS2 is not installed on the Windows runne
 
 $BuildScript = @'
 set -Eeuo pipefail
-pacman --noconfirm -Sy --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make nasm zip
+/usr/bin/pacman --noconfirm -Sy --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make nasm zip
 export PATH="/mingw64/bin:$PATH"
 export RANDOMX_POSIX="$(cygpath -u "$RANDOMX_NATIVE")"
 cd "$RANDOMX_POSIX"
