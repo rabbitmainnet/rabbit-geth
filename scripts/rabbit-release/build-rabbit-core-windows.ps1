@@ -54,15 +54,25 @@ $env:PATH = "C:\msys64\mingw64\bin;" + $env:PATH
 $env:CC = "C:\msys64\mingw64\bin\gcc.exe"
 $env:CXX = "C:\msys64\mingw64\bin\g++.exe"
 $env:CGO_ENABLED = "1"
-$RandomXPosix = (& $Bash -lc 'cygpath -u "$RANDOMX_NATIVE"').Trim()
-if (-not $RandomXPosix) { throw "could not convert RandomX path for MinGW" }
-$env:CGO_CFLAGS = "-O2 -D__BLST_PORTABLE__ -I$RandomXPosix/src"
-$env:CGO_LDFLAGS = "-L$RandomXPosix/build -lrandomx"
+$RandomXForGcc = $RandomX.Replace("\", "/")
+if (-not $RandomXForGcc) { throw "could not prepare RandomX path for GCC" }
+$env:CGO_CFLAGS = "-O2 -D__BLST_PORTABLE__ -I$RandomXForGcc/src"
+$env:CGO_LDFLAGS = "-L$RandomXForGcc/build -lrandomx"
+Write-Host "RABBIT_RANDOMX_GCC_PATH=$RandomXForGcc"
+Write-Host "RABBIT_CGO_CFLAGS=$env:CGO_CFLAGS"
+Write-Host "RABBIT_CGO_LDFLAGS=$env:CGO_LDFLAGS"
 
 go test -tags "rabbit_workv1 rabbit_randomx" ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
+if ($LASTEXITCODE -ne 0) { throw "Rabbit Windows tests failed" }
+
 go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-node.exe" ./cmd/geth
+if ($LASTEXITCODE -ne 0) { throw "Rabbit node Windows build failed" }
+
 go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-miner.exe" ./cmd/rabbit-miner
+if ($LASTEXITCODE -ne 0) { throw "Rabbit miner Windows build failed" }
+
 go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-core.exe" ./cmd/rabbit-core
+if ($LASTEXITCODE -ne 0) { throw "Rabbit Core Windows build failed" }
 
 Copy-Item networks/rabbit-testnet/genesis.json "$Stage\genesis.json"
 Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
