@@ -1,4 +1,4 @@
-name: Rabbit Core native preview
+name: Rabbit Core Testnet Native Preview
 
 on:
   workflow_dispatch:
