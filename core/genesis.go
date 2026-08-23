@@ -50,8 +50,10 @@ func validateRabbitGenesisConfig(cfg *params.ChainConfig) error {
 	if cfg == nil || cfg.LQC == nil {
 		return nil
 	}
-	if cfg.ChainID == nil || cfg.ChainID.Cmp(big.NewInt(928)) != 0 {
-		return errors.New("rabbit genesis requires chainId 928")
+	if cfg.ChainID == nil ||
+		(cfg.ChainID.Cmp(big.NewInt(928)) != 0 &&
+			cfg.ChainID.Cmp(big.NewInt(9280)) != 0) {
+		return errors.New("rabbit genesis requires chainId 928 or 9280")
 	}
 	if cfg.Ethash != nil {
 		return errors.New("rabbit genesis cannot enable ethash")

@@ -1,0 +1,12 @@
+RABBIT CORE TESTNET - NATIVE BUILD PREVIEW
+
+This package validates native compilation only. It is not an official public
+mining release. bootnodes.txt is intentionally empty, so Rabbit Core refuses to
+start an isolated chain. The official release is created only after the public
+bootnode enode, DNS, P2P reachability and final release gate pass.
+
+Chain ID: 9280
+Network ID: 9280
+Genesis SHA-256: 8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7
+RandomX base commit: 7c761cf007c758056dcb6eb438a32f780f81bdbd
+Rabbit RandomX dataset base size: 1073741824 bytes (1 GiB)

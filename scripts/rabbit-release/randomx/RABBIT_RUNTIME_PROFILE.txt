@@ -1,0 +1,5 @@
+Rabbit Chain RandomX Work V1 laboratory runtime
+Pinned upstream commit: 7c761cf007c758056dcb6eb438a32f780f81bdbd
+Custom RANDOMX_DATASET_BASE_SIZE: 1073741824
+Dataset extra size remains upstream-defined.
+This is a Rabbit experimental 1 GiB profile, not upstream RandomX defaults.

@@ -52,6 +52,14 @@ func TestRabbitRegistryProtocolConfigValidation(t *testing.T) {
 	if err := valid.CheckConfigForkOrder(); err != nil {
 		t.Fatalf("valid registry configuration rejected: %v", err)
 	}
+	permissionless := &ChainConfig{LQC: &LQCConfig{
+		RegistryProtocolBlock: 1,
+		ProofDifficulty:       1,
+		RecoveryTimeoutMs:     60_000,
+	}}
+	if err := permissionless.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("permissionless registry configuration rejected: %v", err)
+	}
 
 	tests := []struct {
 		name   string
@@ -62,13 +70,6 @@ func TestRabbitRegistryProtocolConfigValidation(t *testing.T) {
 			config: &LQCConfig{
 				RegistryProtocolBlock: 1,
 				BootstrapParticipants: []common.Address{participant},
-			},
-		},
-		{
-			name: "missing bootstrap participants",
-			config: &LQCConfig{
-				RegistryProtocolBlock: 1,
-				ProofDifficulty:       1,
 			},
 		},
 		{

@@ -200,6 +200,9 @@ func signTestHeader(t *testing.T, chainID *big.Int, header *types.Header) {
 	if key == nil {
 		t.Fatalf("no test key for producer %s", header.Coinbase)
 	}
+	if len(header.Extra) < ProducerSealLength {
+		header.Extra = appendEmptyProducerSeal(header.Extra)
+	}
 	hash, err := producerSealHash(chainID, header)
 	if err != nil {
 		t.Fatalf("build producer seal hash: %v", err)

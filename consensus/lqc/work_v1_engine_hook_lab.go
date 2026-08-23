@@ -382,16 +382,21 @@ func (l *LQC) workV1EngineLabReplayRegistryV3(
 	if err != nil {
 		return nil, err
 	}
-	selection, workActive, err := l.workV1EngineLabSelectionForHeader(
-		chain,
-		parentRuntime,
-		parent,
-		header,
+	var (
+		selection HybridSelection
 	)
-	if err != nil {
-		return nil, err
+	if !l.openActivationForHeader(chain, header) {
+		selection, _, err = l.workV1EngineLabSelectionForHeader(
+			chain,
+			parentRuntime,
+			parent,
+			header,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if workActive {
+	if len(selection.Ordered) > 0 {
 		return l.workV1EngineLabApplyRegistryBySeats(
 			chain,
 			parent,
@@ -411,10 +416,11 @@ func (l *LQC) workV1EngineLabReplayRegistryV3(
 	}
 	synthetic := types.CopyHeader(header)
 	synthetic.Extra = v2Extra
-	snapshot, err := parent.ApplyHeader(
+	snapshot, err := parent.ApplyHeaderWithOpenActivation(
 		chain.Config().ChainID,
 		l.registryRules(),
 		synthetic,
+		l.openActivationForHeader(chain, header),
 	)
 	if err != nil {
 		return nil, err
@@ -660,18 +666,32 @@ func (l *LQC) verifyCanonicalRegistryHeaderMaybeWorkV1Lab(
 		return HybridSelection{}, nil, err
 	}
 
-	selection, workActive, err := l.workV1EngineLabSelectionForHeader(
-		chain,
-		parentRuntime,
-		parentRegistry,
-		header,
-	)
-	if err != nil {
-		return HybridSelection{}, nil, err
+	var selection HybridSelection
+	if l.openActivationForHeader(chain, header) {
+		selection.Ordered = []HybridParticipant{{
+			Address:       header.Coinbase,
+			Payout:        header.Coinbase,
+			Bond:          big.NewInt(25),
+			RegisteredAt:  header.Number.Uint64(),
+			LastHeartbeat: header.Number.Uint64(),
+			Status:        ParticipantActiveCandidate,
+		}}
+		selection.Producer = &selection.Ordered[0]
+	} else {
+		selection, _, err = l.workV1EngineLabSelectionForHeader(
+			chain,
+			parentRuntime,
+			parentRegistry,
+			header,
+		)
+		if err != nil {
+			return HybridSelection{}, nil, err
+		}
 	}
 
 	var registrySnapshot *RegistrySnapshot
-	if workActive {
+	if !l.openActivationForHeader(chain, header) &&
+		len(selection.Ordered) > 0 {
 		registrySnapshot, err =
 			l.workV1EngineLabApplyRegistryBySeats(
 				chain,

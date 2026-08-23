@@ -64,6 +64,13 @@ type lqcWorkV1Context struct {
 
 type lqcWorkV1ContextProvider func() (lqcWorkV1Context, error)
 
+type lqcWorkV1CanonicalReconciler func(commitEpoch uint64) error
+
+type lqcWorkV1CanonicalIncludedCheck func(
+	candidate lqc.WorkCommitCandidateV1,
+	commitEpoch uint64,
+) bool
+
 type lqcWorkV1TransportConfig struct {
 	Enabled   bool
 	ChainID   *big.Int
@@ -81,6 +88,8 @@ type lqcWorkV1Transport struct {
 	genesis   common.Hash
 
 	context      lqcWorkV1ContextProvider
+	reconcile    lqcWorkV1CanonicalReconciler
+	included     lqcWorkV1CanonicalIncludedCheck
 	hasher       lqc.WorkRelayHasherV1
 	pool         *lqc.WorkCommitPoolV1
 	limiter      *lqc.WorkRelayVerificationLimiterV1
@@ -170,7 +179,7 @@ func (n *lqcWorkV1Transport) status() lqcWorkV1StatusPacket {
 	}
 }
 
-func (n *lqcWorkV1Transport) currentContext() (lqcWorkV1Context, error) {
+func (n *lqcWorkV1Transport) currentContextRaw() (lqcWorkV1Context, error) {
 	if n == nil || n.context == nil {
 		return lqcWorkV1Context{}, errLQCWorkV1Context
 	}
@@ -193,6 +202,27 @@ func (n *lqcWorkV1Transport) currentContext() (lqcWorkV1Context, error) {
 		return lqcWorkV1Context{}, err
 	}
 	return ctx, nil
+}
+
+func (n *lqcWorkV1Transport) currentContext() (lqcWorkV1Context, error) {
+	ctx, err := n.currentContextRaw()
+	if err != nil {
+		return lqcWorkV1Context{}, err
+	}
+	if n.reconcile != nil {
+		if err := n.reconcile(ctx.Epoch); err != nil {
+			return lqcWorkV1Context{}, err
+		}
+	}
+	return ctx, nil
+}
+
+func (n *lqcWorkV1Transport) canonicallyIncluded(
+	candidate lqc.WorkCommitCandidateV1,
+	commitEpoch uint64,
+) bool {
+	return n != nil && n.included != nil &&
+		n.included(candidate, commitEpoch)
 }
 
 func (n *lqcWorkV1Transport) runPeer(
@@ -253,6 +283,10 @@ func (n *lqcWorkV1Transport) runPeer(
 		for _, candidate := range candidates {
 			if candidate.ProofHash == (common.Hash{}) {
 				return lqc.ErrInvalidWorkCommitV1
+			}
+			if n.canonicallyIncluded(candidate, ctx.Epoch) {
+				peer.markKnown(candidate.ProofHash)
+				continue
 			}
 
 			if n.pool.WorkCommitPoolContainsCandidateV1(candidate) {
@@ -480,6 +514,9 @@ func (n *lqcWorkV1Transport) Submit(
 	if err != nil {
 		return common.Hash{}, err
 	}
+	if n.canonicallyIncluded(candidate, ctx.Epoch) {
+		return candidate.ProofHash, lqc.ErrWorkRelayAlreadyKnownV1
+	}
 
 	if n.pool.WorkCommitPoolContainsCandidateV1(candidate) {
 		return candidate.ProofHash, lqc.ErrWorkRelayAlreadyKnownV1
@@ -580,6 +617,16 @@ func (n *lqcWorkV1Transport) Pending() (
 	}
 	if _, err := n.currentContext(); err != nil {
 		return nil, err
+	}
+	return n.pool.PendingV1()
+}
+
+func (n *lqcWorkV1Transport) pendingRaw() (
+	[]lqc.WorkCommitCandidateV1,
+	error,
+) {
+	if n == nil || n.pool == nil {
+		return nil, errLQCWorkV1TransportDisabled
 	}
 	return n.pool.PendingV1()
 }

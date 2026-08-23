@@ -99,7 +99,10 @@ const (
 // Deprecated: use ethconfig.Config instead.
 type Config = ethconfig.Config
 
-const frozenRabbitMainnetGenesisMarker = "RABBIT_MAINNET_GENESIS_V1"
+const (
+	frozenRabbitMainnetGenesisMarker = "RABBIT_MAINNET_GENESIS_V1"
+	frozenRabbitTestnetGenesisMarker = "RABBIT_TESTNET_GENESIS_V1"
+)
 
 func isFrozenRabbitMainnet(
 	chainConfig *params.ChainConfig,
@@ -115,6 +118,28 @@ func isFrozenRabbitMainnet(
 		)
 }
 
+func isFrozenRabbitTestnet(
+	chainConfig *params.ChainConfig,
+	genesis *types.Block,
+) bool {
+	return chainConfig != nil &&
+		chainConfig.ChainID != nil &&
+		chainConfig.ChainID.Cmp(big.NewInt(9280)) == 0 &&
+		genesis != nil &&
+		bytes.Equal(
+			genesis.Extra(),
+			[]byte(frozenRabbitTestnetGenesisMarker),
+		)
+}
+
+func isFrozenRabbitPublicNetwork(
+	chainConfig *params.ChainConfig,
+	genesis *types.Block,
+) bool {
+	return isFrozenRabbitMainnet(chainConfig, genesis) ||
+		isFrozenRabbitTestnet(chainConfig, genesis)
+}
+
 func validateLQCWorkTicketLabTransport(config *ethconfig.Config, chainConfig *params.ChainConfig, genesis *types.Block) error {
 	if config == nil || !config.WorkTicketLabTransport {
 		return nil
@@ -125,8 +150,8 @@ func validateLQCWorkTicketLabTransport(config *ethconfig.Config, chainConfig *pa
 	if genesis == nil {
 		return errors.New("lqc work-ticket laboratory transport requires a genesis block")
 	}
-	if isFrozenRabbitMainnet(chainConfig, genesis) {
-		return errors.New("lqc work-ticket laboratory transport is forbidden on the frozen Rabbit mainnet genesis")
+	if isFrozenRabbitPublicNetwork(chainConfig, genesis) {
+		return errors.New("lqc work-ticket laboratory transport is forbidden on frozen Rabbit public networks")
 	}
 	return nil
 }
@@ -149,20 +174,34 @@ func lqcWorkV1TransportActivation(
 		}
 		return true, false, nil
 	}
-	if !isFrozenRabbitMainnet(chainConfig, genesis) {
+	if !isFrozenRabbitPublicNetwork(chainConfig, genesis) {
 		return false, false, nil
 	}
 	if chainConfig.LQC == nil {
 		return false, false, errors.New(
-			"frozen Rabbit mainnet requires LQC consensus",
+			"frozen Rabbit public network requires LQC consensus",
 		)
 	}
 	if !lqc.WorkV1ProductionEnabled() {
 		return false, false, errors.New(
-			"frozen Rabbit mainnet requires a production Work V1 build",
+			"frozen Rabbit public network requires a production Work V1 build",
 		)
 	}
 	return true, true, nil
+}
+
+func enforceLQCFullSync(
+	config *ethconfig.Config,
+	chainConfig *params.ChainConfig,
+) bool {
+	if config == nil ||
+		chainConfig == nil ||
+		chainConfig.LQC == nil ||
+		config.SyncMode == ethconfig.FullSync {
+		return false
+	}
+	config.SyncMode = ethconfig.FullSync
+	return true
 }
 
 // Ethereum implements the Ethereum full node service.
@@ -265,6 +304,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	chainConfig, genesisHash, err := core.LoadChainConfig(chainDb, config.Genesis)
 	if err != nil {
 		return nil, err
+	}
+	if enforceLQCFullSync(config, chainConfig) {
+		log.Info(
+			"Rabbit LQC forced full sync",
+			"reason", "snap/beacon sync is not valid for LQC production",
+		)
 	}
 	engine, err := ethconfig.CreateConsensusEngine(chainConfig, chainDb)
 	if err != nil {

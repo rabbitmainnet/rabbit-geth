@@ -403,3 +403,100 @@ func TestWorkV1EnginePoolProviderLabHardCapsEight(
 		)
 	}
 }
+
+func TestWorkV1EnginePoolProviderLabRestartRemovesCanonicalIncluded(
+	t *testing.T,
+) {
+	a := workV1EngineProviderCandidateLab(1, 1, "restart-a")
+	b := workV1EngineProviderCandidateLab(1, 2, "restart-b")
+	pool := map[common.Hash]lqc.WorkCommitCandidateV1{
+		a.ProofHash: a,
+		b.ProofHash: b,
+	}
+
+	// This is a fresh provider: it has no in-memory reservation from the
+	// process that built block 129. Its persistent pool still contains both
+	// candidates, while canonical block 129 already contains candidate A.
+	provider := &workV1EnginePoolProviderLab{
+		epochLength: 128,
+		pending: func() ([]lqc.WorkCommitCandidateV1, error) {
+			out := make([]lqc.WorkCommitCandidateV1, 0, len(pool))
+			for _, candidate := range pool {
+				out = append(out, candidate)
+			}
+			return out, nil
+		},
+		includedAt: func(
+			blockNumber uint64,
+		) ([]lqc.SignedRandomXWorkTicketV1, bool) {
+			if blockNumber == 129 {
+				return []lqc.SignedRandomXWorkTicketV1{a.Signed}, true
+			}
+			return nil, true
+		},
+		removeIncluded: func(hashes []common.Hash) uint64 {
+			var removed uint64
+			for _, hash := range hashes {
+				if _, ok := pool[hash]; ok {
+					delete(pool, hash)
+					removed++
+				}
+			}
+			return removed
+		},
+	}
+
+	got, err := provider.provide(130, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := pool[a.ProofHash]; exists {
+		t.Fatal("canonical ticket survived restart reconciliation")
+	}
+	if _, exists := pool[b.ProofHash]; !exists {
+		t.Fatal("pending ticket was incorrectly removed after restart")
+	}
+	if len(got) != 1 ||
+		!workV1EnginePoolSignedEqualLab(got[0], b.Signed) {
+		t.Fatal("provider did not return only the still-pending ticket")
+	}
+}
+
+func TestWorkV1EnginePoolProviderLabCanonicalReplayLookup(
+	t *testing.T,
+) {
+	included := workV1EngineProviderCandidateLab(
+		18,
+		1,
+		"canonical-replay",
+	)
+	other := workV1EngineProviderCandidateLab(
+		18,
+		2,
+		"other-ticket",
+	)
+
+	provider := &workV1EnginePoolProviderLab{
+		includedAt: func(
+			blockNumber uint64,
+		) ([]lqc.SignedRandomXWorkTicketV1, bool) {
+			if blockNumber == 2306 {
+				return []lqc.SignedRandomXWorkTicketV1{
+					included.Signed,
+				}, true
+			}
+			return nil, true
+		},
+		epochLength: 128,
+	}
+
+	if !provider.canonicalIncludes(2322, 18, included) {
+		t.Fatal("canonical epoch-18 replay was not detected")
+	}
+	if provider.canonicalIncludes(2322, 18, other) {
+		t.Fatal("different signed ticket was rejected as canonical")
+	}
+	if provider.canonicalIncludes(2322, 19, included) {
+		t.Fatal("ticket from another commit epoch was accepted")
+	}
+}

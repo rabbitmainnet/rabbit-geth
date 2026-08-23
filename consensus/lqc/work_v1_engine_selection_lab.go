@@ -262,7 +262,11 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 		return HybridSelection{}, false, err
 	}
 	if !hasSource {
-		return HybridSelection{}, false, nil
+		selection, err := workV1EngineLabActivationFallback(
+			parentRegistry,
+			header,
+		)
+		return selection, false, err
 	}
 	if parent.Work.SelectionEpoch != sourceEpoch ||
 		parent.Work.SelectionRoot == (common.Hash{}) {
@@ -305,7 +309,7 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 		return HybridSelection{}, false, err
 	}
 
-	return l.workV1EngineLabBuildSeatSelection(
+	selection, active, err := l.workV1EngineLabBuildSeatSelection(
 		chain.Config().ChainID,
 		sourceEpoch,
 		parent.Work.SelectionRoot,
@@ -316,6 +320,60 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 		l.registryRules(),
 		WorkSelectionBeaconHasherV1(state.hasher),
 	)
+	if err != nil || active {
+		return selection, active, err
+	}
+	selection, err = workV1EngineLabActivationFallback(
+		parentRegistry,
+		header,
+	)
+	return selection, false, err
+}
+
+// workV1EngineLabActivationFallback keeps bootstrap and zero-work liveness
+// without turning every registered address into a free consensus seat. Only
+// the sequence-zero activation identity may produce until WorkSeats exist.
+// If that identity disappears, the permissionless recovery timeout reopens
+// activation for a new address.
+func workV1EngineLabActivationFallback(
+	parent *RegistrySnapshot,
+	header *types.Header,
+) (HybridSelection, error) {
+	if parent == nil || header == nil || header.Number == nil {
+		return HybridSelection{}, ErrWorkV1EngineLabSelectionUnavailable
+	}
+	registry, err := parent.Registry()
+	if err != nil {
+		return HybridSelection{}, err
+	}
+	anchors := make([]HybridParticipant, 0, 1)
+	for _, participant := range registry.Participants() {
+		if !participant.Active || participant.Sequence != 0 {
+			continue
+		}
+		anchors = append(anchors, HybridParticipant{
+			Address:       participant.Address,
+			Payout:        participant.Address,
+			Bond:          big.NewInt(0),
+			RegisteredAt:  participant.RegisteredAt,
+			LastHeartbeat: participant.LastHeartbeat,
+			JailedUntil:   participant.JailedUntil,
+			MissedTurns:   participant.MissedTurns,
+			Status:        ParticipantActiveCandidate,
+		})
+	}
+	ordered := DeterministicallyOrderParticipants(
+		anchors,
+		header.ParentHash,
+		header.Number.Uint64(),
+	)
+	selection := HybridSelection{}
+	if len(ordered) == 0 {
+		return selection, nil
+	}
+	selection.Ordered = ordered[:1]
+	selection.Producer = &selection.Ordered[0]
+	return selection, nil
 }
 
 func (l *LQC) selectionForHeaderMaybeWorkV1Lab(
@@ -329,17 +387,17 @@ func (l *LQC) selectionForHeaderMaybeWorkV1Lab(
 		return l.selectionForHeader(chain, header)
 	}
 
-	parentRegistry, err := l.registryParentSnapshot(
-		chain,
-		header,
-	)
-	if err != nil {
-		return HybridSelection{}
-	}
 	parentRuntime, err := l.workV1EngineLabRuntimeAt(
 		chain,
 		header.Number.Uint64()-1,
 		header.ParentHash,
+	)
+	if err != nil {
+		return HybridSelection{}
+	}
+	parentRegistry, err := l.registryParentSnapshot(
+		chain,
+		header,
 	)
 	if err != nil {
 		return HybridSelection{}
@@ -353,10 +411,10 @@ func (l *LQC) selectionForHeaderMaybeWorkV1Lab(
 	if err != nil {
 		return HybridSelection{}
 	}
-	if active {
+	if active || len(selection.Ordered) > 0 {
 		return selection
 	}
-	return l.selectionForHeader(chain, header)
+	return HybridSelection{}
 }
 
 // Work-seat mode deliberately does NOT apply address-based missed-turn
@@ -446,6 +504,16 @@ func (l *LQC) prepareCanonicalRegistryExtraMaybeWorkV1Lab(
 	chain consensus.ChainHeaderReader,
 	header *types.Header,
 ) (HybridSelection, error) {
+	if l.openActivationForHeader(chain, header) {
+		selection, err := l.prepareCanonicalRegistryExtra(chain, header)
+		if err != nil {
+			return HybridSelection{}, err
+		}
+		if err := l.prepareWorkV1EngineLabHook(chain, header); err != nil {
+			return HybridSelection{}, err
+		}
+		return selection, nil
+	}
 	if header == nil ||
 		header.Number == nil ||
 		header.Number.Sign() <= 0 ||
@@ -466,17 +534,17 @@ func (l *LQC) prepareCanonicalRegistryExtraMaybeWorkV1Lab(
 		return selection, nil
 	}
 
-	parentRegistry, err := l.registryParentSnapshot(
-		chain,
-		header,
-	)
-	if err != nil {
-		return HybridSelection{}, err
-	}
 	parentRuntime, err := l.workV1EngineLabRuntimeAt(
 		chain,
 		header.Number.Uint64()-1,
 		header.ParentHash,
+	)
+	if err != nil {
+		return HybridSelection{}, err
+	}
+	parentRegistry, err := l.registryParentSnapshot(
+		chain,
+		header,
 	)
 	if err != nil {
 		return HybridSelection{}, err
@@ -491,23 +559,16 @@ func (l *LQC) prepareCanonicalRegistryExtraMaybeWorkV1Lab(
 	if err != nil {
 		return HybridSelection{}, err
 	}
-	if !active {
-		selection, err = l.prepareCanonicalRegistryExtra(
-			chain,
-			header,
-		)
-		if err != nil {
-			return HybridSelection{}, err
-		}
-	} else {
-		if err := l.workV1EngineLabPrepareRegistryBySeats(
-			chain,
-			parentRegistry,
-			header,
-			selection,
-		); err != nil {
-			return HybridSelection{}, err
-		}
+	if !active && len(selection.Ordered) == 0 {
+		return HybridSelection{}, ErrWorkV1EngineLabSelectionUnavailable
+	}
+	if err := l.workV1EngineLabPrepareRegistryBySeats(
+		chain,
+		parentRegistry,
+		header,
+		selection,
+	); err != nil {
+		return HybridSelection{}, err
 	}
 
 	if err := l.prepareWorkV1EngineLabHook(

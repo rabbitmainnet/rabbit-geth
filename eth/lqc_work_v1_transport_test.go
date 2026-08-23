@@ -406,6 +406,107 @@ func TestLQCWorkV1TransportSubmitValidatesAndRetains(
 	}
 }
 
+func TestLQCWorkV1TransportRejectsCanonicalReplayBeforeRandomX(
+	t *testing.T,
+) {
+	config := testWorkV1TransportConfig()
+	hashCalls := 0
+	config.Hasher = func(
+		common.Hash,
+		[]byte,
+	) (common.Hash, error) {
+		hashCalls++
+		return common.HexToHash("0x01"), nil
+	}
+
+	transport, err := newLQCWorkV1Transport(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+
+	candidate := signedWorkV1TransportCandidate(
+		t,
+		common.HexToHash("0x01"),
+		91,
+	)
+	transport.included = func(
+		got lqc.WorkCommitCandidateV1,
+		epoch uint64,
+	) bool {
+		return epoch == 7 && got.ProofHash == candidate.ProofHash
+	}
+
+	if _, err := transport.Submit(candidate); !errors.Is(
+		err,
+		lqc.ErrWorkRelayAlreadyKnownV1,
+	) {
+		t.Fatalf("canonical replay error = %v", err)
+	}
+	if hashCalls != 0 {
+		t.Fatalf("canonical replay caused RandomX: calls=%d", hashCalls)
+	}
+	if status := transport.PoolStatus(); status.Count != 0 {
+		t.Fatalf("canonical replay entered pool: %+v", status)
+	}
+}
+
+func TestLQCWorkV1TransportReconcilesPassivePoolBeforePending(
+	t *testing.T,
+) {
+	transport, err := newLQCWorkV1Transport(
+		testWorkV1TransportConfig(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+
+	// Initialize the persistent pool with the active commit epoch before
+	// simulating a stale ticket restored by a passive node.
+	if _, err := transport.currentContextRaw(); err != nil {
+		t.Fatal(err)
+	}
+
+	candidate := signedWorkV1TransportCandidate(
+		t,
+		common.HexToHash("0x01"),
+		92,
+	)
+	if err := transport.pool.AddVerifiedV1(candidate); err != nil {
+		t.Fatal(err)
+	}
+
+	reconcileCalls := 0
+	transport.reconcile = func(epoch uint64) error {
+		reconcileCalls++
+		if epoch != 7 {
+			t.Fatalf("reconcile epoch=%d want=7", epoch)
+		}
+		if removed := transport.pool.RemoveIncludedV1(
+			[]common.Hash{candidate.ProofHash},
+		); removed != 1 {
+			t.Fatalf("removed=%d want=1", removed)
+		}
+		return nil
+	}
+
+	pending, err := transport.Pending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconcileCalls != 1 {
+		t.Fatalf("reconcile calls=%d want=1", reconcileCalls)
+	}
+	if len(pending) != 0 || transport.PoolStatus().Count != 0 {
+		t.Fatalf(
+			"passive stale pool survived: pending=%d status=%+v",
+			len(pending),
+			transport.PoolStatus(),
+		)
+	}
+}
+
 func TestLQCWorkV1TransportRejectsFakeClaimAfterOneHash(
 	t *testing.T,
 ) {

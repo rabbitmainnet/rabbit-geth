@@ -81,10 +81,38 @@ func (l *LQC) ResolveLocalParticipant(
 	}
 
 	blockNumber := header.Number.Uint64() + 1
+
+	// Block 1 is the permissionless activation block.
+	// Do NOT require the local account to already exist in the
+	// deterministic LCQ queue. Any local wallet may activate the chain.
+	if blockNumber == 1 {
+		for _, addr := range accounts {
+			if addr == (common.Address{}) {
+				continue
+			}
+			return consensus.LocalParticipant{
+				Address:  addr,
+				QueuePos: 0,
+				Allowed:  true,
+			}
+		}
+		return consensus.LocalParticipant{QueuePos: -1}
+	}
+	now := time.Now().Unix()
+	if now >= 0 && l.recoveryOpenAt(header, uint64(now)) {
+		for _, addr := range accounts {
+			if addr != (common.Address{}) {
+				return consensus.LocalParticipant{Address: addr, QueuePos: 0, Allowed: true}
+			}
+		}
+		return consensus.LocalParticipant{QueuePos: -1}
+	}
+
 	next := &types.Header{
 		ParentHash: header.Hash(),
 		Number:     new(big.Int).SetUint64(blockNumber),
 	}
+
 	if !l.registryProtocolEnabled(next.Number) {
 		for _, addr := range accounts {
 			if addr != (common.Address{}) {
@@ -93,6 +121,7 @@ func (l *LQC) ResolveLocalParticipant(
 			}
 		}
 	}
+
 	sel := l.selectionForHeaderMaybeWorkV1Lab(chain, next)
 	for queuePos, participant := range sel.Ordered {
 		for _, local := range accounts {
@@ -107,6 +136,43 @@ func (l *LQC) ResolveLocalParticipant(
 	}
 
 	return consensus.LocalParticipant{QueuePos: -1}
+}
+
+func (l *LQC) recoveryTimeoutSeconds() uint64 {
+	if l == nil || l.config == nil || l.config.RecoveryTimeoutMs == 0 {
+		return 0
+	}
+	seconds := l.config.RecoveryTimeoutMs / 1000
+	if l.config.RecoveryTimeoutMs%1000 != 0 {
+		seconds++
+	}
+	return seconds
+}
+
+// recoveryOpenAt reopens producer activation after a prolonged chain halt.
+// It changes only the canonical producer registry; execution state and block
+// history continue from the existing parent.
+func (l *LQC) recoveryOpenAt(parent *types.Header, candidateTime uint64) bool {
+	timeout := l.recoveryTimeoutSeconds()
+	if timeout == 0 || parent == nil || parent.Number == nil || parent.Number.Sign() == 0 {
+		return false
+	}
+	recoveryTime, ok := checkedRegistryBlockAdd(parent.Time, timeout)
+	return ok && candidateTime >= recoveryTime
+}
+
+func (l *LQC) openActivationForHeader(chain consensus.ChainHeaderReader, header *types.Header) bool {
+	if header == nil || header.Number == nil || header.Number.Sign() <= 0 {
+		return false
+	}
+	if header.Number.Uint64() == 1 {
+		return l == nil || l.config == nil || len(l.config.BootstrapParticipants) == 0
+	}
+	if chain == nil {
+		return false
+	}
+	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+	return l.recoveryOpenAt(parent, header.Time)
 }
 
 func (l *LQC) makeExtra(number uint64) []byte {
@@ -128,7 +194,6 @@ func (l *LQC) verifyExtra(header *types.Header) error {
 	if !bytes.Equal(payload, expected) {
 		return fmt.Errorf("%w: expected %q got %q", errInvalidExtra, string(expected), string(payload))
 	}
-	log.Info("LQC STEP 4")
 	return nil
 }
 
@@ -203,7 +268,52 @@ func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchPar
 		sel              HybridSelection
 		registrySnapshot *RegistrySnapshot
 	)
-	if l.registryProtocolEnabled(header.Number) {
+
+	// Block 1 is the open activation block.
+	// If canonical registry is already active, validate the canonical
+	// registry envelope. Otherwise use the legacy LQC envelope.
+	if header.Number.Uint64() == 1 {
+		if header.Coinbase == (common.Address{}) {
+			return errors.New("lqc block 1 requires producer coinbase")
+		}
+
+		if l.registryProtocolEnabled(header.Number) {
+			var err error
+			sel, registrySnapshot, err = l.verifyCanonicalRegistryHeaderMaybeWorkV1Lab(chain, header)
+			if err != nil {
+				return err
+			}
+
+			// Block 1 is permissionless: the actual signer becomes
+			// the activation producer regardless of the genesis registry.
+			sel.Ordered = []HybridParticipant{{
+				Address:       header.Coinbase,
+				Payout:        header.Coinbase,
+				Bond:          big.NewInt(25),
+				RegisteredAt:  1,
+				LastHeartbeat: 1,
+				Status:        ParticipantActiveCandidate,
+			}}
+			sel.Producer = &sel.Ordered[0]
+		} else {
+			if err := l.verifyExtra(header); err != nil {
+				return err
+			}
+
+			RegisterParticipant(nil, header.Coinbase, 1)
+			UpdateParticipantActivity(nil, header.Coinbase, 1)
+
+			sel.Ordered = []HybridParticipant{{
+				Address:       header.Coinbase,
+				Payout:        header.Coinbase,
+				Bond:          big.NewInt(25),
+				RegisteredAt:  1,
+				LastHeartbeat: 1,
+				Status:        ParticipantActiveCandidate,
+			}}
+			sel.Producer = &sel.Ordered[0]
+		}
+	} else if l.registryProtocolEnabled(header.Number) {
 		var err error
 		sel, registrySnapshot, err = l.verifyCanonicalRegistryHeaderMaybeWorkV1Lab(chain, header)
 		if err != nil {
@@ -215,6 +325,7 @@ func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchPar
 		}
 		sel = l.selectionForHeader(nil, header)
 	}
+
 	if len(sel.Ordered) > 0 {
 		ok, queuePos := IsAuthorAllowed(sel, header.Coinbase)
 		if !ok {
@@ -362,7 +473,36 @@ func (l *LQC) Prepare(chain consensus.ChainHeaderReader, header *types.Header) e
 
 		queuePos := 0
 		var sel HybridSelection
-		if l.registryProtocolEnabled(header.Number) {
+
+		// Block 1 is the open activation block. Do not ask the canonical
+		// registry to select the genesis bootstrap identity. The actual
+		// coinbase supplied by the miner is the activation producer.
+		if header.Number.Uint64() == 1 {
+			if header.Coinbase == (common.Address{}) {
+				return errors.New("lqc block 1 requires producer coinbase")
+			}
+
+			if l.registryProtocolEnabled(header.Number) {
+				var err error
+				sel, err = l.prepareCanonicalRegistryExtraMaybeWorkV1Lab(
+					chain,
+					header,
+				)
+				if err != nil {
+					return err
+				}
+			}
+
+			sel.Ordered = []HybridParticipant{{
+				Address:       header.Coinbase,
+				Payout:        header.Coinbase,
+				Bond:          big.NewInt(25),
+				RegisteredAt:  1,
+				LastHeartbeat: 1,
+				Status:        ParticipantActiveCandidate,
+			}}
+			sel.Producer = &sel.Ordered[0]
+		} else if l.registryProtocolEnabled(header.Number) {
 			var err error
 			sel, err = l.prepareCanonicalRegistryExtraMaybeWorkV1Lab(
 				chain,

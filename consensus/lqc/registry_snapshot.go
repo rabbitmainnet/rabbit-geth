@@ -47,7 +47,7 @@ func NewGenesisRegistrySnapshot(hash common.Hash, participants []common.Address)
 }
 
 func NewBootstrapRegistrySnapshot(number uint64, hash common.Hash, participants []common.Address) (*RegistrySnapshot, error) {
-	if hash == (common.Hash{}) || len(participants) == 0 {
+	if hash == (common.Hash{}) {
 		return nil, ErrInvalidRegistrySnapshot
 	}
 	registry := NewCanonicalRegistry()
@@ -106,6 +106,10 @@ func (s *RegistrySnapshot) Registry() (*CanonicalRegistry, error) {
 }
 
 func (s *RegistrySnapshot) ApplyHeader(chainID *big.Int, rules RegistrySnapshotRules, header *types.Header) (*RegistrySnapshot, error) {
+	return s.ApplyHeaderWithOpenActivation(chainID, rules, header, false)
+}
+
+func (s *RegistrySnapshot) ApplyHeaderWithOpenActivation(chainID *big.Int, rules RegistrySnapshotRules, header *types.Header, openActivation bool) (*RegistrySnapshot, error) {
 	registry, err := s.Registry()
 	if err != nil {
 		return nil, err
@@ -120,6 +124,24 @@ func (s *RegistrySnapshot) ApplyHeader(chainID *big.Int, rules RegistrySnapshotR
 	envelope, err := ValidateRegistryHeaderExtra(chainID, blockNumber, rules.ProofDifficulty, header.Extra)
 	if err != nil {
 		return nil, err
+	}
+	if openActivation {
+		registry = NewCanonicalRegistry()
+		if header.Coinbase == (common.Address{}) {
+			return nil, ErrUnauthorizedRegistryProducer
+		}
+		if err := registry.ActivatePermissionlessProducer(header.Coinbase, blockNumber); err != nil {
+			return nil, err
+		}
+		for _, operation := range envelope.Operations {
+			if err := registry.ApplyOperation(chainID, blockNumber, rules.ProofDifficulty, operation); err != nil {
+				return nil, err
+			}
+		}
+		if registry.Root() != envelope.RegistryRoot {
+			return nil, ErrRegistryRootMismatch
+		}
+		return newRegistrySnapshot(blockNumber, header.Hash(), registry), nil
 	}
 	ordered := registry.OrderedParticipantsForBlock(
 		header.ParentHash,

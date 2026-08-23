@@ -17,7 +17,7 @@ func TestParseScenariosRejectsInvalidValues(t *testing.T) {
 	}
 }
 
-func TestExactLCQSelectionExposesMassIdentityDominance(t *testing.T) {
+func TestWorkSeatSelectionRejectsMassIdentityDominance(t *testing.T) {
 	opts := options{
 		honest:       20,
 		blocks:       1000,
@@ -27,20 +27,20 @@ func TestExactLCQSelectionExposesMassIdentityDominance(t *testing.T) {
 		difficulty:   100000,
 	}
 	got := analyzeScenario(opts, 1000, 1_000_000)
-	if got.ProducerSharePercent < 94 {
-		t.Fatalf("producer share %.2f%% is unexpectedly low", got.ProducerSharePercent)
+	if got.ProducerSharePercent < 15 || got.ProducerSharePercent > 25 {
+		t.Fatalf("producer share %.2f%% does not track fixed 20%% work", got.ProducerSharePercent)
 	}
-	if got.FallbackSharePercent < 94 {
-		t.Fatalf("fallback share %.2f%% is unexpectedly low", got.FallbackSharePercent)
+	if got.FallbackSharePercent < 15 || got.FallbackSharePercent > 25 {
+		t.Fatalf("fallback share %.2f%% does not track fixed 20%% work", got.FallbackSharePercent)
 	}
-	if got.CommitteeSharePercent < 94 {
-		t.Fatalf("committee share %.2f%% is unexpectedly low", got.CommitteeSharePercent)
+	if got.CommitteeSharePercent < 15 || got.CommitteeSharePercent > 25 {
+		t.Fatalf("committee share %.2f%% does not track fixed 20%% work", got.CommitteeSharePercent)
 	}
-	if got.CommitteeMajorityPercent < 99 {
-		t.Fatalf("committee majority %.2f%% is unexpectedly low", got.CommitteeMajorityPercent)
+	if got.CommitteeMajorityPercent != 0 {
+		t.Fatalf("committee majority %.2f%%, want zero", got.CommitteeMajorityPercent)
 	}
-	if !got.DominatesProducerSelection || !got.DominatesCommittee {
-		t.Fatalf("mass identities did not trigger dominance flags: %+v", got)
+	if got.DominatesProducerSelection || got.DominatesCommittee {
+		t.Fatalf("mass identities received free dominance: %+v", got)
 	}
 }
 

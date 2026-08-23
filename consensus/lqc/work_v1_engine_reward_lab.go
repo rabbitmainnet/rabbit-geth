@@ -201,6 +201,9 @@ func (l *LQC) workV1EngineLabRewardSelection(
 		header.Number.Sign() <= 0 {
 		return HybridSelection{}, workV1EngineLabRewardLegacy
 	}
+	if header.Number.Uint64() > 1 && l.openActivationForHeader(chain, header) {
+		return HybridSelection{}, workV1EngineLabRewardEmergencyNoSubsidy
+	}
 
 	_, hasSource, err := WorkSelectionSourceEpochV1(
 		header.Number.Uint64(),

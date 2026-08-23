@@ -27,6 +27,7 @@ type RegistryProtocolStatus struct {
 	ActivationDelay      uint64
 	HeartbeatWindow      uint64
 	HeartbeatGrace       uint64
+	RecoveryTimeoutMs    uint64
 	MaxOperationLifetime uint64
 	PoolCapacity         uint64
 	RegistryRoot         common.Hash
@@ -181,7 +182,12 @@ func (l *LQC) registrySnapshotAt(chain consensus.ChainHeaderReader, number uint6
 		return nil, err
 	}
 	for index := len(pending) - 1; index >= 0; index-- {
-		base, err = base.ApplyHeader(chainID, l.registryRules(), pending[index])
+		base, err = base.ApplyHeaderWithOpenActivation(
+			chainID,
+			l.registryRules(),
+			pending[index],
+			l.openActivationForHeader(chain, pending[index]),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -276,14 +282,91 @@ func (l *LQC) canonicalSelectionForHeader(chain consensus.ChainHeaderReader, hea
 }
 
 func (l *LQC) prepareCanonicalRegistryExtra(chain consensus.ChainHeaderReader, header *types.Header) (HybridSelection, error) {
+	if chain == nil || header == nil || header.Number == nil {
+		return HybridSelection{}, errInvalidBlockNumber
+	}
+
+	// Block 1 and post-timeout recovery are open activation blocks. The
+	// producer is selected by the miner itself and seeds a fresh operational
+	// registry without changing execution state or chain history.
+	// We still build the canonical registry envelope so the subsequent
+	// Work V1/V3 hook has a valid RegistryRoot/Operations payload to extend.
+	if l.openActivationForHeader(chain, header) {
+		if header.Coinbase == (common.Address{}) {
+			return HybridSelection{}, errors.New("lqc block 1 requires producer coinbase")
+		}
+
+		registry := NewCanonicalRegistry()
+		if err := registry.ActivatePermissionlessProducer(
+			header.Coinbase,
+			header.Number.Uint64(),
+		); err != nil {
+			return HybridSelection{}, err
+		}
+
+		operations := make([]RegistryOperation, 0, MaxRegistryOperationsPerBlock)
+		if l.registryPool != nil {
+			l.registryPool.PruneExpired(header.Number.Uint64())
+			for _, operation := range l.registryPool.Pending(header.Number.Uint64()) {
+				if len(operations) >= MaxRegistryOperationsPerBlock {
+					break
+				}
+
+				candidate := registry.Clone()
+				chainID, chainErr := registryChainID(chain)
+				if chainErr != nil {
+					return HybridSelection{}, chainErr
+				}
+
+				if applyErr := candidate.ApplyOperation(
+					chainID,
+					header.Number.Uint64(),
+					l.registryRules().ProofDifficulty,
+					operation,
+				); applyErr != nil {
+					continue
+				}
+
+				registry = candidate
+				operations = append(operations, operation)
+			}
+		}
+
+		extra, err := EncodeRegistryHeaderExtra(
+			header.Number.Uint64(),
+			registry.Root(),
+			operations,
+		)
+		if err != nil {
+			return HybridSelection{}, err
+		}
+		header.Extra = extra
+
+		selection := HybridSelection{
+			Ordered: []HybridParticipant{{
+				Address:       header.Coinbase,
+				Payout:        header.Coinbase,
+				Bond:          big.NewInt(25),
+				RegisteredAt:  header.Number.Uint64(),
+				LastHeartbeat: header.Number.Uint64(),
+				Status:        ParticipantActiveCandidate,
+			}},
+		}
+		selection.Producer = &selection.Ordered[0]
+
+		return selection, nil
+	}
+
 	selection, parent, err := l.canonicalSelectionForHeader(chain, header)
 	if err != nil {
 		return HybridSelection{}, err
 	}
+
 	allowed, queuePos := IsAuthorAllowed(selection, header.Coinbase)
 	if !allowed {
 		return HybridSelection{}, fmt.Errorf("%w: %s", ErrUnauthorizedRegistryProducer, header.Coinbase)
 	}
+
 	registry, err := parent.Registry()
 	if err != nil {
 		return HybridSelection{}, err
@@ -304,6 +387,7 @@ func (l *LQC) prepareCanonicalRegistryExtra(chain consensus.ChainHeaderReader, h
 	if err := registry.MarkProducerHeartbeat(header.Coinbase, header.Number.Uint64()); err != nil {
 		return HybridSelection{}, err
 	}
+
 	operations := make([]RegistryOperation, 0, MaxRegistryOperationsPerBlock)
 	if l.registryPool != nil {
 		l.registryPool.PruneExpired(header.Number.Uint64())
@@ -311,22 +395,36 @@ func (l *LQC) prepareCanonicalRegistryExtra(chain consensus.ChainHeaderReader, h
 			if len(operations) >= MaxRegistryOperationsPerBlock {
 				break
 			}
+
 			candidate := registry.Clone()
 			chainID, chainErr := registryChainID(chain)
 			if chainErr != nil {
 				return HybridSelection{}, chainErr
 			}
-			if applyErr := candidate.ApplyOperation(chainID, header.Number.Uint64(), l.registryRules().ProofDifficulty, operation); applyErr != nil {
+
+			if applyErr := candidate.ApplyOperation(
+				chainID,
+				header.Number.Uint64(),
+				l.registryRules().ProofDifficulty,
+				operation,
+			); applyErr != nil {
 				continue
 			}
+
 			registry = candidate
 			operations = append(operations, operation)
 		}
 	}
-	header.Extra, err = EncodeRegistryHeaderExtra(header.Number.Uint64(), registry.Root(), operations)
+
+	header.Extra, err = EncodeRegistryHeaderExtra(
+		header.Number.Uint64(),
+		registry.Root(),
+		operations,
+	)
 	if err != nil {
 		return HybridSelection{}, err
 	}
+
 	return selection, nil
 }
 
@@ -398,6 +496,7 @@ func (l *LQC) RegistryStatus(chain consensus.ChainHeaderReader) (RegistryProtoco
 		ActivationDelay:      rules.ActivationDelay,
 		HeartbeatWindow:      rules.HeartbeatWindow,
 		HeartbeatGrace:       rules.HeartbeatGrace,
+		RecoveryTimeoutMs:    l.config.RecoveryTimeoutMs,
 		MaxOperationLifetime: MaxRegistryOperationLifetime,
 		PoolCapacity:         MaxRegistryPoolOperations,
 	}
@@ -469,9 +568,25 @@ func (l *LQC) verifyCanonicalRegistryHeader(chain consensus.ChainHeaderReader, h
 	if err != nil {
 		return HybridSelection{}, nil, err
 	}
-	child, err := parent.ApplyHeader(chainID, l.registryRules(), header)
+	child, err := parent.ApplyHeaderWithOpenActivation(
+		chainID,
+		l.registryRules(),
+		header,
+		l.openActivationForHeader(chain, header),
+	)
 	if err != nil {
 		return HybridSelection{}, nil, err
+	}
+	if l.openActivationForHeader(chain, header) {
+		selection = HybridSelection{Ordered: []HybridParticipant{{
+			Address:       header.Coinbase,
+			Payout:        header.Coinbase,
+			Bond:          big.NewInt(25),
+			RegisteredAt:  header.Number.Uint64(),
+			LastHeartbeat: header.Number.Uint64(),
+			Status:        ParticipantActiveCandidate,
+		}}}
+		selection.Producer = &selection.Ordered[0]
 	}
 	return selection, child, nil
 }

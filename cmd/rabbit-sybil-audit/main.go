@@ -20,7 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-const auditorVersion = "rabbit-lqc-sybil-auditor/1.0.0"
+const auditorVersion = "rabbit-lqc-sybil-auditor/2.0.0"
 
 type options struct {
 	honest         int
@@ -141,9 +141,9 @@ func run(opts options) error {
 	resistance := "PASS"
 	gate := "PASS"
 	findings := []string{
-		"Cada chave ECDSA cria uma identidade independente; o protocolo não reconhece controlador, pessoa ou dispositivo.",
-		"LightHash cobra trabalho somente no REGISTER; dividir o atacante em muitos endereços aumenta sua participação na fila.",
-		"Producer, fallbacks e committee usam a mesma ordenação por endereço, portanto a multiplicação de identidades afeta os três papéis.",
+		"Registro de endereço não cria vaga de producer, fallback ou committee.",
+		"Producer, fallbacks e committee são atribuídos por WorkSeat canônico; endereços repetidos ou divididos não alteram a quantidade de trabalho.",
+		"Cada cenário mantém exatamente o mesmo conjunto de ticket hashes do atacante e varia somente a quantidade de identidades controladas.",
 	}
 	if securityFailed {
 		resistance = "FAIL"
@@ -157,7 +157,7 @@ func run(opts options) error {
 		AuditExecution:  "PASS",
 		SybilResistance: resistance,
 		LaunchGate:      gate,
-		Method:          "ordenação exata consensus/lqc.DeterministicallyOrderParticipants + committee dinâmico real + operações REGISTER secp256k1/LightHash reais",
+		Method:          "consensus/lqc.BuildWorkSelectionV1 com trabalho fixo dividido entre identidades + operações REGISTER secp256k1/LightHash reais",
 		ChainID:         opts.chainID,
 		FallbackCount:   opts.fallbacks,
 		CommitteeMin:    opts.committeeMin,
@@ -172,6 +172,9 @@ func run(opts options) error {
 		if err := writeReport(opts.outputDir, rep); err != nil {
 			return err
 		}
+	}
+	if securityFailed {
+		return errors.New("Sybil launch gate blocked")
 	}
 	return nil
 }
@@ -196,18 +199,33 @@ func parseScenarios(value string) ([]int, error) {
 }
 
 func analyzeScenario(opts options, sybils int, hashesPerSecond float64) scenarioResult {
-	participants := make([]lqc.HybridParticipant, 0, opts.honest+sybils)
+	attackerSeats := opts.honest / 4
+	if attackerSeats < 1 {
+		attackerSeats = 1
+	}
+	seats := make([]lqc.WorkSeatV1, 0, opts.honest+attackerSeats)
 	attacker := make(map[common.Address]bool, sybils)
 	for i := 0; i < opts.honest; i++ {
-		participants = append(participants, auditParticipant("honest", i))
+		participant := auditParticipant("honest", i)
+		seats = append(seats, lqc.WorkSeatV1{
+			TicketHash:  crypto.Keccak256Hash([]byte("RABBIT-SYBIL-HONEST-WORK"), uint64Bytes(uint64(i))),
+			Participant: participant.Address,
+		})
 	}
+	attackerAddresses := make([]common.Address, 0, sybils)
 	for i := 0; i < sybils; i++ {
 		participant := auditParticipant("attacker", i)
-		participants = append(participants, participant)
 		attacker[participant.Address] = true
+		attackerAddresses = append(attackerAddresses, participant.Address)
+	}
+	for i := 0; i < attackerSeats; i++ {
+		seats = append(seats, lqc.WorkSeatV1{
+			TicketHash:  crypto.Keccak256Hash([]byte("RABBIT-SYBIL-ATTACKER-WORK"), uint64Bytes(uint64(i))),
+			Participant: attackerAddresses[i%len(attackerAddresses)],
+		})
 	}
 
-	total := uint64(len(participants))
+	total := uint64(len(seats))
 	committeeSize := lqc.ComputeCommitteeSizeWithBounds(total, opts.committeeMin, opts.committeeMax)
 	availableCommittee := uint64(0)
 	if total > 1+opts.fallbacks {
@@ -220,28 +238,32 @@ func analyzeScenario(opts options, sybils int, hashesPerSecond float64) scenario
 	result := scenarioResult{
 		HonestIdentities:                opts.honest,
 		AttackerIdentities:              sybils,
-		TotalIdentities:                 len(participants),
+		TotalIdentities:                 opts.honest + sybils,
 		Blocks:                          opts.blocks,
 		CommitteeSize:                   committeeSize,
-		TheoreticalAttackerSharePercent: percent(float64(sybils), float64(len(participants))),
+		TheoreticalAttackerSharePercent: percent(float64(attackerSeats), float64(len(seats))),
 	}
-	parentHash := crypto.Keccak256Hash([]byte("RABBIT-LQC-SYBIL-AUDIT-V1"), uint64Bytes(uint64(sybils)))
 	for block := uint64(1); block <= opts.blocks; block++ {
-		ordered := lqc.DeterministicallyOrderParticipants(participants, parentHash, block)
-		if len(ordered) == 0 {
-			continue
+		selectionSeed := crypto.Keccak256Hash(
+			[]byte("RABBIT-LQC-SYBIL-AUDIT-V2"),
+			uint64Bytes(block),
+		)
+		selection, err := lqc.BuildWorkSelectionV1(
+			seats,
+			selectionSeed,
+			opts.fallbacks,
+			committeeSize,
+		)
+		if err != nil || selection.Producer == nil {
+			panic(fmt.Sprintf("auditor WorkSeat selection failed: %v", err))
 		}
-		if attacker[ordered[0].Address] {
+		if attacker[selection.Producer.Participant] {
 			result.ProducerWins++
 		}
-		fallbackEnd := 1 + int(opts.fallbacks)
-		if fallbackEnd > len(ordered) {
-			fallbackEnd = len(ordered)
-		}
-		allFrontAttacker := attacker[ordered[0].Address]
-		for _, participant := range ordered[1:fallbackEnd] {
+		allFrontAttacker := attacker[selection.Producer.Participant]
+		for _, seat := range selection.Fallbacks {
 			result.FallbackSeats++
-			if attacker[participant.Address] {
+			if attacker[seat.Participant] {
 				result.AttackerFallbackSeats++
 			} else {
 				allFrontAttacker = false
@@ -250,23 +272,18 @@ func analyzeScenario(opts options, sybils int, hashesPerSecond float64) scenario
 		if allFrontAttacker {
 			result.ProducerAndFallbackTakeovers++
 		}
-		committeeEnd := fallbackEnd + int(committeeSize)
-		if committeeEnd > len(ordered) {
-			committeeEnd = len(ordered)
-		}
 		attackerCommittee := uint64(0)
-		for _, participant := range ordered[fallbackEnd:committeeEnd] {
+		for _, seat := range selection.Committee {
 			result.CommitteeSeats++
-			if attacker[participant.Address] {
+			if attacker[seat.Participant] {
 				result.AttackerCommitteeSeats++
 				attackerCommittee++
 			}
 		}
-		seatsThisBlock := uint64(committeeEnd - fallbackEnd)
+		seatsThisBlock := uint64(len(selection.Committee))
 		if seatsThisBlock > 0 && attackerCommittee*2 > seatsThisBlock {
 			result.CommitteeMajorityBlocks++
 		}
-		parentHash = crypto.Keccak256Hash(parentHash.Bytes(), uint64Bytes(block), []byte("NEXT"))
 	}
 
 	result.ProducerSharePercent = percent(float64(result.ProducerWins), float64(opts.blocks))
@@ -274,7 +291,7 @@ func analyzeScenario(opts options, sybils int, hashesPerSecond float64) scenario
 	result.CommitteeSharePercent = percent(float64(result.AttackerCommitteeSeats), float64(result.CommitteeSeats))
 	result.CommitteeMajorityPercent = percent(float64(result.CommitteeMajorityBlocks), float64(opts.blocks))
 	result.ProducerAndFallbackPercent = percent(float64(result.ProducerAndFallbackTakeovers), float64(opts.blocks))
-	result.ExpectedLightHashAttempts = saturatingMultiply(uint64(sybils), opts.difficulty)
+	result.ExpectedLightHashAttempts = saturatingMultiply(uint64(attackerSeats), opts.difficulty)
 	if hashesPerSecond > 0 {
 		result.EstimatedProofSeconds = float64(result.ExpectedLightHashAttempts) / hashesPerSecond
 	}
@@ -389,6 +406,8 @@ func printReport(rep report) {
 	}
 	if rep.SybilResistance == "FAIL" {
 		fmt.Println("RESULTADO: o teste funcionou e encontrou uma vulnerabilidade estrutural; NÃO lançar a mainnet ainda.")
+	} else {
+		fmt.Println("RESULTADO: identidades adicionais sem WorkSeats adicionais não criaram poder de consenso.")
 	}
 }
 

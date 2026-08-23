@@ -1,0 +1,26 @@
+diff --git a/src/asm/configuration.asm b/src/asm/configuration.asm
+index a403c44..cfa2dad 100644
+--- a/src/asm/configuration.asm
++++ b/src/asm/configuration.asm
+@@ -5,7 +5,7 @@ RANDOMX_ARGON_LANES EQU 1t
+ RANDOMX_ARGON_SALT TEXTEQU <"RandomX\x03">
+ RANDOMX_CACHE_ACCESSES EQU 8t
+ RANDOMX_SUPERSCALAR_LATENCY EQU 170t
+-RANDOMX_DATASET_BASE_SIZE EQU 2147483648t
++RANDOMX_DATASET_BASE_SIZE EQU 1073741824t
+ RANDOMX_DATASET_EXTRA_SIZE EQU 33554368t
+ RANDOMX_PROGRAM_SIZE_V1 EQU 256t
+ RANDOMX_PROGRAM_SIZE_V2 EQU 384t
+diff --git a/src/configuration.h b/src/configuration.h
+index aac8914..3d6f0b4 100644
+--- a/src/configuration.h
++++ b/src/configuration.h
+@@ -47,7 +47,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #define RANDOMX_SUPERSCALAR_LATENCY   170
+ 
+ //Dataset base size in bytes. Must be a power of 2.
+-#define RANDOMX_DATASET_BASE_SIZE  2147483648
++#define RANDOMX_DATASET_BASE_SIZE  1073741824
+ 
+ //Dataset extra size. Must be divisible by 64.
+ #define RANDOMX_DATASET_EXTRA_SIZE 33554368

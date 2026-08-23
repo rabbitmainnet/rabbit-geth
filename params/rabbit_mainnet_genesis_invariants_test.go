@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/ethereum/go-ethereum/common"
 )
 
 type rabbitMainnetGenesisFile struct {
@@ -105,6 +103,7 @@ func TestRabbitMainnetGenesisFrozenInvariants(t *testing.T) {
 		l.ActivationDelay != 2 ||
 		l.HeartbeatWindow != 64 ||
 		l.HeartbeatGrace != 16 ||
+		l.RecoveryTimeoutMs != 3600000 ||
 		l.CommitteeSize != 0 ||
 		l.FallbackCount != 5 ||
 		l.JailBlocks != 256 ||
@@ -118,9 +117,8 @@ func TestRabbitMainnetGenesisFrozenInvariants(t *testing.T) {
 		t.Fatalf("minBond = %v, want 25", l.MinBond)
 	}
 
-	wantBootstrap := common.HexToAddress("0xdA5bf4A009e63D6dB4EfFaF5a2D6910f4D5BD2a0")
-	if len(l.BootstrapParticipants) != 1 || l.BootstrapParticipants[0] != wantBootstrap {
-		t.Fatalf("bootstrapParticipants = %v, want [%s]", l.BootstrapParticipants, wantBootstrap)
+	if len(l.BootstrapParticipants) != 0 {
+		t.Fatalf("bootstrapParticipants = %v, want permissionless empty genesis", l.BootstrapParticipants)
 	}
 
 	const treasury = "0x7c9AA336B2325C1e34c0d00D9b7d6aaDa61D8080"

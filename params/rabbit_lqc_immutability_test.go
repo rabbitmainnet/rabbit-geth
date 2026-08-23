@@ -21,7 +21,7 @@ func rabbitMainnetLQCImmutabilityFixture() *LQCConfig {
 		ActivityWindow:        128,
 		EpochLength:           128,
 		RegistryMode:          "native",
-		BootstrapParticipants: []common.Address{common.HexToAddress("0xdA5bf4A009e63D6dB4EfFaF5a2D6910f4D5BD2a0")},
+		BootstrapParticipants: nil,
 		RegistryProtocolBlock: 1,
 		OpenRegistry:          false,
 		BootstrapOnlyUntil:    0,
@@ -29,6 +29,7 @@ func rabbitMainnetLQCImmutabilityFixture() *LQCConfig {
 		ActivationDelay:       2,
 		HeartbeatWindow:       64,
 		HeartbeatGrace:        16,
+		RecoveryTimeoutMs:     3600000,
 		CommitteeSize:         0,
 		FallbackCount:         5,
 		JailBlocks:            256,
@@ -62,6 +63,7 @@ func TestRabbitLQCProtocolRulesAreImmutable(t *testing.T) {
 		"activationDelay":    func(c *LQCConfig) { c.ActivationDelay++ },
 		"heartbeatWindow":    func(c *LQCConfig) { c.HeartbeatWindow++ },
 		"heartbeatGrace":     func(c *LQCConfig) { c.HeartbeatGrace++ },
+		"recoveryTimeoutMs":  func(c *LQCConfig) { c.RecoveryTimeoutMs++ },
 		"committeeMin":       func(c *LQCConfig) { c.CommitteeMin++ },
 		"committeeMax":       func(c *LQCConfig) { c.CommitteeMax++ },
 		"committeeSize":      func(c *LQCConfig) { c.CommitteeSize++ },
@@ -76,7 +78,7 @@ func TestRabbitLQCProtocolRulesAreImmutable(t *testing.T) {
 		"minorSlashBps":      func(c *LQCConfig) { c.MinorSlashBps++ },
 		"majorSlashBps":      func(c *LQCConfig) { c.MajorSlashBps++ },
 		"bootstrapParticipants": func(c *LQCConfig) {
-			c.BootstrapParticipants[0] = common.HexToAddress("0x0000000000000000000000000000000000000001")
+			c.BootstrapParticipants = append(c.BootstrapParticipants, common.HexToAddress("0x0000000000000000000000000000000000000001"))
 		},
 	}
 

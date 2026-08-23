@@ -269,3 +269,53 @@ func TestWorkV1EngineLabV3RegistrySnapshotUsesRealHeaderHash(
 		t.Fatalf("second Header V3 failed after re-key: %v", err)
 	}
 }
+
+func TestWorkV1EngineLabZeroWorkIgnoresRegisteredSybilIdentities(
+	t *testing.T,
+) {
+	anchor := common.HexToAddress(
+		"0xffffffffffffffffffffffffffffffffffffffff",
+	)
+	registry := NewCanonicalRegistry()
+	if err := registry.ActivatePermissionlessProducer(anchor, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	const sybilCount = 5000
+	for i := 1; i <= sybilCount; i++ {
+		address := common.BigToAddress(big.NewInt(int64(i)))
+		registry.entries[address] = CanonicalParticipant{
+			Address:       address,
+			RegisteredAt:  2,
+			LastHeartbeat: 2,
+			Sequence:      1,
+			Active:        true,
+		}
+	}
+	parentHash := crypto.Keccak256Hash([]byte("zero-work-parent"))
+	parent := newRegistrySnapshot(9, parentHash, registry)
+	header := &types.Header{
+		Number:     big.NewInt(10),
+		ParentHash: parentHash,
+	}
+
+	selection, err := workV1EngineLabActivationFallback(parent, header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selection.Ordered) != 1 ||
+		selection.Producer == nil ||
+		selection.Producer.Address != anchor {
+		t.Fatalf(
+			"zero-work selection=%+v, want only activation anchor %s",
+			selection,
+			anchor,
+		)
+	}
+	if allowed, _ := IsAuthorAllowed(
+		selection,
+		common.BigToAddress(big.NewInt(1)),
+	); allowed {
+		t.Fatal("registered Sybil identity received a free zero-work seat")
+	}
+}

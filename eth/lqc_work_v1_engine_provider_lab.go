@@ -24,11 +24,14 @@ type workV1EnginePoolProviderLab struct {
 	) ([]lqc.SignedRandomXWorkTicketV1, bool)
 	removeIncluded func([]common.Hash) uint64
 	readmitRemoved func(lqc.WorkCommitCandidateV1) bool
+	epochLength    uint64
 
-	reservedBlock uint64
-	reservedEpoch uint64
-	reserved      []lqc.WorkCommitCandidateV1
-	removed       []workV1EnginePoolRemovalLab
+	reservedBlock  uint64
+	reservedEpoch  uint64
+	reserved       []lqc.WorkCommitCandidateV1
+	removed        []workV1EnginePoolRemovalLab
+	scannedEpoch   uint64
+	scannedThrough uint64
 }
 
 type workV1EnginePoolRemovalLab struct {
@@ -237,6 +240,113 @@ func (p *workV1EnginePoolProviderLab) reconcileReservationLocked() {
 	p.clearReservationLocked()
 }
 
+// reconcileCanonicalPendingLocked reconstructs the reservation reconciliation
+// that may have been lost when the process stopped immediately after a block
+// containing Work V1 tickets became canonical. The scan is bounded to the
+// active commit window (one configured epoch), never to the whole chain.
+func (p *workV1EnginePoolProviderLab) reconcileCanonicalPendingLocked(
+	blockNumber uint64,
+	commitEpoch uint64,
+) error {
+	if p == nil || p.pending == nil || p.includedAt == nil ||
+		p.removeIncluded == nil || p.epochLength == 0 ||
+		blockNumber == 0 || commitEpoch == 0 {
+		return nil
+	}
+	if commitEpoch > (^uint64(0)-1)/p.epochLength {
+		return errWorkV1EnginePoolProviderLab
+	}
+	windowStart := commitEpoch*p.epochLength + 1
+	if blockNumber <= windowStart {
+		return nil
+	}
+	if p.scannedEpoch != commitEpoch ||
+		p.scannedThrough < windowStart-1 ||
+		p.scannedThrough >= blockNumber {
+		p.scannedEpoch = commitEpoch
+		p.scannedThrough = windowStart - 1
+	}
+
+	pending, err := p.pending()
+	if err != nil {
+		return err
+	}
+	remaining := make(map[common.Hash]lqc.WorkCommitCandidateV1, len(pending))
+	for _, candidate := range pending {
+		if candidate.Signed.Ticket.Epoch == commitEpoch {
+			remaining[candidate.ProofHash] = candidate
+		}
+	}
+	for number := p.scannedThrough + 1; number < blockNumber; number++ {
+		included, canonical := p.includedAt(number)
+		if !canonical || len(included) == 0 || len(remaining) == 0 {
+			p.scannedThrough = number
+			continue
+		}
+		removed := make([]lqc.WorkCommitCandidateV1, 0)
+		for proofHash, candidate := range remaining {
+			for _, signed := range included {
+				if !workV1EnginePoolSignedEqualLab(candidate.Signed, signed) {
+					continue
+				}
+				if p.removeIncluded([]common.Hash{proofHash}) > 0 {
+					removed = append(removed, candidate)
+				}
+				delete(remaining, proofHash)
+				break
+			}
+		}
+		p.retainRemovedLocked(number, commitEpoch, removed)
+		p.scannedThrough = number
+	}
+	return nil
+}
+
+func (p *workV1EnginePoolProviderLab) reconcileCanonical(
+	blockNumber uint64,
+	commitEpoch uint64,
+) error {
+	if p == nil || blockNumber == 0 || commitEpoch == 0 {
+		return errWorkV1EnginePoolProviderLab
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.reconcileRemovedLocked(commitEpoch)
+	return p.reconcileCanonicalPendingLocked(blockNumber, commitEpoch)
+}
+
+func (p *workV1EnginePoolProviderLab) canonicalIncludes(
+	blockNumber uint64,
+	commitEpoch uint64,
+	candidate lqc.WorkCommitCandidateV1,
+) bool {
+	if p == nil || p.includedAt == nil || p.epochLength == 0 ||
+		blockNumber == 0 || commitEpoch == 0 ||
+		candidate.Signed.Ticket.Epoch != commitEpoch ||
+		commitEpoch > (^uint64(0)-1)/p.epochLength {
+		return false
+	}
+
+	windowStart := commitEpoch*p.epochLength + 1
+	if blockNumber <= windowStart {
+		return false
+	}
+	for number := windowStart; number < blockNumber; number++ {
+		included, canonical := p.includedAt(number)
+		if !canonical {
+			continue
+		}
+		for _, signed := range included {
+			if workV1EnginePoolSignedEqualLab(candidate.Signed, signed) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // provide is the engine-facing callback.
 //
 // Repeated Prepare calls for the same block receive the same reservation.
@@ -257,6 +367,12 @@ func (p *workV1EnginePoolProviderLab) provide(
 	defer p.mu.Unlock()
 
 	p.reconcileRemovedLocked(commitEpoch)
+	if err := p.reconcileCanonicalPendingLocked(
+		blockNumber,
+		commitEpoch,
+	); err != nil {
+		return nil, err
+	}
 
 	if p.reservedBlock == blockNumber &&
 		p.reservedEpoch == commitEpoch {
@@ -323,7 +439,7 @@ func wireWorkV1EngineTicketProviderMaybeLab(
 	}
 
 	provider := &workV1EnginePoolProviderLab{
-		pending: transport.Pending,
+		pending: transport.pendingRaw,
 		includedAt: func(
 			blockNumber uint64,
 		) ([]lqc.SignedRandomXWorkTicketV1, bool) {
@@ -356,7 +472,7 @@ func wireWorkV1EngineTicketProviderMaybeLab(
 		readmitRemoved: func(
 			candidate lqc.WorkCommitCandidateV1,
 		) bool {
-			ctx, err := transport.currentContext()
+			ctx, err := transport.currentContextRaw()
 			if err != nil ||
 				ctx.Epoch != candidate.Signed.Ticket.Epoch {
 				return false
@@ -379,6 +495,33 @@ func wireWorkV1EngineTicketProviderMaybeLab(
 					candidate,
 				)
 		},
+		epochLength: backend.blockchain.Config().LQC.EpochLength,
+	}
+	transport.reconcile = func(commitEpoch uint64) error {
+		head := backend.blockchain.CurrentHeader()
+		if head == nil || head.Number == nil || head.Number.Sign() < 0 ||
+			head.Number.Uint64() == ^uint64(0) {
+			return errWorkV1EnginePoolProviderLab
+		}
+		return provider.reconcileCanonical(
+			head.Number.Uint64()+1,
+			commitEpoch,
+		)
+	}
+	transport.included = func(
+		candidate lqc.WorkCommitCandidateV1,
+		commitEpoch uint64,
+	) bool {
+		head := backend.blockchain.CurrentHeader()
+		if head == nil || head.Number == nil || head.Number.Sign() < 0 ||
+			head.Number.Uint64() == ^uint64(0) {
+			return false
+		}
+		return provider.canonicalIncludes(
+			head.Number.Uint64()+1,
+			commitEpoch,
+			candidate,
+		)
 	}
 
 	return lqc.SetWorkV1EngineLabTicketProvider(

@@ -1,4 +1,4 @@
-//go:build !rabbit_randomx || !linux || !cgo
+//go:build !rabbit_randomx || (!linux && !darwin && !windows) || !cgo
 
 package rabbitx
 

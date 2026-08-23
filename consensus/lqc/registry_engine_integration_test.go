@@ -59,7 +59,12 @@ func prepareCanonicalTestHeader(t *testing.T, engine *LQC, chain *testHeaderChai
 
 func decodePreparedRegistryExtra(t *testing.T, extra []byte) RegistryHeaderEnvelope {
 	t.Helper()
-	if envelope, err := DecodeLQCHeaderExtraV3(extra, MaxWorkTicketsPerBlockV1); err == nil {
+
+	envelope, err := DecodeLQCHeaderExtraV3(
+		extra,
+		MaxWorkTicketsPerBlockV1,
+	)
+	if err == nil {
 		return RegistryHeaderEnvelope{
 			Version:      RegistryHeaderEnvelopeVersion,
 			BlockNumber:  envelope.BlockNumber,
@@ -67,11 +72,11 @@ func decodePreparedRegistryExtra(t *testing.T, extra []byte) RegistryHeaderEnvel
 			Operations:   envelope.RegistryOperations,
 		}
 	}
-	envelope, err := DecodeRegistryHeaderExtra(extra)
-	if err != nil {
-		t.Fatal(err)
+	registryEnvelope, registryErr := DecodeRegistryHeaderExtra(extra)
+	if registryErr != nil {
+		t.Fatalf("prepared header is neither Registry V2 nor LQC V3: v3=%v v2=%v", err, registryErr)
 	}
-	return envelope
+	return registryEnvelope
 }
 
 func TestRegistryProtocolActivationKeepsLegacyBeforeFork(t *testing.T) {
@@ -96,7 +101,6 @@ func TestRegistryProtocolActivationKeepsLegacyBeforeFork(t *testing.T) {
 	}
 	chain.headers[header1.Hash()] = header1
 	chain.current = header1
-
 	header2 := prepareCanonicalTestHeader(t, engine, chain, header1)
 	if !IsRegistryHeaderExtra(header2.Extra) {
 		t.Fatal("activation block did not use canonical registry envelope")
@@ -125,6 +129,89 @@ func TestRegistryProtocolActivationAtBlockOneDoesNotDelayBootstrap(t *testing.T)
 	}
 	if err := engine.VerifyHeader(chain, header1); err != nil {
 		t.Fatalf("bootstrap producer rejected at block-one activation: %v", err)
+	}
+}
+
+func TestPermissionlessBlockOneAndRecoveryReopenRegistry(t *testing.T) {
+	producers := testParticipants(t, 2)
+	config := canonicalRegistryEngineConfig(nil, 1)
+	config.RegistryMode = "native"
+	config.RecoveryTimeoutMs = 60_000
+	db := rawdb.NewMemoryDatabase()
+	engine := New(config, db)
+	genesis := &types.Header{Number: big.NewInt(0), Time: 100, GasLimit: 30_000_000}
+	chain := canonicalRegistryTestChain(config, genesis)
+
+	header1 := &types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     big.NewInt(1),
+		Coinbase:   producers[0],
+		Time:       110,
+		GasLimit:   genesis.GasLimit,
+	}
+	if err := engine.Prepare(chain, header1); err != nil {
+		t.Fatalf("prepare permissionless block 1: %v", err)
+	}
+	signTestHeader(t, chain.Config().ChainID, header1)
+	if err := engine.VerifyHeader(chain, header1); err != nil {
+		t.Fatalf("verify permissionless block 1: %v", err)
+	}
+	chain.headers[header1.Hash()] = header1
+	chain.current = header1
+	nextSelection := engine.selectionForHeaderMaybeWorkV1Lab(chain, &types.Header{
+		ParentHash: header1.Hash(),
+		Number:     big.NewInt(2),
+	})
+	if nextSelection.Producer == nil || nextSelection.Producer.Address != producers[0] {
+		t.Fatalf("block-1 activator was delayed from the next queue: %+v", nextSelection)
+	}
+
+	tooEarly := &types.Header{
+		ParentHash: header1.Hash(),
+		Number:     big.NewInt(2),
+		Coinbase:   producers[1],
+		Time:       header1.Time + 59,
+		GasLimit:   header1.GasLimit,
+	}
+	if err := engine.Prepare(chain, tooEarly); err == nil {
+		t.Fatal("unselected producer reopened registry before recovery timeout")
+	}
+
+	recovery := &types.Header{
+		ParentHash: header1.Hash(),
+		Number:     big.NewInt(2),
+		Coinbase:   producers[1],
+		Time:       header1.Time + 60,
+		GasLimit:   header1.GasLimit,
+	}
+	if err := engine.Prepare(chain, recovery); err != nil {
+		t.Fatalf("prepare permissionless recovery: %v", err)
+	}
+	signTestHeader(t, chain.Config().ChainID, recovery)
+	if err := engine.VerifyHeader(chain, recovery); err != nil {
+		t.Fatalf("verify permissionless recovery: %v", err)
+	}
+	snapshot, ok := engine.cachedRegistrySnapshot(2, recovery.Hash())
+	if !ok {
+		t.Fatal("recovery snapshot was not cached")
+	}
+	registry, err := snapshot.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	participants := registry.Participants()
+	if len(participants) != 1 || participants[0].Address != producers[1] {
+		t.Fatalf("recovery registry = %+v, want only %s", participants, producers[1])
+	}
+	chain.headers[recovery.Hash()] = recovery
+	chain.current = recovery
+	restarted := New(config, db)
+	nextSelection = restarted.selectionForHeaderMaybeWorkV1Lab(chain, &types.Header{
+		ParentHash: recovery.Hash(),
+		Number:     big.NewInt(3),
+	})
+	if nextSelection.Producer == nil || nextSelection.Producer.Address != producers[1] {
+		t.Fatalf("recovery activator was delayed from the next queue: %+v", nextSelection)
 	}
 }
 

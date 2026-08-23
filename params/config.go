@@ -298,18 +298,29 @@ var (
 		Ethash:                  nil,
 		Clique:                  nil,
 		LQC: &LQCConfig{
-			CommitteeMin:      32,
-			CommitteeMax:      128,
-			CommitteeRatioBps: 3000,
-			FallbackSlots:     5,
-			FallbackWindowMs:  3000,
-			TargetBlockTimeMs: 10000,
-			EraLength:         8409600,
-			ProofType:         "lighthash-v1",
-			ProofDifficulty:   100000,
-			ActivityWindow:    128,
-			EpochLength:       128,
-			RegistryMode:      "native",
+			CommitteeMin:          32,
+			CommitteeMax:          128,
+			CommitteeRatioBps:     3000,
+			FallbackSlots:         5,
+			FallbackWindowMs:      3000,
+			TargetBlockTimeMs:     10000,
+			EraLength:             8409600,
+			ProofType:             "lighthash-v1",
+			ProofDifficulty:       100000,
+			ActivityWindow:        128,
+			EpochLength:           128,
+			RegistryMode:          "native",
+			RegistryProtocolBlock: 1,
+			MinBond:               big.NewInt(25),
+			ActivationDelay:       2,
+			HeartbeatWindow:       64,
+			HeartbeatGrace:        16,
+			RecoveryTimeoutMs:     3600000,
+			FallbackCount:         5,
+			JailBlocks:            256,
+			MaxMissedTurns:        3,
+			MinorSlashBps:         500,
+			MajorSlashBps:         2000,
 		},
 	}
 
@@ -620,6 +631,7 @@ type LQCConfig struct {
 	ActivationDelay    uint64   `json:"activationDelay,omitempty"`
 	HeartbeatWindow    uint64   `json:"heartbeatWindow,omitempty"`
 	HeartbeatGrace     uint64   `json:"heartbeatGrace,omitempty"`
+	RecoveryTimeoutMs  uint64   `json:"recoveryTimeoutMs,omitempty"`
 	CommitteeSize      uint64   `json:"committeeSize,omitempty"`
 	FallbackCount      uint64   `json:"fallbackCount,omitempty"`
 	JailBlocks         uint64   `json:"jailBlocks,omitempty"`
@@ -644,9 +656,6 @@ func (c *LQCConfig) validateRegistryProtocol() error {
 	}
 	if c.ProofDifficulty == 0 {
 		return errors.New("registryProtocolBlock requires non-zero proofDifficulty")
-	}
-	if len(c.BootstrapParticipants) == 0 {
-		return errors.New("registryProtocolBlock requires bootstrapParticipants")
 	}
 	seen := make(map[common.Address]struct{}, len(c.BootstrapParticipants))
 	for index, participant := range c.BootstrapParticipants {
@@ -677,6 +686,7 @@ func (c *LQCConfig) registryProtocolRulesEqual(other *LQCConfig) bool {
 		c.OpenRegistry != other.OpenRegistry ||
 		c.BootstrapOnlyUntil != other.BootstrapOnlyUntil ||
 		c.ActivationDelay != other.ActivationDelay ||
+		c.RecoveryTimeoutMs != other.RecoveryTimeoutMs ||
 		c.HeartbeatWindow != other.HeartbeatWindow ||
 		c.HeartbeatGrace != other.HeartbeatGrace ||
 		c.CommitteeMin != other.CommitteeMin ||

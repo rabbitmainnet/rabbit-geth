@@ -106,6 +106,33 @@ func (r *CanonicalRegistry) Participant(address common.Address) (CanonicalPartic
 	return participant, ok
 }
 
+func (r *CanonicalRegistry) ActivatePermissionlessProducer(address common.Address, blockNumber uint64) error {
+	if r == nil || address == (common.Address{}) {
+		return ErrInvalidRegistryAddress
+	}
+
+	participant, exists := r.entries[address]
+	if !exists {
+		participant = CanonicalParticipant{
+			Address:       address,
+			RegisteredAt:  blockNumber,
+			LastHeartbeat: blockNumber,
+			Sequence:      0,
+			Active:        true,
+		}
+	} else {
+		participant.Active = true
+		participant.RegisteredAt = blockNumber
+		participant.LastHeartbeat = blockNumber
+		participant.MissedTurns = 0
+		participant.JailedUntil = 0
+		participant.Sequence = 0
+	}
+
+	r.entries[address] = participant
+	return nil
+}
+
 func (r *CanonicalRegistry) Participants() []CanonicalParticipant {
 	if r == nil {
 		return nil

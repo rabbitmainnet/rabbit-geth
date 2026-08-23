@@ -1,9 +1,11 @@
-//go:build linux && cgo && rabbit_randomx
+//go:build (linux || darwin || windows) && cgo && rabbit_randomx
 
 package rabbitx
 
 /*
-#cgo LDFLAGS: -lstdc++ -lpthread -ldl -lm
+#cgo linux LDFLAGS: -lstdc++ -lpthread -ldl -lm
+#cgo darwin LDFLAGS: -lc++ -lpthread -lm
+#cgo windows LDFLAGS: -lstdc++
 #include <stdint.h>
 #include <stddef.h>
 

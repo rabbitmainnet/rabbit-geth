@@ -226,13 +226,16 @@ func DecodeLQCHeaderExtraV3(
 	if maxWorkTickets == 0 {
 		return LQCHeaderEnvelopeV3{}, ErrInvalidWorkTicketLimitV3
 	}
-	if !IsRegistryHeaderExtra(extra) ||
-		len(extra) > MaxRegistryHeaderExtraSize {
+	if len(extra) > MaxRegistryHeaderExtraSize {
 		return LQCHeaderEnvelopeV3{}, ErrInvalidLQCHeaderExtraV3
 	}
 
 	payloadExtra, _, err := splitProducerSeal(extra)
-	if err != nil || !IsRegistryHeaderExtra(payloadExtra) {
+	if err != nil {
+		return LQCHeaderEnvelopeV3{}, ErrInvalidLQCHeaderExtraV3
+	}
+
+	if !IsRegistryHeaderExtra(payloadExtra) {
 		return LQCHeaderEnvelopeV3{}, ErrInvalidLQCHeaderExtraV3
 	}
 
@@ -251,6 +254,7 @@ func DecodeLQCHeaderExtraV3(
 	if envelope.Version != LQCHeaderEnvelopeVersionV3 {
 		return LQCHeaderEnvelopeV3{}, ErrUnsupportedLQCHeaderV3
 	}
+
 	if envelope.BlockNumber == 0 ||
 		envelope.RegistryRoot == (common.Hash{}) ||
 		envelope.WorkStateRoot == (common.Hash{}) {
@@ -295,6 +299,7 @@ func DecodeLQCHeaderExtraV3(
 	if err != nil {
 		return LQCHeaderEnvelopeV3{}, err
 	}
+
 	reencodedPayload, _, err := splitProducerSeal(reencoded)
 	if err != nil ||
 		!bytes.Equal(reencodedPayload, payloadExtra) {
