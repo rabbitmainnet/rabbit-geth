@@ -40,7 +40,14 @@ test -s build/librandomx.a
 '@
 
 $env:RANDOMX_NATIVE = $RandomX
-& $Bash -lc $BuildScript
+$BuildScriptPath = Join-Path $Work "build-randomx.sh"
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    $BuildScriptPath,
+    $BuildScript.Replace("`r`n", "`n"),
+    $Utf8NoBom
+)
+& $Bash $BuildScriptPath
 if ($LASTEXITCODE -ne 0) { throw "RandomX Windows build failed" }
 
 $env:PATH = "C:\msys64\mingw64\bin;" + $env:PATH
