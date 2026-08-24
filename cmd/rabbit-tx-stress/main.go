@@ -128,17 +128,17 @@ func main() {
 		os.Exit(1)
 	}
 	if err := writeJSON(opts.jsonPath, report); err != nil {
-		fmt.Fprintln(os.Stderr, "ERRO ao gravar JSON:", err)
+		fmt.Fprintln(os.Stderr, "ERROR writing JSON:", err)
 		os.Exit(1)
 	}
 	if err := writeMarkdown(opts.markdownPath, report); err != nil {
-		fmt.Fprintln(os.Stderr, "ERRO ao gravar resumo:", err)
+		fmt.Fprintln(os.Stderr, "ERROR writing summary:", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("AUDITORIA DE CARGA CONCLUÍDA")
+	fmt.Println("LOAD AUDIT COMPLETED")
 	fmt.Println("Status:", report.Status)
-	fmt.Printf("Transações: %d/%d | blocos: %d | nós: %d/%d\n",
+	fmt.Printf("Transactions: %d/%d | blocks: %d | nodes: %d/%d\n",
 		report.TransactionsPassed, report.TransactionsSent, len(report.Blocks), passingNodes(report.Nodes), len(report.Nodes))
 	fmt.Println("Taxas totais (wei):", report.FeesWei)
 	fmt.Println("Tips totais (wei):", report.TipsWei)
@@ -150,15 +150,15 @@ func main() {
 
 func parseFlags() options {
 	var opts options
-	flag.StringVar(&opts.base, "base", "/tmp/rabbit-20nodes", "diretório base dos nós")
-	flag.IntVar(&opts.nodes, "nodes", 20, "quantidade de nós")
-	flag.IntVar(&opts.senderNode, "sender-node", 20, "nó remetente financiado no laboratório")
-	flag.IntVar(&opts.rounds, "rounds", 5, "quantidade de lotes")
-	flag.IntVar(&opts.perRound, "per-round", 25, "transações por lote")
-	flag.StringVar(&opts.valueWei, "value", "1000000000000000", "valor de cada transferência em wei")
-	flag.StringVar(&opts.tipWei, "tip", "2000000000", "maxPriorityFeePerGas em wei")
-	flag.DurationVar(&opts.timeout, "timeout", 15*time.Minute, "tempo máximo do teste")
-	flag.StringVar(&opts.jsonPath, "json", "rabbit-tx-stress.json", "relatório JSON")
+	flag.StringVar(&opts.base, "base", "/tmp/rabbit-20nodes", "base node directory")
+	flag.IntVar(&opts.nodes, "nodes", 20, "number of nodes")
+	flag.IntVar(&opts.senderNode, "sender-node", 20, "funded sender node in the lab")
+	flag.IntVar(&opts.rounds, "rounds", 5, "number of batches")
+	flag.IntVar(&opts.perRound, "per-round", 25, "transactions per batch")
+	flag.StringVar(&opts.valueWei, "value", "1000000000000000", "value of each transfer in wei")
+	flag.StringVar(&opts.tipWei, "tip", "2000000000", "maxPriorityFeePerGas in wei")
+	flag.DurationVar(&opts.timeout, "timeout", 15*time.Minute, "maximum test duration")
+	flag.StringVar(&opts.jsonPath, "json", "rabbit-tx-stress.json", "JSON report")
 	flag.StringVar(&opts.markdownPath, "summary", "rabbit-tx-stress.md", "resumo Markdown")
 	flag.Parse()
 	return opts
@@ -166,15 +166,15 @@ func parseFlags() options {
 
 func run(ctx context.Context, opts options) (*report, error) {
 	if opts.nodes < 2 || opts.senderNode < 1 || opts.senderNode > opts.nodes || opts.rounds < 1 || opts.perRound < 1 {
-		return nil, errors.New("configuração inválida")
+		return nil, errors.New("invalid configuration")
 	}
 	value, ok := new(big.Int).SetString(opts.valueWei, 10)
 	if !ok || value.Sign() <= 0 {
-		return nil, fmt.Errorf("valor inválido: %s", opts.valueWei)
+		return nil, fmt.Errorf("invalid value: %s", opts.valueWei)
 	}
 	tipCap, ok := new(big.Int).SetString(opts.tipWei, 10)
 	if !ok || tipCap.Sign() <= 0 {
-		return nil, fmt.Errorf("tip inválido: %s", opts.tipWei)
+		return nil, fmt.Errorf("invalid tip: %s", opts.tipWei)
 	}
 
 	queryRPC, queryETH, err := dialNode(ctx, opts.base, 1)
@@ -206,7 +206,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 	}
 	start, err := queryETH.BlockByNumber(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("bloco inicial: %w", err)
+		return nil, fmt.Errorf("initial block: %w", err)
 	}
 	initialNonce, err := queryETH.NonceAtHash(ctx, sender, start.Hash())
 	if err != nil {
@@ -214,14 +214,14 @@ func run(ctx context.Context, opts options) (*report, error) {
 	}
 	initialBalance, err := queryETH.BalanceAtHash(ctx, sender, start.Hash())
 	if err != nil {
-		return nil, fmt.Errorf("saldo inicial: %w", err)
+		return nil, fmt.Errorf("initial balance: %w", err)
 	}
 
 	totalTransactions := opts.rounds * opts.perRound
 	minimumRequired := new(big.Int).Mul(new(big.Int).Set(value), big.NewInt(int64(totalTransactions)))
 	minimumRequired.Add(minimumRequired, new(big.Int).Mul(big.NewInt(int64(totalTransactions*21_000)), tipCap))
 	if initialBalance.Cmp(minimumRequired) <= 0 {
-		return nil, fmt.Errorf("saldo insuficiente para o teste: saldo=%s mínimo=%s", initialBalance, minimumRequired)
+		return nil, fmt.Errorf("insufficient balance for the test: balance=%s minimum=%s", initialBalance, minimumRequired)
 	}
 
 	result := &report{
@@ -245,15 +245,15 @@ func run(ctx context.Context, opts options) (*report, error) {
 	for round := 1; round <= opts.rounds; round++ {
 		head, err := queryETH.HeaderByNumber(ctx, nil)
 		if err != nil {
-			return nil, fmt.Errorf("cabeçalho antes do lote %d: %w", round, err)
+			return nil, fmt.Errorf("header before batch %d: %w", round, err)
 		}
 		if head.BaseFee == nil {
-			return nil, errors.New("cadeia London sem base fee")
+			return nil, errors.New("London chain without a base fee")
 		}
 		feeCap := new(big.Int).Mul(new(big.Int).Set(head.BaseFee), big.NewInt(3))
 		feeCap.Add(feeCap, tipCap)
 		var roundHashes []common.Hash
-		fmt.Printf("Lote %d/%d: assinando e enviando %d transações...\n", round, opts.rounds, opts.perRound)
+		fmt.Printf("Batch %d/%d: signing and sending %d transactions...\n", round, opts.rounds, opts.perRound)
 		for index := 0; index < opts.perRound; index++ {
 			recipient := recipients[((round-1)*opts.perRound+index)%len(recipients)]
 			unsigned := types.NewTx(&types.DynamicFeeTx{
@@ -270,7 +270,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 				return nil, fmt.Errorf("assinar nonce %d: %w", nextNonce, err)
 			}
 			if err := senderETH.SendTransaction(ctx, signed); err != nil {
-				return nil, fmt.Errorf("enviar nonce %d: %w", nextNonce, err)
+				return nil, fmt.Errorf("send nonce %d: %w", nextNonce, err)
 			}
 			hash := signed.Hash()
 			signedByHash[hash] = signed
@@ -279,7 +279,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 			nextNonce++
 		}
 		if err := waitReceipts(ctx, queryETH, roundHashes, receipts); err != nil {
-			return nil, fmt.Errorf("lote %d: %w", round, err)
+			return nil, fmt.Errorf("batch %d: %w", round, err)
 		}
 		fmt.Printf("Lote %d/%d confirmado.\n", round, opts.rounds)
 	}
@@ -305,7 +305,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 		if block == nil {
 			block, err = queryETH.BlockByHash(ctx, receipt.BlockHash)
 			if err != nil {
-				return nil, fmt.Errorf("bloco %s: %w", receipt.BlockHash, err)
+				return nil, fmt.Errorf("block %s: %w", receipt.BlockHash, err)
 			}
 			blockMap[receipt.BlockHash] = block
 		}
@@ -315,7 +315,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 		priority := new(big.Int).Sub(new(big.Int).Set(receipt.EffectiveGasPrice), block.BaseFee())
 		if priority.Sign() < 0 {
 			priority.SetInt64(0)
-			result.Errors = append(result.Errors, fmt.Sprintf("gas efetivo abaixo da base fee: %s", hash))
+			result.Errors = append(result.Errors, fmt.Sprintf("effective gas price below base fee: %s", hash))
 		}
 		fee := new(big.Int).Mul(new(big.Int).SetUint64(receipt.GasUsed), receipt.EffectiveGasPrice)
 		tip := new(big.Int).Mul(new(big.Int).SetUint64(receipt.GasUsed), priority)
@@ -384,7 +384,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 		}
 		allTransactions := audited == len(block.Transactions())
 		if !allTransactions {
-			result.Errors = append(result.Errors, fmt.Sprintf("bloco %d contém transações externas ao teste", block.NumberU64()))
+			result.Errors = append(result.Errors, fmt.Sprintf("block %d contains transactions outside the test", block.NumberU64()))
 		}
 		result.Blocks = append(result.Blocks, blockResult{
 			Number:          block.NumberU64(),
@@ -397,7 +397,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 		})
 	}
 	if len(blocks) == 0 {
-		return nil, errors.New("nenhum bloco de inclusão")
+		return nil, errors.New("no inclusion block")
 	}
 	finalBlock := blocks[len(blocks)-1]
 	result.FinalBlock = finalBlock.NumberU64()
@@ -408,7 +408,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 	}
 	result.SenderNonceAfter = finalNonce
 	if finalNonce != initialNonce+uint64(totalTransactions) {
-		result.Errors = append(result.Errors, fmt.Sprintf("nonce final=%d esperado=%d", finalNonce, initialNonce+uint64(totalTransactions)))
+		result.Errors = append(result.Errors, fmt.Sprintf("final nonce=%d expected=%d", finalNonce, initialNonce+uint64(totalTransactions)))
 	}
 
 	addresses := make([]common.Address, 0, len(expected))
@@ -419,17 +419,17 @@ func run(ctx context.Context, opts options) (*report, error) {
 	for _, address := range addresses {
 		before, err := queryETH.BalanceAtHash(ctx, address, start.Hash())
 		if err != nil {
-			return nil, fmt.Errorf("saldo inicial %s: %w", address, err)
+			return nil, fmt.Errorf("initial balance %s: %w", address, err)
 		}
 		after, err := queryETH.BalanceAtHash(ctx, address, finalBlock.Hash())
 		if err != nil {
-			return nil, fmt.Errorf("saldo final %s: %w", address, err)
+			return nil, fmt.Errorf("final balance %s: %w", address, err)
 		}
 		observed := new(big.Int).Sub(after, before)
 		want := expected[address]
 		match := observed.Cmp(want) == 0
 		if !match {
-			result.Errors = append(result.Errors, fmt.Sprintf("saldo divergente: %s", address))
+			result.Errors = append(result.Errors, fmt.Sprintf("balance mismatch: %s", address))
 		}
 		result.Balances = append(result.Balances, balanceResult{
 			Address:       address.Hex(),
@@ -446,14 +446,14 @@ func run(ctx context.Context, opts options) (*report, error) {
 	syncErr := waitAllNodesCanonical(syncCtx, opts, finalBlock.NumberU64(), finalBlock.Hash())
 	cancelSync()
 	if syncErr != nil {
-		result.Errors = append(result.Errors, fmt.Sprintf("20 nós não confirmaram o bloco final: %v", syncErr))
+		result.Errors = append(result.Errors, fmt.Sprintf("20 nodes did not confirm the final block: %v", syncErr))
 		result.InvalidTests = []invalidResult{{Name: "canonical checkpoint before invalid tests", Status: "FAIL", Error: syncErr.Error()}}
 	} else {
 		result.InvalidTests = runInvalidTests(ctx, senderETH, privateKey, signer, chainID, sender, recipients[0], finalNonce, initialNonce, initialBalance, tipCap, signedByHash[hashes[0]])
 	}
 	for _, test := range result.InvalidTests {
 		if test.Status != "PASS" {
-			result.Errors = append(result.Errors, fmt.Sprintf("transação inválida não rejeitada: %s", test.Name))
+			result.Errors = append(result.Errors, fmt.Sprintf("invalid transaction was not rejected: %s", test.Name))
 		}
 	}
 	result.Nodes = verifyAllNodes(ctx, opts, result.Blocks, result.Transactions)
@@ -483,7 +483,7 @@ func firstAccount(ctx context.Context, client *rpc.Client) (common.Address, erro
 		return common.Address{}, err
 	}
 	if len(list) == 0 {
-		return common.Address{}, errors.New("nó sem conta")
+		return common.Address{}, errors.New("node has no account")
 	}
 	return list[0], nil
 }
@@ -508,7 +508,7 @@ func laboratoryRecipients(ctx context.Context, opts options, sender common.Addre
 		}
 	}
 	if len(recipients) == 0 {
-		return nil, errors.New("nenhum destinatário")
+		return nil, errors.New("no recipient")
 	}
 	return recipients, nil
 }
@@ -516,7 +516,7 @@ func laboratoryRecipients(ctx context.Context, opts options, sender common.Addre
 func laboratoryKey(base string, node int, sender common.Address) (*keystore.Key, error) {
 	passwordBytes, err := os.ReadFile(filepath.Join(base, "password.txt"))
 	if err != nil {
-		return nil, fmt.Errorf("senha do laboratório: %w", err)
+		return nil, fmt.Errorf("lab password: %w", err)
 	}
 	store := keystore.NewKeyStore(filepath.Join(base, fmt.Sprintf("node%d", node), "keystore"), keystore.LightScryptN, keystore.LightScryptP)
 	account, err := store.Find(accounts.Account{Address: sender})
@@ -529,7 +529,7 @@ func laboratoryKey(base string, node int, sender common.Address) (*keystore.Key,
 	}
 	key, err := keystore.DecryptKey(keyJSON, strings.TrimSpace(string(passwordBytes)))
 	if err != nil {
-		return nil, fmt.Errorf("descriptografar chave do laboratório: %w", err)
+		return nil, fmt.Errorf("decrypt lab key: %w", err)
 	}
 	return key, nil
 }
@@ -601,7 +601,7 @@ func runInvalidTests(ctx context.Context, client *ethclient.Client, key *keystor
 
 func rejected(name string, err error, expected ...string) invalidResult {
 	if err == nil {
-		return invalidResult{Name: name, Status: "FAIL", Error: "transação foi aceita"}
+		return invalidResult{Name: name, Status: "FAIL", Error: "transaction was accepted"}
 	}
 	message := strings.ToLower(err.Error())
 	for _, fragment := range expected {
@@ -609,7 +609,7 @@ func rejected(name string, err error, expected ...string) invalidResult {
 			return invalidResult{Name: name, Status: "PASS", Error: err.Error()}
 		}
 	}
-	return invalidResult{Name: name, Status: "FAIL", Error: "rejeição inesperada: " + err.Error()}
+	return invalidResult{Name: name, Status: "FAIL", Error: "unexpected rejection: " + err.Error()}
 }
 
 func waitAllNodesCanonical(ctx context.Context, opts options, number uint64, hash common.Hash) error {
@@ -659,7 +659,7 @@ func verifyAllNodes(ctx context.Context, opts options, blocks []blockResult, tra
 			candidate, err := ethClient.BlockByNumber(ctx, new(big.Int).SetUint64(block.Number))
 			if err != nil || candidate == nil || candidate.Hash().Hex() != block.Hash {
 				item.Status = "FAIL"
-				item.Error = fmt.Sprintf("bloco %d divergente: %v", block.Number, err)
+				item.Error = fmt.Sprintf("block %d mismatch: %v", block.Number, err)
 				break
 			}
 			item.Blocks++
@@ -684,7 +684,7 @@ func verifyAllNodes(ctx context.Context, opts options, blocks []blockResult, tra
 			item.Queued = status["queued"]
 			if item.Pending != "0x0" || item.Queued != "0x0" {
 				item.Status = "FAIL"
-				item.Error = fmt.Sprintf("txpool não vazio: pending=%s queued=%s", item.Pending, item.Queued)
+				item.Error = fmt.Sprintf("non-empty txpool: pending=%s queued=%s", item.Pending, item.Queued)
 			}
 		}
 		head, err := ethClient.BlockNumber(ctx)
@@ -755,44 +755,44 @@ func writeMarkdown(path string, report *report) error {
 		return err
 	}
 	defer file.Close()
-	fmt.Fprintln(file, "# Auditoria de carga e mempool — Rabbit Chain")
+	fmt.Fprintln(file, "# Load and mempool audit — Rabbit Chain")
 	fmt.Fprintln(file)
 	fmt.Fprintf(file, "**Status: %s**\n\n", report.Status)
-	fmt.Fprintf(file, "- Versão: `%s`\n", report.AuditVersion)
-	fmt.Fprintf(file, "- Blocos: `%d` até `%d`\n", report.StartBlock, report.FinalBlock)
+	fmt.Fprintf(file, "- Version: `%s`\n", report.AuditVersion)
+	fmt.Fprintf(file, "- Blocks: `%d` through `%d`\n", report.StartBlock, report.FinalBlock)
 	fmt.Fprintf(file, "- Lotes: `%d`\n", report.Rounds)
-	fmt.Fprintf(file, "- Transações aprovadas: `%d/%d`\n", report.TransactionsPassed, report.TransactionsSent)
-	fmt.Fprintf(file, "- Blocos de inclusão: `%d`\n", len(report.Blocks))
-	fmt.Fprintf(file, "- Valor total: `%s wei`\n", report.ValueWei)
+	fmt.Fprintf(file, "- Passing transactions: `%d/%d`\n", report.TransactionsPassed, report.TransactionsSent)
+	fmt.Fprintf(file, "- Inclusion blocks: `%d`\n", len(report.Blocks))
+	fmt.Fprintf(file, "- Total value: `%s wei`\n", report.ValueWei)
 	fmt.Fprintf(file, "- Taxas totais: `%s wei`\n", report.FeesWei)
 	fmt.Fprintf(file, "- Tips totais: `%s wei`\n", report.TipsWei)
 	fmt.Fprintf(file, "- Burn total: `%s wei`\n", report.BurnWei)
-	fmt.Fprintf(file, "- Nós aprovados: `%d/%d`\n", passingNodes(report.Nodes), len(report.Nodes))
+	fmt.Fprintf(file, "- Passing nodes: `%d/%d`\n", passingNodes(report.Nodes), len(report.Nodes))
 	fmt.Fprintln(file)
-	fmt.Fprintln(file, "## Blocos")
+	fmt.Fprintln(file, "## Blocks")
 	fmt.Fprintln(file)
-	fmt.Fprintln(file, "| Bloco | Hash | Producer | Transações | Auditadas | Exclusivo |")
+	fmt.Fprintln(file, "| Block | Hash | Producer | Transactions | Audited | Exclusive |")
 	fmt.Fprintln(file, "| ---: | --- | --- | ---: | ---: | --- |")
 	for _, block := range report.Blocks {
 		fmt.Fprintf(file, "| %d | `%s` | `%s` | %d | %d | %t |\n", block.Number, block.Hash, block.Producer, block.Transactions, block.AuditedTxs, block.AllTransactions)
 	}
 	fmt.Fprintln(file)
-	fmt.Fprintln(file, "## Transações inválidas")
+	fmt.Fprintln(file, "## Invalid transactions")
 	fmt.Fprintln(file)
 	for _, test := range report.InvalidTests {
 		fmt.Fprintf(file, "- **%s** — %s (`%s`)\n", test.Status, test.Name, test.Error)
 	}
 	fmt.Fprintln(file)
-	fmt.Fprintln(file, "## Saldos")
+	fmt.Fprintln(file, "## Balances")
 	fmt.Fprintln(file)
-	fmt.Fprintln(file, "| Papel | Endereço | Esperado (wei) | Observado (wei) | Confere |")
+	fmt.Fprintln(file, "| Role | Address | Expected (wei) | Observed (wei) | Matches |")
 	fmt.Fprintln(file, "| --- | --- | ---: | ---: | --- |")
 	for _, balance := range report.Balances {
 		fmt.Fprintf(file, "| %s | `%s` | %s | %s | %t |\n", balance.Roles, balance.Address, balance.ExpectedDelta, balance.ObservedDelta, balance.Match)
 	}
 	if len(report.Errors) > 0 {
 		fmt.Fprintln(file)
-		fmt.Fprintln(file, "## Inconsistências")
+		fmt.Fprintln(file, "## Inconsistencies")
 		fmt.Fprintln(file)
 		for _, item := range report.Errors {
 			fmt.Fprintf(file, "- %s\n", item)

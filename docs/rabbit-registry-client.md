@@ -1,35 +1,35 @@
-# Cliente do cadastro permissionless da Rabbit Chain
+# Rabbit Chain Permissionless Registry Client
 
-`rabbit-registry` cria e envia operações do cadastro LQC sem entregar a chave
-privada ao RPC. A prova LightHash e a assinatura são calculadas no computador
-do participante.
+`rabbit-registry` creates and submits LQC registry operations without exposing
+the private key to the RPC endpoint. The LightHash proof and signature are
+calculated on the participant's computer.
 
-## Fontes de chave
+## Key sources
 
-Use exatamente uma das opções:
+Use exactly one of these options:
 
-- `--keystore ARQUIVO --password-file ARQUIVO`: keystore JSON do geth;
-- `--key ARQUIVO`: chave ECDSA bruta com 64 caracteres hexadecimais.
+- `--keystore FILE --password-file FILE`: geth JSON keystore;
+- `--key FILE`: raw ECDSA key containing 64 hexadecimal characters.
 
-Arquivos de senha e chaves brutas precisam estar em um sistema de arquivos
-Linux e com permissão `0600`. Senhas e chaves nunca devem ser digitadas como
-argumento nem enviadas ao RPC.
+Password files and raw keys must be stored on a Linux filesystem with `0600`
+permissions. Passwords and keys must never be entered as command-line arguments
+or sent to the RPC endpoint.
 
-## Operações
+## Operations
 
 ```bash
 build/bin/rabbit-registry \
-  --rpc /caminho/do/geth.ipc \
-  --keystore /caminho/UTC--... \
-  --password-file /caminho/password.txt \
+  --rpc /path/to/geth.ipc \
+  --keystore /path/to/UTC--... \
+  --password-file /path/to/password.txt \
   --action register
 ```
 
-Depois do cadastro, use `--action heartbeat` para renovar a atividade ou
-`--action exit` para sair. `--dry-run` assina e valida sem enviar. O cliente
-consulta `lqc_registryParameters` e `lqc_registryParticipant`, rejeita leituras
-de heads diferentes, determina a sequência correta e limita a validade ao
-máximo aceito pelo consenso.
+After registration, use `--action heartbeat` to renew activity or
+`--action exit` to leave. `--dry-run` signs and validates without submitting.
+The client queries `lqc_registryParameters` and `lqc_registryParticipant`,
+rejects reads from different heads, determines the correct sequence, and limits
+validity to the maximum accepted by consensus.
 
-O RPC recebe apenas a operação pública já assinada: versão, ação, endereço,
-sequência, validade, nonce da prova e assinatura.
+The RPC endpoint receives only the already-signed public operation: version,
+action, address, sequence, validity, proof nonce, and signature.

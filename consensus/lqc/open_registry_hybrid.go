@@ -92,8 +92,8 @@ func normalizeHybridConfig(cfg HybridLQCConfig) HybridLQCConfig {
 	} else {
 		cfg.MinBond = new(big.Int).Set(cfg.MinBond)
 	}
-	// ActivationDelay=0 é um valor válido (sem atraso).
-	// Não substituir automaticamente por 64.
+	// ActivationDelay=0 is a valid value (no delay).
+	// Do not automatically replace it with 64.
 
 	if cfg.HeartbeatWindow == 0 {
 		cfg.HeartbeatWindow = 64
@@ -234,7 +234,7 @@ func IsHybridEligible(p HybridParticipant, block uint64, cfg HybridLQCConfig) bo
 		return false
 	}
 	if p.LastHeartbeat == 0 {
-		// Permite que participantes recém-criados produzam o primeiro bloco.
+		// Allow newly created participants to produce the first block.
 		if block > 1 {
 			log.Info("LQC FAIL", "reason", "heartbeat-zero")
 			return false
@@ -419,8 +419,8 @@ func FallbackAddresses(sel HybridSelection) []common.Address {
 }
 
 func IsAuthorAllowed(sel HybridSelection, author common.Address) (bool, int) {
-	// Toda a fila determinística pode assumir a produção.
-	// A posição define a janela mínima de publicação.
+	// The entire deterministic queue may take over production.
+	// The position defines the minimum publication window.
 	for queuePos, participant := range sel.Ordered {
 		if participant.Address == author {
 			return true, queuePos

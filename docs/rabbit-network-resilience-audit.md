@@ -1,31 +1,30 @@
-# Rabbit Chain — auditoria de resiliência do laboratório
+# Rabbit Chain — Lab Resilience Audit
 
-O script `scripts/rabbit-devnet/run-network-resilience-audit.sh` testa o
-laboratório já inicializado sem alterar os arquivos de genesis oficiais e sem
-alterar o consenso.
+The `scripts/rabbit-devnet/run-network-resilience-audit.sh` script tests the
+initialized lab without changing the official genesis files or consensus.
 
-Ele executa, nesta ordem:
+It performs these steps in order:
 
-1. convergência inicial dos 20 nós;
-2. três transações EIP-1559 sequenciais;
-3. desligamento de sete produtores;
-4. produção de blocos e uma transação com 13 produtores online;
-5. retorno e sincronização dos sete produtores;
-6. uma transação após o retorno;
-7. desligamento limpo dos 20 nós;
-8. reinício dos mesmos bancos de dados e validação do checkpoint anterior;
-9. retomada da produção e uma nova transação;
-10. auditoria final de recompensas e reward locker.
+1. verifies initial convergence of all 20 nodes;
+2. submits three sequential EIP-1559 transactions;
+3. shuts down seven producers;
+4. produces blocks and submits a transaction with 13 producers online;
+5. restarts and synchronizes the seven producers;
+6. submits a transaction after their return;
+7. cleanly shuts down all 20 nodes;
+8. restarts the same databases and validates the previous checkpoint;
+9. resumes block production and submits another transaction;
+10. performs a final reward and Reward Locker audit.
 
-Em qualquer erro ou interrupção, o manipulador de saída tenta religar e
-reconectar os 20 nós. O resultado é salvo em `audit-reports` e empacotado em um
-único arquivo `rabbit-network-resilience-result-*.tar.gz`.
+On any error or interruption, the exit handler attempts to restart and reconnect
+all 20 nodes. The result is saved in `audit-reports` and packaged as a single
+`rabbit-network-resilience-result-*.tar.gz` archive.
 
-O teste é exclusivo do laboratório `/tmp/rabbit-20nodes`. As contas, o saldo
-líquido de teste e o genesis runtime continuam fora da configuração oficial da
-Rabbit Chain.
+The test is exclusive to the `/tmp/rabbit-20nodes` lab. Its accounts, test net
+balance, and runtime genesis remain outside the official Rabbit Chain
+configuration.
 
-Desde a versão 1.0.1, o teste também valida a recuperação de forks usando o
-downloader completo do cliente. A recuperação encontra o ancestral comum e
-transfere blocos completos, incluindo transações e receipts; ela não cria
-blocos vazios a partir de cabeçalhos remotos.
+Since version 1.0.1, the test also validates fork recovery through the client's
+full downloader. Recovery finds the common ancestor and transfers complete
+blocks, including transactions and receipts; it does not create empty blocks
+from remote headers.

@@ -1,44 +1,46 @@
-# Rabbit Chain — laboratório e auditoria de transações
+# Rabbit Chain — Transaction Lab and Audit
 
-Este pacote acrescenta um teste de integração sem alterar o consenso e sem modificar os
-arquivos oficiais de genesis.
+This package adds an integration test without changing consensus or modifying
+the official genesis files.
 
-## Por que o laboratório precisa de um saldo líquido
+## Why the lab needs a liquid balance
 
-As recompensas dos blocos 1 a 100.000 são corretamente enviadas ao Reward Locker. Por isso,
-as contas dos produtores não têm RAB líquido para pagar uma transação durante um laboratório
-curto. O script do laboratório cria uma cópia temporária do genesis em
-`/tmp/rabbit-20nodes/genesis-runtime.json` e fornece 1.000 RAB à conta do node20 somente nessa
-rede descartável.
+Rewards from blocks 1 through 100,000 are correctly sent to the Reward Locker.
+Therefore, producer accounts do not have liquid RAB to pay for a transaction
+during a short lab run. The lab script creates a temporary genesis copy at
+`/tmp/rabbit-20nodes/genesis-runtime.json` and grants 1,000 RAB to the node 20
+account only on this disposable network.
 
-Os arquivos `networks/rabbit-devnet/genesis.json` e `networks/rabbit-mainnet/genesis.json` não
-são alterados. O laboratório anterior também é movido para um diretório de backup antes da
-reinicialização.
+The `networks/rabbit-devnet/genesis.json` and
+`networks/rabbit-mainnet/genesis.json` files are not changed. The previous lab
+is also moved to a backup directory before reinitialization.
 
-## O que é validado
+## Validated behavior
 
-O programa `cmd/rabbit-tx-audit` assina localmente, com o keystore criptografado do laboratório,
-uma transferência EIP-1559 de 1 RAB do node20 para o node2 e envia somente a transação assinada
-por IPC. Depois ele valida no estado histórico do node1:
+Using the lab's encrypted keystore, `cmd/rabbit-tx-audit` locally signs an
+EIP-1559 transfer of 1 RAB from node 20 to node 2 and submits only the signed
+transaction through IPC. It then validates the following against the historical
+state of node 1:
 
-- receipt bem-sucedido e inclusão no bloco canônico;
-- nonce e débito exato do remetente;
-- crédito exato do destinatário;
-- gas usado e taxa efetiva;
-- parte da base fee que foi queimada;
-- priority fee creditada ao produtor correto;
-- interação com as recompensas bloqueadas do mesmo bloco;
-- mesmo bloco e receipt observados pelos 20 nós.
+- successful receipt and inclusion in the canonical block;
+- sender nonce and exact debit;
+- exact recipient credit;
+- gas used and effective fee;
+- the burned portion of the base fee;
+- priority fee credited to the correct producer;
+- interaction with the locked rewards from the same block;
+- the same block and receipt observed by all 20 nodes.
 
-Em seguida, o script executa novamente o auditor de rewards até a ponta da cadeia. Os
-relatórios JSON e Markdown e os dados do auditor de rewards são reunidos em um único arquivo
-`rabbit-transaction-audit-result-*.tar.gz`.
+The script then runs the reward auditor again through the chain tip. The JSON
+and Markdown reports and reward-auditor data are collected in a single
+`rabbit-transaction-audit-result-*.tar.gz` archive.
 
-## Execução
+## Execution
 
-Primeiro compile e execute os testes dos módulos. Depois inicie novamente o laboratório com
-`scripts/rabbit-devnet/start-rabbit-20producers.sh` e execute
+First compile and run the module tests. Then restart the lab with
+`scripts/rabbit-devnet/start-rabbit-20producers.sh` and run
 `scripts/rabbit-devnet/run-transaction-audit.sh`.
 
-Este teste é uma linha de base para o engine atualmente ativo. A troca de `lqcv2` para `lqc`
-não faz parte deste pacote e só deve acontecer depois da auditoria de prontidão do LQC.
+This test is a baseline for the currently active engine. Switching from
+`lqcv2` to `lqc` is not part of this package and must occur only after the
+LQC readiness audit.

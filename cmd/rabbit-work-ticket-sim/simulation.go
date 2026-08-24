@@ -29,17 +29,17 @@ func runSimulation(opts options) (simulationReport, error) {
 		SlotsPerScenario:     opts.slots,
 		TicketsPerWorkUnit:   opts.ticketsPerWork,
 		SecurityProperties: []string{
-			"endereços sem prova não entram na seleção",
-			"cada ticket exige trabalho novo e expira após uma época",
-			"desafio inclui chain ID, época e checkpoint canônico",
-			"seed de seleção só fica conhecida depois do fechamento das provas",
-			"dividir a mesma capacidade entre mais endereços não cria tickets adicionais",
+			"addresses without proof do not enter selection",
+			"each ticket requires new work and expires after one epoch",
+			"the challenge includes chain ID, epoch, and canonical checkpoint",
+			"the selection seed becomes known only after proof submission closes",
+			"splitting the same capacity across more addresses does not create additional tickets",
 		},
 		RemainingRisks: []string{
-			"a chance continua proporcional ao trabalho computacional total, não a pessoas",
-			"dificuldade e capacidade por época precisam de ajuste determinístico",
-			"pool, persistência, reorg, expiração e sincronização ainda precisam ser implementados e auditados",
-			"resistência a grinding e manipulação do checkpoint precisa de testes adversariais ao vivo",
+			"probability remains proportional to total computational work, not people",
+			"difficulty and per-epoch capacity require deterministic adjustment",
+			"pooling, persistence, reorgs, expiration, and synchronization still need implementation and auditing",
+			"resistance to grinding and checkpoint manipulation requires live adversarial testing",
 		},
 	}
 
@@ -66,9 +66,9 @@ func runSimulation(opts options) (simulationReport, error) {
 		})
 	}
 
-	// A seed diferente para cada cenário produz pequena variação amostral, mas
-	// não muda a quantidade de tickets do controlador. Estes limites detectam
-	// amplificação material sem transformar ruído estatístico em falso FAIL.
+	// A different seed for each scenario produces minor sampling variation, but
+	// does not change the controller ticket count. These thresholds detect
+	// material amplification without turning statistical noise into a false FAIL.
 	if spread(candidateShares) > 10 || max(candidateShares) > 15 {
 		report.CandidateTicketRule = "FAIL"
 	}

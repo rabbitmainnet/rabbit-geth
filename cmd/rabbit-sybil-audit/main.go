@@ -97,26 +97,26 @@ func main() {
 
 func parseFlags() options {
 	var opts options
-	flag.IntVar(&opts.honest, "honest", 20, "quantidade de identidades honestas")
-	flag.StringVar(&opts.sybilScenarios, "sybils", "1,10,100,1000,5000", "cenários de identidades do atacante")
-	flag.Uint64Var(&opts.blocks, "blocks", 2000, "blocos determinísticos por cenário")
-	flag.Uint64Var(&opts.fallbacks, "fallbacks", 5, "quantidade de fallbacks LCQ")
-	flag.Uint64Var(&opts.committeeMin, "committee-min", 32, "committee mínimo")
-	flag.Uint64Var(&opts.committeeMax, "committee-max", 128, "committee máximo")
+	flag.IntVar(&opts.honest, "honest", 20, "number of honest identities")
+	flag.StringVar(&opts.sybilScenarios, "sybils", "1,10,100,1000,5000", "attacker identity scenarios")
+	flag.Uint64Var(&opts.blocks, "blocks", 2000, "deterministic blocks per scenario")
+	flag.Uint64Var(&opts.fallbacks, "fallbacks", 5, "number of LCQ fallbacks")
+	flag.Uint64Var(&opts.committeeMin, "committee-min", 32, "minimum committee")
+	flag.Uint64Var(&opts.committeeMax, "committee-max", 128, "maximum committee")
 	flag.Uint64Var(&opts.difficulty, "difficulty", 100000, "dificuldade LightHash")
-	flag.IntVar(&opts.proofSamples, "proof-samples", 3, "provas LightHash reais a executar")
+	flag.IntVar(&opts.proofSamples, "proof-samples", 3, "real LightHash proofs to run")
 	flag.Uint64Var(&opts.chainID, "chain-id", 928, "chain ID Rabbit")
-	flag.StringVar(&opts.outputDir, "output", "", "diretório para relatorio.json e resumo.md")
+	flag.StringVar(&opts.outputDir, "output", "", "directory for relatorio.json and resumo.md")
 	flag.Parse()
 	return opts
 }
 
 func run(opts options) error {
 	if opts.honest <= 0 || opts.blocks == 0 || opts.difficulty == 0 || opts.proofSamples <= 0 {
-		return errors.New("honest, blocks, difficulty e proof-samples devem ser maiores que zero")
+		return errors.New("honest, blocks, difficulty, and proof-samples must be greater than zero")
 	}
 	if opts.committeeMax > 0 && opts.committeeMin > opts.committeeMax {
-		return errors.New("committee-min não pode exceder committee-max")
+		return errors.New("committee-min cannot exceed committee-max")
 	}
 	sybils, err := parseScenarios(opts.sybilScenarios)
 	if err != nil {
@@ -125,7 +125,7 @@ func run(opts options) error {
 
 	proof, err := benchmarkProofs(opts)
 	if err != nil {
-		return fmt.Errorf("benchmark de LightHash: %w", err)
+		return fmt.Errorf("LightHash benchmark: %w", err)
 	}
 
 	results := make([]scenarioResult, 0, len(sybils))
@@ -141,14 +141,14 @@ func run(opts options) error {
 	resistance := "PASS"
 	gate := "PASS"
 	findings := []string{
-		"Registro de endereço não cria vaga de producer, fallback ou committee.",
-		"Producer, fallbacks e committee são atribuídos por WorkSeat canônico; endereços repetidos ou divididos não alteram a quantidade de trabalho.",
-		"Cada cenário mantém exatamente o mesmo conjunto de ticket hashes do atacante e varia somente a quantidade de identidades controladas.",
+		"Registering an address does not create a producer, fallback, or committee seat.",
+		"Producer, fallbacks, and committee are assigned by canonical WorkSeat; repeated or split addresses do not change the amount of work.",
+		"Each scenario keeps exactly the same set of attacker ticket hashes and varies only the number of controlled identities.",
 	}
 	if securityFailed {
 		resistance = "FAIL"
 		gate = "BLOCKED"
-		findings = append(findings, "Ao menos um cenário dá ao atacante maioria de producer selection ou de committee; a mainnet não deve ser lançada com esta regra.")
+		findings = append(findings, "At least one scenario gives the attacker a majority of producer selection or committee seats; mainnet must not launch with this rule.")
 	}
 
 	rep := report{
@@ -157,7 +157,7 @@ func run(opts options) error {
 		AuditExecution:  "PASS",
 		SybilResistance: resistance,
 		LaunchGate:      gate,
-		Method:          "consensus/lqc.BuildWorkSelectionV1 com trabalho fixo dividido entre identidades + operações REGISTER secp256k1/LightHash reais",
+		Method:          "consensus/lqc.BuildWorkSelectionV1 with fixed work split across identities + real secp256k1/LightHash REGISTER operations",
 		ChainID:         opts.chainID,
 		FallbackCount:   opts.fallbacks,
 		CommitteeMin:    opts.committeeMin,
@@ -185,7 +185,7 @@ func parseScenarios(value string) ([]int, error) {
 	for _, field := range strings.Split(value, ",") {
 		count, err := strconv.Atoi(strings.TrimSpace(field))
 		if err != nil || count <= 0 {
-			return nil, fmt.Errorf("cenário Sybil inválido %q", field)
+			return nil, fmt.Errorf("invalid Sybil scenario %q", field)
 		}
 		if !seen[count] {
 			seen[count] = true
@@ -193,7 +193,7 @@ func parseScenarios(value string) ([]int, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, errors.New("informe ao menos um cenário Sybil")
+		return nil, errors.New("provide at least one Sybil scenario")
 	}
 	return out, nil
 }
@@ -330,10 +330,10 @@ func benchmarkProofs(opts options) (proofBenchmark, error) {
 			operation.ProofNonce++
 		}
 		if err := lqc.ValidateRegistryOperation(chainID, 1, opts.difficulty, operation); err != nil {
-			return proofBenchmark{}, fmt.Errorf("operação assinada %d foi rejeitada: %w", i, err)
+			return proofBenchmark{}, fmt.Errorf("signed operation %d was rejected: %w", i, err)
 		}
 		if err := registry.ApplyOperation(chainID, 1, opts.difficulty, operation); err != nil {
-			return proofBenchmark{}, fmt.Errorf("aplicar operação canônica %d: %w", i, err)
+			return proofBenchmark{}, fmt.Errorf("apply canonical operation %d: %w", i, err)
 		}
 	}
 	elapsed := time.Since(started)
@@ -361,7 +361,7 @@ func deterministicPrivateKey(index int) (*ecdsa.PrivateKey, error) {
 			return key, nil
 		}
 	}
-	return nil, errors.New("não foi possível derivar chave determinística de auditoria")
+	return nil, errors.New("could not derive a deterministic audit key")
 }
 
 func auditParticipant(group string, index int) lqc.HybridParticipant {
@@ -391,12 +391,12 @@ func saturatingMultiply(a, b uint64) uint64 {
 }
 
 func printReport(rep report) {
-	fmt.Println("Rabbit Chain — auditoria obrigatória de ataque Sybil contra LCQ")
-	fmt.Println("Execução do auditor:", rep.AuditExecution)
-	fmt.Println("Resistência Sybil atual:", rep.SybilResistance)
-	fmt.Println("Gate de lançamento:", rep.LaunchGate)
+	fmt.Println("Rabbit Chain — mandatory Sybil attack audit against LCQ")
+	fmt.Println("Auditor execution:", rep.AuditExecution)
+	fmt.Println("Current Sybil resistance:", rep.SybilResistance)
+	fmt.Println("Launch gate:", rep.LaunchGate)
 	for _, scenario := range rep.Scenarios {
-		fmt.Printf("Sybil %d: produtor %.2f%% | fallbacks %.2f%% | committee %.2f%% | maioria committee %.2f%%\n",
+		fmt.Printf("Sybil %d: producer %.2f%% | fallbacks %.2f%% | committee %.2f%% | committee majority %.2f%%\n",
 			scenario.AttackerIdentities,
 			scenario.ProducerSharePercent,
 			scenario.FallbackSharePercent,
@@ -405,9 +405,9 @@ func printReport(rep report) {
 		)
 	}
 	if rep.SybilResistance == "FAIL" {
-		fmt.Println("RESULTADO: o teste funcionou e encontrou uma vulnerabilidade estrutural; NÃO lançar a mainnet ainda.")
+		fmt.Println("RESULT: the test worked and found a structural vulnerability; DO NOT launch mainnet yet.")
 	} else {
-		fmt.Println("RESULTADO: identidades adicionais sem WorkSeats adicionais não criaram poder de consenso.")
+		fmt.Println("RESULT: additional identities without additional WorkSeats did not create consensus power.")
 	}
 }
 
@@ -424,16 +424,16 @@ func writeReport(directory string, rep report) error {
 		return err
 	}
 	var text strings.Builder
-	fmt.Fprintln(&text, "# Auditoria obrigatória de ataque Sybil — Rabbit Chain")
+	fmt.Fprintln(&text, "# Mandatory Sybil attack audit — Rabbit Chain")
 	fmt.Fprintln(&text)
-	fmt.Fprintf(&text, "- Execução do auditor: **%s**\n", rep.AuditExecution)
-	fmt.Fprintf(&text, "- Resistência Sybil do consenso atual: **%s**\n", rep.SybilResistance)
-	fmt.Fprintf(&text, "- Gate da mainnet: **%s**\n", rep.LaunchGate)
+	fmt.Fprintf(&text, "- Auditor execution: **%s**\n", rep.AuditExecution)
+	fmt.Fprintf(&text, "- Current consensus Sybil resistance: **%s**\n", rep.SybilResistance)
+	fmt.Fprintf(&text, "- Mainnet gate: **%s**\n", rep.LaunchGate)
 	fmt.Fprintf(&text, "- Auditor: `%s`\n", rep.AuditorVersion)
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "## Resultado por cenário")
+	fmt.Fprintln(&text, "## Result by scenario")
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "| Honest | Sybils | Produtor atacante | Fallbacks atacante | Committee atacante | Blocos com maioria no committee | Controle producer+fallbacks |")
+	fmt.Fprintln(&text, "| Honest | Sybils | Attacker producer | Attacker fallbacks | Attacker committee | Blocks with committee majority | Producer+fallback control |")
 	fmt.Fprintln(&text, "|---:|---:|---:|---:|---:|---:|---:|")
 	for _, scenario := range rep.Scenarios {
 		fmt.Fprintf(&text, "| %d | %d | %.2f%% | %.2f%% | %.2f%% | %.2f%% | %.2f%% |\n",
@@ -447,18 +447,18 @@ func writeReport(directory string, rep report) error {
 		)
 	}
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "## Evidência criptográfica")
+	fmt.Fprintln(&text, "## Cryptographic evidence")
 	fmt.Fprintln(&text)
-	fmt.Fprintf(&text, "Foram produzidas e validadas **%d** operações REGISTER reais, assinadas com secp256k1, com LightHash de dificuldade **%d**. Todas foram aceitas pelo `CanonicalRegistry`.\n", rep.Proof.ValidatedSignedOperations, rep.Proof.Difficulty)
+	fmt.Fprintf(&text, "**%d** real REGISTER operations were produced and validated, signed with secp256k1, with LightHash difficulty **%d**. All were accepted by `CanonicalRegistry`.\n", rep.Proof.ValidatedSignedOperations, rep.Proof.Difficulty)
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "## Conclusão")
+	fmt.Fprintln(&text, "## Conclusion")
 	fmt.Fprintln(&text)
 	for _, finding := range rep.Findings {
 		fmt.Fprintf(&text, "- %s\n", finding)
 	}
 	if rep.LaunchGate == "BLOCKED" {
 		fmt.Fprintln(&text)
-		fmt.Fprintln(&text, "**MAINNET BLOQUEADA:** corrigir a resistência Sybil e repetir esta auditoria antes do lançamento.")
+		fmt.Fprintln(&text, "**MAINNET BLOCKED:** fix Sybil resistance and repeat this audit before launch.")
 	}
 	return os.WriteFile(filepath.Join(directory, "resumo.md"), []byte(text.String()), 0o644)
 }

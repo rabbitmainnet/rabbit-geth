@@ -1,60 +1,59 @@
-# Rabbit Chain — segurança básica do header LQC 1.0.1
+# Rabbit Chain — Basic LQC Header Security 1.0.1
 
-Esta etapa fecha apenas as validações básicas ausentes no header do consenso
-`consensus/lqc`. Ela não muda a economia da Rabbit Chain e não descongela a
-mainnet.
+This stage closes only the missing basic header validations in the
+`consensus/lqc` consensus implementation. It does not change Rabbit Chain
+economics or unblock mainnet.
 
-## Regras adicionadas
+## Added rules
 
-- rejeição de bloco com mais de 30 segundos no futuro;
-- rejeição segura de overflow no cálculo do slot do produtor/fallback;
-- rejeição de número de bloco que não caiba em `uint64`;
-- `gasLimit` limitado e vinculado ao `gasLimit` do bloco pai;
-- `gasUsed` nunca pode superar `gasLimit`;
-- `baseFee` obrigatória e calculada conforme EIP-1559 quando London está ativo;
-- `baseFee` proibida antes de London;
-- rejeição dos campos Shanghai, Cancun e Prague enquanto esses forks não
-  estiverem implementados e auditados no LQC;
-- tratamento do genesis como ponto inicial comprometido pelo hash, preservando
-  o `extraData` congelado da Rabbit mainnet.
+- reject blocks more than 30 seconds in the future;
+- safely reject overflow when calculating the producer or fallback slot;
+- reject block numbers that do not fit in `uint64`;
+- constrain `gasLimit` and bind it to the parent block's `gasLimit`;
+- never allow `gasUsed` to exceed `gasLimit`;
+- require `baseFee` and calculate it according to EIP-1559 when London is active;
+- prohibit `baseFee` before London;
+- reject Shanghai, Cancun, and Prague fields while those forks remain
+  unimplemented and unaudited in LQC;
+- treat genesis as the hash-committed starting point, preserving the frozen
+  Rabbit mainnet `extraData`.
 
-## O que não foi alterado
+## Unchanged behavior
 
-- recompensa imediata de mineração;
-- divisão produtor/committee;
-- halving e eras;
-- fila e cadastro permissionless;
+- immediate mining rewards;
+- producer and committee split;
+- halvings and eras;
+- permissionless queue and registry;
 - LightHash;
-- genesis da mainnet.
+- mainnet genesis.
 
-## Barreira ainda aberta
+## Remaining blocker
 
-Os blocos ainda precisam receber uma assinatura criptográfica verificável do
-produtor selecionado. Enquanto essa assinatura não estiver implementada,
-testada em múltiplos nós e auditada, a Rabbit mainnet continua bloqueada para
-lançamento.
+Blocks still need a verifiable cryptographic signature from the selected
+producer. Until this signature is implemented, tested across multiple nodes,
+and audited, Rabbit mainnet remains blocked from launch.
 
-## Validação
+## Validation
 
-Execute somente:
+Run only:
 
 ```bash
 cd "$HOME/projects/rabbit-geth" && chmod +x ./scripts/rabbit-devnet/validate-lqc-header-security.sh && ./scripts/rabbit-devnet/validate-lqc-header-security.sh
 ```
 
-O resultado esperado desta etapa é `SEGURANÇA BÁSICA DO HEADER: PASS`, seguido
-do aviso `MAINNET: NÃO LANÇAR AINDA`.
+The expected result for this stage is `BASIC HEADER SECURITY: PASS`, followed
+by the warning `MAINNET: DO NOT LAUNCH YET`.
 
-## Correção 1.0.1
+## Fix 1.0.1
 
-A suíte ampliada encontrou dois testes antigos incompatíveis com regras que já
-estavam no código:
+The expanded suite found two old tests that were incompatible with rules already
+present in the code:
 
-- um fixture construía um header com `gasLimit` zero; ele agora herda o
-  `gasLimit` do bloco pai, como um bloco válido deve fazer;
-- o teste do RPC ainda esperava validade fixa de 64 blocos, embora o protocolo
-  anuncie e use `MaxRegistryOperationLifetime = 256`; a expectativa agora é
-  calculada diretamente do parâmetro canônico.
+- one fixture constructed a header with a zero `gasLimit`; it now inherits the
+  parent block's `gasLimit`, as a valid block must;
+- the RPC test still expected a fixed 64-block validity period even though the
+  protocol advertises and uses `MaxRegistryOperationLifetime = 256`; the
+  expectation is now calculated directly from the canonical parameter.
 
-Essas duas mudanças são somente em testes. Nenhuma validação do header foi
-removida ou enfraquecida.
+These two changes affect tests only. No header validation was removed or
+weakened.

@@ -65,7 +65,7 @@ func parsePositiveList(value string) ([]int, error) {
 	for _, field := range strings.Split(value, ",") {
 		parsed, err := strconv.Atoi(strings.TrimSpace(field))
 		if err != nil || parsed <= 0 {
-			return nil, fmt.Errorf("valor inválido %q", field)
+			return nil, fmt.Errorf("invalid value %q", field)
 		}
 		if !seen[parsed] {
 			seen[parsed] = true
@@ -73,7 +73,7 @@ func parsePositiveList(value string) ([]int, error) {
 		}
 	}
 	if len(values) == 0 {
-		return nil, fmt.Errorf("lista vazia")
+		return nil, fmt.Errorf("empty list")
 	}
 	return values, nil
 }

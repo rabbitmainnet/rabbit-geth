@@ -1,37 +1,40 @@
-# Rabbit Chain — correção do locker apagado pelo EIP-158
+# Rabbit Chain — EIP-158 Reward Locker Deletion Fix
 
-Data: 2026-08-05  
-Evidência live: blocos 1–39 da cadeia reiniciada com o binário correto.  
-Escopo da correção: `core/vesting`; nenhuma regra monetária foi modificada.
+Date: 2026-08-05
+Live evidence: blocks 1–39 of the restarted chain using the correct binary.
+Fix scope: `core/vesting`; no monetary rule was changed.
 
-## Sintoma comprovado
+## Confirmed symptom
 
-O auditor esperava 46,8 RAB nos 39 blocos, mas observou zero em saldo líquido, locker,
-original locked balance e índice de vesting. O executável do node1 era o binário novo e
-continha `LQCV2 REWARD`, eliminando a hipótese de build antigo.
+The auditor expected 46.8 RAB across 39 blocks, but observed zero in the liquid
+balance, Reward Locker, original locked balance, and vesting index. The node 1
+executable was the new binary and contained `LQCV2 REWARD`, eliminating the
+possibility of an old build.
 
-## Causa
+## Cause
 
-O locker grava storage no endereço de sistema `0x0000000000000000000000000000000000001001`.
-Esse endereço não existe no genesis e era criado com saldo zero, nonce zero e código vazio.
+The Reward Locker writes storage at system address
+`0x0000000000000000000000000000000000001001`. This address does not exist in
+genesis and was created with a zero balance, zero nonce, and empty code.
 
-O devnet ativa EIP-158 no bloco zero. Para a limpeza de contas vazias, o geth considera
-apenas nonce, saldo e código; storage não torna uma conta não vazia. Assim,
-`IntermediateRoot(true)` apagava a conta de sistema e todo o storage recém-gravado ao fim de
-cada bloco.
+The devnet activates EIP-158 at block zero. For empty-account cleanup, geth
+considers only nonce, balance, and code; storage does not make an account
+non-empty. Consequently, `IntermediateRoot(true)` deleted the system account
+and all newly written storage at the end of every block.
 
-## Correção mínima
+## Minimal fix
 
-Antes da primeira inclusão no índice de vesting, o código garante nonce interno `1` para a
-conta de sistema. Nonce não cria RAB e não muda reward, supply, divisão 70/30, fila ou
-cronograma. Ele apenas impede que a limpeza EIP-158 classifique a conta como vazia.
+Before the first insertion into the vesting index, the code ensures an internal
+nonce of `1` for the system account. A nonce does not create RAB or change
+rewards, supply, the 70/30 split, the queue, or the schedule. It only prevents
+EIP-158 cleanup from classifying the account as empty.
 
-O teste `TestLockedRewardSurvivesEIP158Finalization` credita 1,2 RAB no bloco 1, executa
-`IntermediateRoot(true)` e exige que locked balance, original balance, índice e destinatário
-continuem presentes.
+The `TestLockedRewardSurvivesEIP158Finalization` test credits 1.2 RAB at block
+1, runs `IntermediateRoot(true)`, and requires the locked balance, original
+balance, index, and recipient to remain present.
 
-## Próxima validação
+## Next validation
 
-Compilar o cliente, reiniciar o laboratório temporário e executar o auditor desde o bloco 1.
-O resultado esperado por bloco é 0,84 RAB bloqueado para o producer e 0,072 RAB bloqueado
-para cada um dos cinco membros do committee, totalizando exatamente 1,2 RAB.
+Compile the client, restart the temporary lab, and run the auditor from block 1.
+The expected result per block is 0.84 RAB locked for the producer and 0.072 RAB
+locked for each of the five committee members, totaling exactly 1.2 RAB.

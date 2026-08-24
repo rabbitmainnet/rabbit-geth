@@ -1,24 +1,24 @@
-# Rabbit Chain — auditoria de carga, mempool e rejeições
+# Rabbit Chain — Load, Mempool, and Rejection Audit
 
-O executor `scripts/rabbit-devnet/run-transaction-stress-audit.sh` utiliza o
-laboratório de 20 produtores já inicializado. Ele não reinicia a rede e não
-modifica genesis ou consenso.
+The `scripts/rabbit-devnet/run-transaction-stress-audit.sh` runner uses the
+already-initialized 20-producer lab. It does not restart the network or modify
+genesis or consensus.
 
-O cenário padrão envia 125 transferências EIP-1559 em cinco lotes. Cada lote é
-submetido rapidamente com nonces consecutivos e aguardado até a confirmação
-canônica antes do próximo lote.
+The default scenario submits 125 EIP-1559 transfers in five batches. Each batch
+is submitted rapidly with consecutive nonces and awaited until canonical
+confirmation before the next batch.
 
-São verificados todos os receipts, taxas, tips, burn, saldos, nonces e blocos de
-inclusão. Todos os 20 nós precisam possuir os mesmos blocos e receipts de
-amostra, e todos os txpools precisam terminar vazios.
+The audit verifies every receipt, fee, tip, burn amount, balance, nonce, and
+inclusion block. All 20 nodes must have the same sampled blocks and receipts,
+and every transaction pool must finish empty.
 
-Ao final também são submetidas quatro transações que devem ser rejeitadas:
+Finally, it submits four transactions that must be rejected:
 
-1. repetição de uma transação já minerada;
-2. nonce antigo;
-3. valor superior ao saldo;
-4. chain ID incorreto.
+1. replay of an already-mined transaction;
+2. stale nonce;
+3. value exceeding the account balance;
+4. incorrect chain ID.
 
-Depois da carga, o auditor profissional de recompensas percorre novamente toda
-a cadeia para confirmar que transações e taxas não interferiram no Reward
-Locker nem na emissão programada.
+After the load test, the professional reward auditor traverses the entire chain
+again to confirm that transactions and fees did not interfere with the Reward
+Locker or scheduled issuance.

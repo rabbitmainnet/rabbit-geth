@@ -1,66 +1,75 @@
-# Rabbit Chain — auditoria de recompensas e revisão estática
+# Rabbit Chain — Reward Audit and Static Review
 
-Atualização: 2026-08-06  
-Escopo: `consensus/lqc`, Reward Locker, emissão, transações, recuperação de fork e consolidação da engine.
+Updated: 2026-08-06
+Scope: `consensus/lqc`, Reward Locker, issuance, transactions, fork recovery,
+and engine consolidation.
 
-## Evidência concluída antes da consolidação
+## Evidence completed before consolidation
 
-O laboratório de 20 produtores aprovou:
+The 20-producer lab passed:
 
-- 273/273 blocos de recompensa, com `327,6 RAB` esperados e observados;
-- diferença total de `0 wei` na emissão;
-- divisão 70/30, committee, locker e índice de vesting;
-- 125/125 transações EIP-1559 em cinco blocos e 20/20 nós;
-- tips, base fee, burn, saldos e rejeições inválidas;
-- parada e retorno de sete produtores;
-- parada e reinício de 20/20 nós preservando a cadeia;
-- recuperação determinística de fork;
-- 120 verificações de fronteira para lock, releases e halving.
+- 273 of 273 reward blocks, with `327.6 RAB` expected and observed;
+- a total issuance difference of `0 wei`;
+- the 70/30 split, committee, locker, and vesting index;
+- 125 of 125 EIP-1559 transactions across five blocks and 20 of 20 nodes;
+- tips, base fee, burn, balances, and invalid-transaction rejections;
+- shutdown and return of seven producers;
+- shutdown and restart of all 20 nodes while preserving the chain;
+- deterministic fork recovery;
+- 120 boundary checks for locking, releases, and halvings.
 
-Essa evidência foi produzida enquanto a factory ainda iniciava `consensus/lqcv2`. Ela validou
-o fluxo monetário compartilhado, mas também revelou que a engine ativa não era a versão
-canônica escolhida para o projeto.
+This evidence was produced while the factory still started `consensus/lqcv2`.
+It validated the shared monetary flow, but also revealed that the active engine
+was not the canonical implementation selected for the project.
 
-## Consolidação canônica
+## Canonical consolidation
 
-`eth/ethconfig.CreateConsensusEngine` agora instancia `consensus/lqc` para todo genesis com
-`config.lqc`. O `consensus/lqcv2` permanece no repositório somente como implementação legada
-e não participa da cadeia ativa.
+`eth/ethconfig.CreateConsensusEngine` now instantiates `consensus/lqc` for
+every genesis with `config.lqc`. The `consensus/lqcv2` implementation remains
+in the repository only as a legacy implementation and does not participate in
+the active chain.
 
-Antes da ativação, o `lqc` foi consolidado com as correções já aprovadas:
+Before activation, `lqc` was consolidated with the already-approved fixes:
 
-- `core/vesting.CreditReward` e `ReleaseAllUnlockedRewards` no fluxo comum de finalização;
-- proteção EIP-158 da conta de sistema do locker;
-- resolução do produtor local usando a fila do próximo bloco;
-- posição real do produtor/fallback devolvida ao minerador;
-- validação de pais presentes no mesmo lote de headers durante sincronização;
-- recuperação de fork e download de corpos, transações e receipts preservados;
-- `fallbackCount` e `committeeSize` do genesis usados pela engine e pelo auditor.
+- `core/vesting.CreditReward` and `ReleaseAllUnlockedRewards` in the common
+  finalization flow;
+- EIP-158 protection for the locker system account;
+- local producer resolution using the next block's queue;
+- the actual producer or fallback position returned to the miner;
+- validation of parents present in the same header batch during synchronization;
+- fork recovery and preserved downloading of bodies, transactions, and receipts;
+- `fallbackCount` and `committeeSize` from genesis used by the engine and
+  auditor.
 
-O primeiro halving foi mantido exatamente no bloco `8.409.600`. `RabbitChainConfig`,
-`RabbitDevnetChainConfig`, o genesis Rabbit mainnet e o genesis devnet estão alinhados nessa
-mesma altura.
+The first halving was kept exactly at block `8,409,600`.
+`RabbitChainConfig`, `RabbitDevnetChainConfig`, the Rabbit mainnet genesis,
+and the devnet genesis are aligned at this same height.
 
-## Validação obrigatória após instalar o pacote
+## Required validation after package installation
 
-O banco produzido pela engine anterior não deve ser reaproveitado como evidência da nova
-engine. A consolidação deve ser compilada e, em seguida, validada em um laboratório novo de
-20 produtores. Os mesmos testes de recompensas, transações, carga, perda de nós, retorno e
-reinício total devem ser repetidos antes de considerar a arquitetura aprovada.
+A database produced by the previous engine must not be reused as evidence for
+the new engine. The consolidated implementation must be compiled and then
+validated in a fresh 20-producer lab. The same reward, transaction, load,
+node-loss, return, and complete-restart tests must be repeated before the
+architecture can be considered approved.
 
-O primeiro laboratório com a engine canônica revelou uma regressão importante: `Prepare`
-substituía o horário real pelo mínimo do slot. Com o timestamp zero do genesis, todas as
-janelas de fallback pareciam vencidas, os nós produziram rapidamente em forks diferentes e
-o script antigo declarou um falso sucesso. A preparação agora preserva o horário real quando
-ele já atende ao mínimo, existe um teste de regressão específico e o script só aprova após
-verificar conectividade, diferença máxima de uma altura, hash comum e produtores distintos.
+The first lab using the canonical engine revealed an important regression:
+`Prepare` replaced the real timestamp with the slot minimum. Because genesis
+had a zero timestamp, every fallback window appeared expired, nodes rapidly
+produced different forks, and the old script reported a false success.
+Preparation now preserves the real timestamp when it already meets the minimum,
+a dedicated regression test exists, and the script passes only after checking
+connectivity, a maximum one-block height difference, a common hash, and distinct
+producers.
 
-## Pontos ainda abertos
+## Remaining items
 
-- A recompensa terminal de `0,15 RAB` continua indefinidamente, conforme a regra Era 3+.
-- Como o genesis não recebe reward, a Era 0 paga os blocos 1 a 8.409.599. Essa semântica foi
-  confirmada e mantida.
-- O release global ainda percorre o índice de vesting. O custo linear deve ser medido antes
-  de afirmar capacidade para milhões de mineradores.
-- O registry público definitivo precisa de uma auditoria própria antes do genesis oficial;
-  o laboratório bootstrap não prova entrada permissionless em escala pública.
+- The terminal reward of `0.15 RAB` continues indefinitely under the Era 3+
+  rule.
+- Because genesis receives no reward, Era 0 pays blocks 1 through 8,409,599.
+  This behavior was confirmed and retained.
+- Global release still traverses the vesting index. Its linear cost must be
+  measured before claiming support for millions of miners.
+- The definitive public registry requires a dedicated audit before the official
+  genesis; the bootstrap lab does not prove permissionless admission at public
+  scale.

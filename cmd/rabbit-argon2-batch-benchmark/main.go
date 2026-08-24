@@ -79,13 +79,13 @@ func main() {
 	opts := parseFlags()
 	result, err := run(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ERRO:", err)
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}
 	printReport(result)
 	if opts.outputDir != "" {
 		if err := writeReport(opts.outputDir, result); err != nil {
-			fmt.Fprintln(os.Stderr, "ERRO:", err)
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
 			os.Exit(1)
 		}
 	}
@@ -93,15 +93,15 @@ func main() {
 
 func parseFlags() options {
 	var opts options
-	flag.Uint64Var(&opts.memoryMiB, "memory-mib", 8, "memória reutilizável em MiB")
-	flag.StringVar(&opts.batchSizes, "batch-sizes", "1,8,16,32,64", "lotes separados por vírgula")
-	flag.UintVar(&opts.rounds, "rounds", 21, "rodadas por lote")
-	flag.Uint64Var(&opts.warmupOperations, "warmup-operations", 64, "operações de aquecimento iguais antes de cada perfil")
-	flag.Uint64Var(&opts.workers, "workers", 2, "trabalhadores independentes de verificação")
-	flag.Float64Var(&opts.weakSlowdown, "weak-slowdown", 4, "fator conservador para PC fraco")
-	flag.Float64Var(&opts.targetBlockTimeMs, "target-block-time-ms", 10000, "tempo-alvo congelado do bloco")
-	flag.Float64Var(&opts.verificationBudget, "verification-budget-ms", 5000, "orçamento reservado às verificações")
-	flag.StringVar(&opts.outputDir, "output", "", "diretório do relatório")
+	flag.Uint64Var(&opts.memoryMiB, "memory-mib", 8, "reusable memory in MiB")
+	flag.StringVar(&opts.batchSizes, "batch-sizes", "1,8,16,32,64", "comma-separated batch sizes")
+	flag.UintVar(&opts.rounds, "rounds", 21, "rounds per batch")
+	flag.Uint64Var(&opts.warmupOperations, "warmup-operations", 64, "identical warm-up operations before each profile")
+	flag.Uint64Var(&opts.workers, "workers", 2, "independent verification workers")
+	flag.Float64Var(&opts.weakSlowdown, "weak-slowdown", 4, "conservative slowdown factor for a low-end PC")
+	flag.Float64Var(&opts.targetBlockTimeMs, "target-block-time-ms", 10000, "frozen target block time")
+	flag.Float64Var(&opts.verificationBudget, "verification-budget-ms", 5000, "budget reserved for verifications")
+	flag.StringVar(&opts.outputDir, "output", "", "report directory")
 	flag.Parse()
 	return opts
 }
@@ -112,7 +112,7 @@ func run(opts options) (report, error) {
 		return report{}, err
 	}
 	if opts.memoryMiB == 0 || opts.memoryMiB > 128 || opts.rounds < 3 || opts.rounds > 41 || opts.warmupOperations == 0 || opts.warmupOperations > 4096 || opts.workers == 0 || opts.workers > 8 || opts.weakSlowdown < 1 || opts.targetBlockTimeMs <= 0 || opts.verificationBudget <= 0 || opts.verificationBudget > opts.targetBlockTimeMs {
-		return report{}, fmt.Errorf("parâmetros inválidos")
+		return report{}, fmt.Errorf("invalid parameters")
 	}
 	resetReusableWorkspace()
 	input := make([]byte, 40)
@@ -370,18 +370,18 @@ func rounded(values []float64) []float64 {
 }
 
 func printReport(result report) {
-	fmt.Println("Rabbit Chain — capacidade Argon2id reutilizável em lotes")
-	fmt.Printf("Configuração: %d MiB/workspace | %d workers | aquecimento %d operações/perfil | PC fraco %.1fx | bloco %.0f ms | orçamento %.0f ms\n", result.MemoryMiB, result.WorkerCount, result.WarmupOperations, result.WeakSlowdownFactor, result.TargetBlockTimeMs, result.VerificationBudgetMs)
+	fmt.Println("Rabbit Chain — reusable Argon2id batch capacity")
+	fmt.Printf("Configuration: %d MiB/workspace | %d workers | warm-up %d operations/profile | low-end PC %.1fx | block %.0f ms | budget %.0f ms\n", result.MemoryMiB, result.WorkerCount, result.WarmupOperations, result.WeakSlowdownFactor, result.TargetBlockTimeMs, result.VerificationBudgetMs)
 	for _, profile := range result.Profiles {
-		fmt.Printf("Lote %2d: P95 robusto %.3f ms | PC fraco %.3f ms | pior PC fraco %.3f ms | núcleo %s | orçamento %s | bloco %s | %s\n",
+		fmt.Printf("Batch %2d: robust P95 %.3f ms | low-end PC %.3f ms | worst low-end PC %.3f ms | core %s | budget %s | block %s | %s\n",
 			profile.BatchSize, profile.RobustP95Ms, profile.EstimatedWeakRobustP95Ms, profile.EstimatedWeakWorstRoundMs,
 			profile.StableCoreStatus, profile.VerificationBudgetStatus, profile.WorstRoundBlockTimeStatus, profile.ProfileStatus)
 	}
-	fmt.Printf("Workspace: %d bytes | alocações: %d | equivalência oficial: %t\n", result.WorkspaceBytes, result.WorkspaceAllocationCount, result.OfficialOutputMatches)
-	fmt.Println("Cada prova permanece sequencial; somente provas independentes são verificadas em paralelo.")
-	fmt.Println("Status geral:", result.OverallStatus)
-	fmt.Println("Implementação:", result.ImplementationStatus)
-	fmt.Println("Gate da mainnet:", result.MainnetGate)
+	fmt.Printf("Workspace: %d bytes | allocations: %d | official equivalence: %t\n", result.WorkspaceBytes, result.WorkspaceAllocationCount, result.OfficialOutputMatches)
+	fmt.Println("Each proof remains sequential; only independent proofs are verified in parallel.")
+	fmt.Println("Overall status:", result.OverallStatus)
+	fmt.Println("Implementation:", result.ImplementationStatus)
+	fmt.Println("Mainnet gate:", result.MainnetGate)
 }
 
 func writeReport(directory string, result report) error {
@@ -396,17 +396,17 @@ func writeReport(directory string, result report) error {
 		return err
 	}
 	var summary strings.Builder
-	fmt.Fprintln(&summary, "# Capacidade Argon2id reutilizável em lotes — Rabbit Chain")
+	fmt.Fprintln(&summary, "# Reusable Argon2id batch capacity — Rabbit Chain")
 	fmt.Fprintln(&summary)
-	fmt.Fprintf(&summary, "- Resultado geral: **%s**\n", result.OverallStatus)
-	fmt.Fprintf(&summary, "- Memória/fator fraco: **%d MiB / %.1fx**\n", result.MemoryMiB, result.WeakSlowdownFactor)
-	fmt.Fprintf(&summary, "- Aquecimento uniforme: **%d operações antes de cada perfil**\n", result.WarmupOperations)
-	fmt.Fprintf(&summary, "- Verificação paralela: **%d workers; %d MiB totais**\n", result.WorkerCount, result.WorkerCount*result.MemoryMiB)
-	fmt.Fprintf(&summary, "- Bloco/orçamento de verificação: **%.0f / %.0f ms**\n", result.TargetBlockTimeMs, result.VerificationBudgetMs)
+	fmt.Fprintf(&summary, "- Overall result: **%s**\n", result.OverallStatus)
+	fmt.Fprintf(&summary, "- Memory/low-end factor: **%d MiB / %.1fx**\n", result.MemoryMiB, result.WeakSlowdownFactor)
+	fmt.Fprintf(&summary, "- Uniform warm-up: **%d operations before each profile**\n", result.WarmupOperations)
+	fmt.Fprintf(&summary, "- Parallel verification: **%d workers; %d MiB total**\n", result.WorkerCount, result.WorkerCount*result.MemoryMiB)
+	fmt.Fprintf(&summary, "- Block/verification budget: **%.0f / %.0f ms**\n", result.TargetBlockTimeMs, result.VerificationBudgetMs)
 	for _, profile := range result.Profiles {
-		fmt.Fprintf(&summary, "- Lote %d: **%s** — P95 fraco %.3f ms; pior %.3f ms; outliers %v\n", profile.BatchSize, profile.ProfileStatus, profile.EstimatedWeakRobustP95Ms, profile.EstimatedWeakWorstRoundMs, profile.OutlierRounds)
+		fmt.Fprintf(&summary, "- Batch %d: **%s** — low-end P95 %.3f ms; worst %.3f ms; outliers %v\n", profile.BatchSize, profile.ProfileStatus, profile.EstimatedWeakRobustP95Ms, profile.EstimatedWeakWorstRoundMs, profile.OutlierRounds)
 	}
 	fmt.Fprintln(&summary)
-	fmt.Fprintln(&summary, "Cada prova Argon2id permanece sequencial; somente provas independentes são verificadas em paralelo. O benchmark não implementa tickets no consenso e não libera a mainnet.")
+	fmt.Fprintln(&summary, "Each Argon2id proof remains sequential; only independent proofs are verified in parallel. The benchmark does not implement consensus tickets or unblock mainnet.")
 	return os.WriteFile(filepath.Join(directory, "resumo.md"), []byte(summary.String()), 0o644)
 }

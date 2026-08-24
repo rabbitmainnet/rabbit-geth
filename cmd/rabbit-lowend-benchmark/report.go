@@ -9,22 +9,22 @@ import (
 )
 
 func printSummary(report benchmarkReport) {
-	fmt.Println("Rabbit Chain — benchmark de acessibilidade para PC fraco")
-	fmt.Println("Execução:", report.ExecutionStatus)
-	fmt.Println("Estabilidade das medições:", report.MeasurementStabilityStatus)
-	fmt.Println("Estabilidade contínua:", report.ContinuousStabilityStatus)
-	fmt.Println("Estabilidade isolada:", report.IsolatedStabilityStatus)
-	fmt.Println("Diagnóstico:", report.DiagnosticConclusion)
-	fmt.Println("Algoritmo protótipo:", report.PrototypeAlgorithm)
+	fmt.Println("Rabbit Chain — low-end PC accessibility benchmark")
+	fmt.Println("Execution:", report.ExecutionStatus)
+	fmt.Println("Measurement stability:", report.MeasurementStabilityStatus)
+	fmt.Println("Continuous stability:", report.ContinuousStabilityStatus)
+	fmt.Println("Isolated stability:", report.IsolatedStabilityStatus)
+	fmt.Println("Diagnostics:", report.DiagnosticConclusion)
+	fmt.Println("Prototype algorithm:", report.PrototypeAlgorithm)
 	fmt.Println("Perfil local encontrado:", report.CandidateProfileStatus)
 	if report.SelectedMemoryMiB > 0 {
 		fmt.Printf("Perfil local selecionado: %d MiB\n", report.SelectedMemoryMiB)
 	}
-	fmt.Println("Acessibilidade geral:", report.LowEndAccessibilityStatus)
-	fmt.Println("Implementação:", report.ImplementationStatus)
-	fmt.Println("Gate da mainnet:", report.MainnetGate)
+	fmt.Println("Overall accessibility:", report.LowEndAccessibilityStatus)
+	fmt.Println("Implementation:", report.ImplementationStatus)
+	fmt.Println("Mainnet gate:", report.MainnetGate)
 	for _, profile := range report.Profiles {
-		fmt.Printf("%d MiB: contínuo p95 %.3f ms/var %.2f%% | isolado p95 %.3f ms/var %.2f%% | PC fraco %.3f ms | %d verificações/bloco | qualifica=%t\n",
+		fmt.Printf("%d MiB: continuous p95 %.3f ms/var %.2f%% | isolated p95 %.3f ms/var %.2f%% | low-end PC %.3f ms | %d verifications/block | qualifies=%t\n",
 			profile.MemoryMiB,
 			profile.P95OperationMs,
 			profile.RoundVariabilityPercent,
@@ -38,7 +38,7 @@ func printSummary(report benchmarkReport) {
 	for _, anomaly := range report.MeasurementAnomalies {
 		fmt.Println("ANOMALIA:", anomaly)
 	}
-	fmt.Println("RESULTADO: medição concluída; nenhum algoritmo foi ativado no consenso.")
+	fmt.Println("RESULT: measurement completed; no algorithm was enabled in consensus.")
 }
 
 func writeReports(directory string, report benchmarkReport) error {
@@ -53,24 +53,24 @@ func writeReports(directory string, report benchmarkReport) error {
 		return err
 	}
 	var text strings.Builder
-	fmt.Fprintln(&text, "# Benchmark de acessibilidade — Rabbit Chain")
+	fmt.Fprintln(&text, "# Accessibility benchmark — Rabbit Chain")
 	fmt.Fprintln(&text)
-	fmt.Fprintf(&text, "- Ambiente: **%s/%s, %d CPUs lógicas, %s**\n", report.RuntimeOS, report.RuntimeArchitecture, report.RuntimeLogicalCPUs, report.GoVersion)
-	fmt.Fprintf(&text, "- Execução: **%s**\n", report.ExecutionStatus)
-	fmt.Fprintf(&text, "- Estabilidade das medições: **%s**\n", report.MeasurementStabilityStatus)
-	fmt.Fprintf(&text, "- Estabilidade contínua: **%s**\n", report.ContinuousStabilityStatus)
-	fmt.Fprintf(&text, "- Estabilidade isolada: **%s**\n", report.IsolatedStabilityStatus)
-	fmt.Fprintf(&text, "- Diagnóstico: **%s**\n", report.DiagnosticConclusion)
-	fmt.Fprintf(&text, "- Algoritmo protótipo: **%s**\n", report.PrototypeAlgorithm)
+	fmt.Fprintf(&text, "- Environment: **%s/%s, %d logical CPUs, %s**\n", report.RuntimeOS, report.RuntimeArchitecture, report.RuntimeLogicalCPUs, report.GoVersion)
+	fmt.Fprintf(&text, "- Execution: **%s**\n", report.ExecutionStatus)
+	fmt.Fprintf(&text, "- Measurement stability: **%s**\n", report.MeasurementStabilityStatus)
+	fmt.Fprintf(&text, "- Continuous stability: **%s**\n", report.ContinuousStabilityStatus)
+	fmt.Fprintf(&text, "- Isolated stability: **%s**\n", report.IsolatedStabilityStatus)
+	fmt.Fprintf(&text, "- Diagnostics: **%s**\n", report.DiagnosticConclusion)
+	fmt.Fprintf(&text, "- Prototype algorithm: **%s**\n", report.PrototypeAlgorithm)
 	fmt.Fprintf(&text, "- Perfil local: **%s**\n", report.CandidateProfileStatus)
 	if report.SelectedMemoryMiB > 0 {
 		fmt.Fprintf(&text, "- Perfil local selecionado: **%d MiB**\n", report.SelectedMemoryMiB)
 	}
-	fmt.Fprintf(&text, "- Acessibilidade para todos os PCs fracos: **%s**\n", report.LowEndAccessibilityStatus)
-	fmt.Fprintf(&text, "- Implementação: **%s**\n", report.ImplementationStatus)
+	fmt.Fprintf(&text, "- Accessibility for all low-end PCs: **%s**\n", report.LowEndAccessibilityStatus)
+	fmt.Fprintf(&text, "- Implementation: **%s**\n", report.ImplementationStatus)
 	fmt.Fprintf(&text, "- Mainnet: **%s**\n", report.MainnetGate)
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "| Memória | Contínuo p95 | Var. contínua | Isolado p95 | Var. isolada | PC fraco ms | Verificações | Dificuldade | Ticket PC fraco | 1000 tickets | Qualifica |")
+	fmt.Fprintln(&text, "| Memory | Continuous p95 | Continuous var. | Isolated p95 | Isolated var. | low-end PC ms | Verifications | Difficulty | Ticket low-end PC | 1000 tickets | Qualifies |")
 	fmt.Fprintln(&text, "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|")
 	for _, profile := range report.Profiles {
 		fmt.Fprintf(&text, "| %d MiB | %.3f | %.2f%% | %.3f | %.2f%% | %.3f | %d | %d | %.2f s | %.2f h | %t |\n",
@@ -89,15 +89,15 @@ func writeReports(directory string, report benchmarkReport) error {
 	}
 	if len(report.MeasurementAnomalies) > 0 {
 		fmt.Fprintln(&text)
-		fmt.Fprintln(&text, "## Anomalias de medição")
+		fmt.Fprintln(&text, "## Measurement anomalies")
 		fmt.Fprintln(&text)
 		for _, anomaly := range report.MeasurementAnomalies {
 			fmt.Fprintf(&text, "- %s\n", anomaly)
 		}
 	}
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "Este resultado mede somente a máquina local e projeta um PC quatro vezes mais lento. São necessários benchmarks físicos adicionais antes de escolher o algoritmo.")
+	fmt.Fprintln(&text, "This result measures only the local machine and projects performance for a PC four times slower. Additional physical benchmarks are required before selecting the algorithm.")
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "**O consenso e o genesis permanecem inalterados; a mainnet continua bloqueada.**")
+	fmt.Fprintln(&text, "**Consensus and genesis remain unchanged; mainnet remains blocked.**")
 	return os.WriteFile(filepath.Join(directory, "resumo.md"), []byte(text.String()), 0o644)
 }

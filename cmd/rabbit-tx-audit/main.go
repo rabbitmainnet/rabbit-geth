@@ -115,23 +115,23 @@ func main() {
 		os.Exit(1)
 	}
 	if err := writeJSON(opts.jsonPath, report); err != nil {
-		fmt.Fprintln(os.Stderr, "ERRO ao gravar JSON:", err)
+		fmt.Fprintln(os.Stderr, "ERROR writing JSON:", err)
 		os.Exit(1)
 	}
 	if err := writeMarkdown(opts.markdownPath, report); err != nil {
-		fmt.Fprintln(os.Stderr, "ERRO ao gravar resumo:", err)
+		fmt.Fprintln(os.Stderr, "ERROR writing summary:", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("AUDITORIA DE TRANSAÇÃO CONCLUÍDA")
+	fmt.Println("TRANSACTION AUDIT COMPLETED")
 	fmt.Println("Status:", report.Status)
-	fmt.Println("Transação:", report.TransactionHash)
-	fmt.Printf("Bloco: %d | produtor: %s\n", report.BlockNumber, report.Producer)
+	fmt.Println("Transaction:", report.TransactionHash)
+	fmt.Printf("Block: %d | producer: %s\n", report.BlockNumber, report.Producer)
 	fmt.Println("Valor (wei):", report.ValueWei)
-	fmt.Println("Taxa total (wei):", report.TransactionFeeWei)
-	fmt.Println("Tip do produtor (wei):", report.ProducerTipWei)
+	fmt.Println("Total fee (wei):", report.TransactionFeeWei)
+	fmt.Println("Producer tip (wei):", report.ProducerTipWei)
 	fmt.Println("Base fee queimada (wei):", report.BurnedBaseFeeWei)
-	fmt.Printf("Nós aprovados: %d/%d\n", passingNodes(report.Nodes), len(report.Nodes))
+	fmt.Printf("Passing nodes: %d/%d\n", passingNodes(report.Nodes), len(report.Nodes))
 	if report.Status != "PASS" {
 		os.Exit(2)
 	}
@@ -139,16 +139,16 @@ func main() {
 
 func parseFlags() options {
 	var opts options
-	flag.StringVar(&opts.base, "base", "/tmp/rabbit-20nodes", "diretório base dos nós")
-	flag.IntVar(&opts.nodes, "nodes", 20, "quantidade de nós")
-	flag.IntVar(&opts.senderNode, "sender-node", 20, "nó que possui a conta remetente financiada")
-	flag.IntVar(&opts.recipientNode, "recipient-node", 2, "nó cuja conta receberá a transferência")
-	flag.StringVar(&opts.valueWei, "value", "1000000000000000000", "valor transferido em wei")
-	flag.StringVar(&opts.tipWei, "tip", "2000000000", "maxPriorityFeePerGas em wei")
-	flag.DurationVar(&opts.timeout, "timeout", 3*time.Minute, "tempo máximo do teste")
-	flag.StringVar(&opts.jsonPath, "json", "rabbit-tx-audit.json", "relatório JSON")
+	flag.StringVar(&opts.base, "base", "/tmp/rabbit-20nodes", "base node directory")
+	flag.IntVar(&opts.nodes, "nodes", 20, "number of nodes")
+	flag.IntVar(&opts.senderNode, "sender-node", 20, "node containing the funded sender account")
+	flag.IntVar(&opts.recipientNode, "recipient-node", 2, "node whose account will receive the transfer")
+	flag.StringVar(&opts.valueWei, "value", "1000000000000000000", "transferred value in wei")
+	flag.StringVar(&opts.tipWei, "tip", "2000000000", "maxPriorityFeePerGas in wei")
+	flag.DurationVar(&opts.timeout, "timeout", 3*time.Minute, "maximum test duration")
+	flag.StringVar(&opts.jsonPath, "json", "rabbit-tx-audit.json", "JSON report")
 	flag.StringVar(&opts.markdownPath, "summary", "rabbit-tx-audit.md", "resumo Markdown")
-	flag.StringVar(&opts.verifyNodes, "verify-nodes", "", "nós que devem confirmar a transação, separados por vírgula (padrão: todos)")
+	flag.StringVar(&opts.verifyNodes, "verify-nodes", "", "nodes that must confirm the transaction, comma-separated (default: all)")
 	flag.Parse()
 	return opts
 }
@@ -243,7 +243,7 @@ func run(ctx context.Context, opts options) (*report, error) {
 	if err := senderETH.SendTransaction(ctx, signed); err != nil {
 		return nil, fmt.Errorf("send signed transaction from %s: %w", sender, err)
 	}
-	fmt.Println("Transação assinada enviada:", txHash.Hex())
+	fmt.Println("Signed transaction sent:", txHash.Hex())
 	receipt, err := waitReceipt(ctx, queryETH, txHash)
 	if err != nil {
 		return nil, err
@@ -640,31 +640,31 @@ func writeMarkdown(path string, report *report) error {
 		return err
 	}
 	defer file.Close()
-	fmt.Fprintln(file, "# Auditoria de transação — Rabbit Chain")
+	fmt.Fprintln(file, "# Transaction audit — Rabbit Chain")
 	fmt.Fprintln(file)
 	fmt.Fprintf(file, "**Status: %s**\n\n", report.Status)
-	fmt.Fprintf(file, "- Transação: `%s`\n", report.TransactionHash)
-	fmt.Fprintf(file, "- Bloco: `%d`\n", report.BlockNumber)
+	fmt.Fprintf(file, "- Transaction: `%s`\n", report.TransactionHash)
+	fmt.Fprintf(file, "- Block: `%d`\n", report.BlockNumber)
 	fmt.Fprintf(file, "- Producer: `%s`\n", report.Producer)
 	fmt.Fprintf(file, "- Valor: `%s wei`\n", report.ValueWei)
 	fmt.Fprintf(file, "- Gas usado: `%d`\n", report.GasUsed)
-	fmt.Fprintf(file, "- Taxa total: `%s wei`\n", report.TransactionFeeWei)
-	fmt.Fprintf(file, "- Tip desta transação: `%s wei`\n", report.ProducerTipWei)
-	fmt.Fprintf(file, "- Tips totais do bloco: `%s wei`\n", report.TotalBlockTipsWei)
+	fmt.Fprintf(file, "- Total fee: `%s wei`\n", report.TransactionFeeWei)
+	fmt.Fprintf(file, "- Tip for this transaction: `%s wei`\n", report.ProducerTipWei)
+	fmt.Fprintf(file, "- Total block tips: `%s wei`\n", report.TotalBlockTipsWei)
 	fmt.Fprintf(file, "- Base fee queimada: `%s wei`\n", report.BurnedBaseFeeWei)
-	fmt.Fprintf(file, "- Nós na mesma cadeia: `%d/%d`\n\n", passingNodes(report.Nodes), len(report.Nodes))
-	fmt.Fprintln(file, "## Saldos")
+	fmt.Fprintf(file, "- Nodes on the same chain: `%d/%d`\n\n", passingNodes(report.Nodes), len(report.Nodes))
+	fmt.Fprintln(file, "## Balances")
 	fmt.Fprintln(file)
-	fmt.Fprintln(file, "O delta da transação é isolado por trace. O delta do bloco completo também contém recompensas imediatas de produtor/committee.")
+	fmt.Fprintln(file, "The transaction delta is isolated by trace. The full-block delta also includes immediate producer/committee rewards.")
 	fmt.Fprintln(file)
-	fmt.Fprintln(file, "| Papel | Endereço | Esperado na transação (wei) | Observado na transação (wei) | Bloco completo (wei) | Confere |")
+	fmt.Fprintln(file, "| Role | Address | Expected for transaction (wei) | Observed for transaction (wei) | Full block (wei) | Matches |")
 	fmt.Fprintln(file, "| --- | --- | ---: | ---: | ---: | --- |")
 	for _, balance := range report.Balances {
 		fmt.Fprintf(file, "| %s | `%s` | %s | %s | %s | %t |\n", balance.Role, balance.Address, balance.ExpectedDelta, balance.ObservedDelta, balance.BlockDelta, balance.Match)
 	}
 	if len(report.Errors) > 0 {
 		fmt.Fprintln(file)
-		fmt.Fprintln(file, "## Inconsistências")
+		fmt.Fprintln(file, "## Inconsistencies")
 		fmt.Fprintln(file)
 		for _, item := range report.Errors {
 			fmt.Fprintf(file, "- %s\n", item)

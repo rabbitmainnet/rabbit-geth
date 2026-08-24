@@ -103,16 +103,16 @@ func main() {
 	}
 	if opts.jsonPath != "" {
 		if err := writeJSON(opts.jsonPath, output); err != nil {
-			fmt.Fprintln(os.Stderr, "ERRO ao gravar JSON:", err)
+			fmt.Fprintln(os.Stderr, "ERROR writing JSON:", err)
 			os.Exit(1)
 		}
 	}
-	fmt.Println("OPERAÇÃO DO CADASTRO LQC PREPARADA")
+	fmt.Println("LQC REGISTRY OPERATION PREPARED")
 	fmt.Println("Status:", output.Status)
-	fmt.Println("Ação:", output.Action)
-	fmt.Println("Endereço:", output.Address.Hex())
+	fmt.Println("Action:", output.Action)
+	fmt.Println("Address:", output.Address.Hex())
 	fmt.Println("Hash:", output.OperationHash.Hex())
-	fmt.Printf("Sequência: %d | válida até: %d\n", output.Sequence, output.ValidUntil)
+	fmt.Printf("Sequence: %d | valid until: %d\n", output.Sequence, output.ValidUntil)
 	if output.Action == "REGISTER" {
 		fmt.Printf("LightHash: nonce %d | tentativas %d | dificuldade %d\n", output.ProofNonce, output.ProofAttempts, output.ProofDifficulty)
 	}
@@ -120,15 +120,15 @@ func main() {
 
 func parseFlags() options {
 	var opts options
-	flag.StringVar(&opts.rpcURL, "rpc", "", "endpoint RPC HTTP, WebSocket ou IPC")
-	flag.StringVar(&opts.rawKeyPath, "key", "", "arquivo de chave ECDSA bruta (64 caracteres hexadecimais)")
-	flag.StringVar(&opts.keystorePath, "keystore", "", "arquivo JSON de keystore do geth")
-	flag.StringVar(&opts.passwordPath, "password-file", "", "arquivo que contém a senha do keystore")
-	flag.StringVar(&opts.action, "action", "register", "operação: register, heartbeat ou exit")
-	flag.Uint64Var(&opts.validFor, "valid-for", 64, "quantidade de blocos de validade (1..256)")
-	flag.DurationVar(&opts.timeout, "timeout", 2*time.Minute, "tempo máximo para RPC e prova LightHash")
-	flag.BoolVar(&opts.dryRun, "dry-run", false, "assina e valida localmente sem enviar")
-	flag.StringVar(&opts.jsonPath, "json", "", "arquivo JSON opcional com o resultado")
+	flag.StringVar(&opts.rpcURL, "rpc", "", "HTTP, WebSocket, or IPC RPC endpoint")
+	flag.StringVar(&opts.rawKeyPath, "key", "", "raw ECDSA key file (64 hexadecimal characters)")
+	flag.StringVar(&opts.keystorePath, "keystore", "", "geth keystore JSON file")
+	flag.StringVar(&opts.passwordPath, "password-file", "", "file containing the keystore password")
+	flag.StringVar(&opts.action, "action", "register", "operation: register, heartbeat, or exit")
+	flag.Uint64Var(&opts.validFor, "valid-for", 64, "validity period in blocks (1..256)")
+	flag.DurationVar(&opts.timeout, "timeout", 2*time.Minute, "maximum duration for RPC and LightHash proof")
+	flag.BoolVar(&opts.dryRun, "dry-run", false, "sign and validate locally without sending")
+	flag.StringVar(&opts.jsonPath, "json", "", "optional JSON file with the result")
 	flag.Parse()
 	return opts
 }
@@ -139,7 +139,7 @@ func run(ctx context.Context, opts options) (*result, error) {
 	}
 	client, err := rpc.DialContext(ctx, opts.rpcURL)
 	if err != nil {
-		return nil, fmt.Errorf("conectar ao RPC: %w", err)
+		return nil, fmt.Errorf("connect to RPC: %w", err)
 	}
 	defer client.Close()
 
@@ -168,10 +168,10 @@ func run(ctx context.Context, opts options) (*result, error) {
 	if !opts.dryRun {
 		var acceptedHash common.Hash
 		if err := client.CallContext(ctx, &acceptedHash, "lqc_submitRegistryOperation", operationArgs(operation)); err != nil {
-			return nil, fmt.Errorf("enviar operação %s: %w", operationHash.Hex(), err)
+			return nil, fmt.Errorf("send operation %s: %w", operationHash.Hex(), err)
 		}
 		if acceptedHash != operationHash {
-			return nil, fmt.Errorf("RPC retornou hash %s, esperado %s", acceptedHash.Hex(), operationHash.Hex())
+			return nil, fmt.Errorf("RPC returned hash %s, expected %s", acceptedHash.Hex(), operationHash.Hex())
 		}
 		submitted = true
 	}
@@ -207,20 +207,20 @@ func fetchSigningState(ctx context.Context, client *rpc.Client, address common.A
 	for attempt := 0; attempt < 4; attempt++ {
 		var parameters registryParameters
 		if err := client.CallContext(ctx, &parameters, "lqc_registryParameters"); err != nil {
-			return registryParameters{}, registryParticipant{}, fmt.Errorf("consultar parâmetros do cadastro: %w", err)
+			return registryParameters{}, registryParticipant{}, fmt.Errorf("query registry parameters: %w", err)
 		}
 		if parameters.ChainID == nil || (*big.Int)(parameters.ChainID).Sign() <= 0 {
-			return registryParameters{}, registryParticipant{}, errors.New("RPC retornou chain ID inválido")
+			return registryParameters{}, registryParticipant{}, errors.New("RPC returned an invalid chain ID")
 		}
 		if !parameters.ActiveForNextBlock {
-			return registryParameters{}, registryParticipant{}, fmt.Errorf("cadastro canônico ainda não está ativo para o próximo bloco %d", uint64(parameters.NextBlock))
+			return registryParameters{}, registryParticipant{}, fmt.Errorf("canonical registry is not yet active for the next block %d", uint64(parameters.NextBlock))
 		}
 		if uint64(parameters.ProofDifficulty) == 0 || uint64(parameters.MaxOperationLifetime) == 0 {
-			return registryParameters{}, registryParticipant{}, errors.New("RPC retornou parâmetros inseguros do cadastro")
+			return registryParameters{}, registryParticipant{}, errors.New("RPC returned unsafe registry parameters")
 		}
 		var participant registryParticipant
 		if err := client.CallContext(ctx, &participant, "lqc_registryParticipant", address); err != nil {
-			return registryParameters{}, registryParticipant{}, fmt.Errorf("consultar participante %s: %w", address.Hex(), err)
+			return registryParameters{}, registryParticipant{}, fmt.Errorf("query participant %s: %w", address.Hex(), err)
 		}
 		if uint64(participant.CanonicalBlock) == uint64(parameters.CurrentBlock) && participant.RegistryRoot == parameters.RegistryRoot {
 			return parameters, participant, nil
@@ -231,21 +231,21 @@ func fetchSigningState(ctx context.Context, client *rpc.Client, address common.A
 		default:
 		}
 	}
-	return registryParameters{}, registryParticipant{}, errors.New("a cabeça canônica mudou repetidamente durante a consulta; tente novamente")
+	return registryParameters{}, registryParticipant{}, errors.New("the canonical head changed repeatedly during the query; try again")
 }
 
 func buildOperation(ctx context.Context, parameters registryParameters, participant registryParticipant, action lqc.RegistryAction, validFor uint64, privateKey *ecdsa.PrivateKey) (lqc.RegistryOperation, uint64, error) {
 	if privateKey == nil {
-		return lqc.RegistryOperation{}, 0, errors.New("chave privada ausente")
+		return lqc.RegistryOperation{}, 0, errors.New("missing private key")
 	}
 	maxLifetime := uint64(parameters.MaxOperationLifetime)
 	if validFor == 0 || validFor > maxLifetime {
-		return lqc.RegistryOperation{}, 0, fmt.Errorf("--valid-for deve estar entre 1 e %d", maxLifetime)
+		return lqc.RegistryOperation{}, 0, fmt.Errorf("--valid-for must be between 1 and %d", maxLifetime)
 	}
 	nextBlock := uint64(parameters.NextBlock)
 	validityOffset := validFor - 1
 	if ^uint64(0)-nextBlock < validityOffset {
-		return lqc.RegistryOperation{}, 0, errors.New("altura de validade excede uint64")
+		return lqc.RegistryOperation{}, 0, errors.New("validity height exceeds uint64")
 	}
 	address := crypto.PubkeyToAddress(privateKey.PublicKey)
 	sequence, err := nextSequence(participant, action)
@@ -270,10 +270,10 @@ func buildOperation(ctx context.Context, parameters registryParameters, particip
 	hash := lqc.RegistryOperationSigningHash(chainID, operation)
 	operation.Signature, err = crypto.Sign(hash[:], privateKey)
 	if err != nil {
-		return lqc.RegistryOperation{}, attempts, fmt.Errorf("assinar operação: %w", err)
+		return lqc.RegistryOperation{}, attempts, fmt.Errorf("sign operation: %w", err)
 	}
 	if err := lqc.ValidateRegistryOperation(chainID, nextBlock, uint64(parameters.ProofDifficulty), operation); err != nil {
-		return lqc.RegistryOperation{}, attempts, fmt.Errorf("autoverificação da operação: %w", err)
+		return lqc.RegistryOperation{}, attempts, fmt.Errorf("operation self-verification: %w", err)
 	}
 	return operation, attempts, nil
 }
@@ -289,12 +289,12 @@ func findLightHashNonce(ctx context.Context, chainID *big.Int, operation lqc.Reg
 			return nonce, nonce + 1, nil
 		}
 		if nonce == ^uint64(0) {
-			return 0, ^uint64(0), errors.New("espaço de nonce LightHash esgotado")
+			return 0, ^uint64(0), errors.New("LightHash nonce space exhausted")
 		}
 		if nonce&4095 == 4095 {
 			select {
 			case <-ctx.Done():
-				return 0, nonce + 1, fmt.Errorf("prova LightHash interrompida: %w", ctx.Err())
+				return 0, nonce + 1, fmt.Errorf("LightHash proof interrupted: %w", ctx.Err())
 			default:
 			}
 		}
@@ -305,11 +305,11 @@ func nextSequence(participant registryParticipant, action lqc.RegistryAction) (u
 	switch action {
 	case lqc.RegistryActionRegister:
 		if participant.Exists && participant.Active {
-			return 0, errors.New("participante já está ativo; use heartbeat ou exit")
+			return 0, errors.New("participant is already active; use heartbeat or exit")
 		}
 	case lqc.RegistryActionHeartbeat, lqc.RegistryActionExit:
 		if !participant.Exists || !participant.Active {
-			return 0, errors.New("participante não está ativo; use register")
+			return 0, errors.New("participant is not active; use register")
 		}
 	default:
 		return 0, lqc.ErrInvalidRegistryAction
@@ -333,7 +333,7 @@ func parseAction(value string) (lqc.RegistryAction, error) {
 	case "exit":
 		return lqc.RegistryActionExit, nil
 	default:
-		return 0, fmt.Errorf("ação inválida %q; use register, heartbeat ou exit", value)
+		return 0, fmt.Errorf("invalid action %q; use register, heartbeat or exit", value)
 	}
 }
 
@@ -366,15 +366,15 @@ func loadPrivateKey(opts options) (*ecdsa.PrivateKey, error) {
 	rawPath := strings.TrimSpace(opts.rawKeyPath)
 	storePath := strings.TrimSpace(opts.keystorePath)
 	if (rawPath == "") == (storePath == "") {
-		return nil, errors.New("informe exatamente um entre --key e --keystore")
+		return nil, errors.New("specify exactly one of --key and --keystore")
 	}
 	if rawPath != "" {
-		if err := requirePrivateFile(rawPath, "chave privada"); err != nil {
+		if err := requirePrivateFile(rawPath, "private key"); err != nil {
 			return nil, err
 		}
 		key, err := crypto.LoadECDSA(rawPath)
 		if err != nil {
-			return nil, fmt.Errorf("carregar chave privada: %w", err)
+			return nil, fmt.Errorf("load private key: %w", err)
 		}
 		return key, nil
 	}
@@ -382,7 +382,7 @@ func loadPrivateKey(opts options) (*ecdsa.PrivateKey, error) {
 	if passwordPath == "" {
 		return nil, errors.New("--keystore exige --password-file")
 	}
-	if err := requirePrivateFile(passwordPath, "arquivo de senha"); err != nil {
+	if err := requirePrivateFile(passwordPath, "password file"); err != nil {
 		return nil, err
 	}
 	keyJSON, err := os.ReadFile(storePath)
@@ -391,14 +391,14 @@ func loadPrivateKey(opts options) (*ecdsa.PrivateKey, error) {
 	}
 	passwordBytes, err := os.ReadFile(passwordPath)
 	if err != nil {
-		return nil, fmt.Errorf("ler arquivo de senha: %w", err)
+		return nil, fmt.Errorf("read password file: %w", err)
 	}
 	password := strings.TrimRight(string(passwordBytes), "\r\n")
 	for index := range passwordBytes {
 		passwordBytes[index] = 0
 	}
 	if password == "" {
-		return nil, errors.New("arquivo de senha vazio")
+		return nil, errors.New("empty password file")
 	}
 	key, err := keystore.DecryptKey(keyJSON, password)
 	password = ""
@@ -411,13 +411,13 @@ func loadPrivateKey(opts options) (*ecdsa.PrivateKey, error) {
 func requirePrivateFile(path, label string) error {
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("consultar %s: %w", label, err)
+		return fmt.Errorf("inspect %s: %w", label, err)
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s não é arquivo regular: %s", label, path)
+		return fmt.Errorf("%s is not a regular file: %s", label, path)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%s tem permissões inseguras %04o; execute chmod 600 %q", label, info.Mode().Perm(), path)
+		return fmt.Errorf("%s has unsafe permissions %04o; run chmod 600 %q", label, info.Mode().Perm(), path)
 	}
 	return nil
 }

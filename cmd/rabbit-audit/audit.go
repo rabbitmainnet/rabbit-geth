@@ -350,7 +350,7 @@ func (runner *auditRunner) run(ctx context.Context) (*auditReport, error) {
 			runner.registrySnapshot = postRegistrySnapshot
 		}
 		if runner.options.ProgressEvery > 0 && (number-runner.options.FromBlock+1)%runner.options.ProgressEvery == 0 {
-			fmt.Printf("auditados %d/%d blocos (altura %d)\n", number-runner.options.FromBlock+1, toBlock-runner.options.FromBlock+1, number)
+			fmt.Printf("audited %d/%d blocks (height %d)\n", number-runner.options.FromBlock+1, toBlock-runner.options.FromBlock+1, number)
 		}
 	}
 	runner.finishReport(ctx, report, parentBlock, observedPrevious)
@@ -609,27 +609,27 @@ func (runner *auditRunner) finishReport(ctx context.Context, report *auditReport
 	report.Findings = append(report.Findings, finding{
 		Severity:    "INFO",
 		Code:        "ACTIVE_ENGINE_IS_CANONICAL_LQC",
-		Title:       "O cliente está conectado ao consensus/lqc",
-		Description: "eth/ethconfig.CreateConsensusEngine instancia consensus/lqc para todo genesis com config.lqc. Esse é o único engine canônico da Rabbit Chain.",
+		Title:       "The client is connected to consensus/lqc",
+		Description: "eth/ethconfig.CreateConsensusEngine instantiates consensus/lqc for every genesis with config.lqc. This is the sole canonical Rabbit Chain engine.",
 	})
 	report.Findings = append(report.Findings, finding{
 		Severity:    "INFO",
 		Code:        "CANONICAL_REGISTRY_RECONSTRUCTED",
-		Title:       "Registry, fila e committee foram reconstruídos pelos headers",
-		Description: fmt.Sprintf("O auditor validou os snapshots canônicos, incluindo REGISTER, HEARTBEAT e EXIT, e acompanhou %d participantes conhecidos. Fallbacks configurados: %d.", len(runner.participants), runner.selection.FallbackCount),
+		Title:       "Registry, queue, and committee were reconstructed from headers",
+		Description: fmt.Sprintf("The auditor validated canonical snapshots, including REGISTER, HEARTBEAT, and EXIT, and tracked %d known participants. Configured fallbacks: %d.", len(runner.participants), runner.selection.FallbackCount),
 	})
 	report.Findings = append(report.Findings, finding{
 		Severity:    "INFO",
 		Code:        "MINING_REWARDS_ARE_IMMEDIATE",
-		Title:       "Recompensas de mineração são líquidas imediatamente",
-		Description: "O modelo independente credita produtor e committee diretamente no saldo líquido. O armazenamento legado de vesting deve permanecer inalterado.",
+		Title:       "Mining rewards are immediately liquid",
+		Description: "The independent model credits the producer and committee directly to liquid balances. Legacy vesting storage must remain unchanged.",
 	})
 	if report.Supply.ExpectedScannedEmissionWei != "0" && report.Supply.ObservedScannedEmissionWei == "0" {
 		report.Findings = append(report.Findings, finding{
 			Severity:    "CRITICAL",
 			Code:        "ACTIVE_RUNTIME_MINTS_ZERO",
-			Title:       "O binário ativo não emitiu recompensa em nenhum bloco",
-			Description: "A soma observada de créditos líquidos foi zero em todo o intervalo, embora cada bloco devesse emitir reward. Isso é compatível com um laboratório iniciado por um build anterior ao patch de rewards.",
+			Title:       "The active binary did not issue a reward in any block",
+			Description: "The observed sum of liquid credits was zero across the entire range, although every block should issue a reward. This is consistent with a lab started from a build predating the reward patch.",
 			FirstBlock:  report.FromBlock,
 		})
 	}
@@ -649,8 +649,8 @@ func (runner *auditRunner) finishReport(ctx context.Context, report *auditReport
 		report.Findings = append(report.Findings, finding{
 			Severity:    "CRITICAL",
 			Code:        "LEGACY_VESTING_STATE_CHANGED",
-			Title:       "O estado legado de vesting não permaneceu vazio e estável",
-			Description: fmt.Sprintf("A Rabbit Chain usa recompensa imediata. Índice legado=%d e carteiras com estado legado=%d; ambos devem permanecer zerados.", observed.IndexCount, len(legacyStateAddresses)),
+			Title:       "Legacy vesting state did not remain empty and stable",
+			Description: fmt.Sprintf("Rabbit Chain uses immediate rewards. Legacy index=%d and wallets with legacy state=%d; both must remain zero.", observed.IndexCount, len(legacyStateAddresses)),
 			FirstBlock:  runner.firstIndexMismatch,
 		})
 	}
@@ -658,39 +658,39 @@ func (runner *auditRunner) finishReport(ctx context.Context, report *auditReport
 		report.Findings = append(report.Findings, finding{
 			Severity:    "CRITICAL",
 			Code:        "REWARD_EMISSION_MISMATCH",
-			Title:       "A emissão observada difere do cronograma",
-			Description: "Pelo menos um bloco possui diferença entre a emissão esperada e o crédito líquido isolado das transações.",
+			Title:       "Observed issuance differs from the schedule",
+			Description: "At least one block differs between expected issuance and the liquid credit isolated from transactions.",
 		})
 	}
 	if report.Summary.StateMismatchBlocks > 0 {
 		report.Findings = append(report.Findings, finding{
 			Severity:    "CRITICAL",
 			Code:        "REWARD_STATE_MODEL_MISMATCH",
-			Title:       "O estado de reward ou locker difere do modelo independente",
-			Description: "Saldo líquido ou armazenamento legado de vesting de pelo menos uma carteira difere da transição esperada para recompensas imediatas.",
+			Title:       "Reward or locker state differs from the independent model",
+			Description: "At least one wallet’s liquid balance or legacy vesting storage differs from the transition expected for immediate rewards.",
 		})
 	}
 	if report.Summary.UnauthorizedProducerBlocks > 0 {
 		report.Findings = append(report.Findings, finding{
 			Severity:    "CRITICAL",
 			Code:        "PRODUCER_OUTSIDE_QUEUE",
-			Title:       "Produtor ausente da fila determinística",
-			Description: "Pelo menos um bloco canônico foi produzido por uma carteira fora da fila reconstruída a partir dos snapshots canônicos do registry.",
+			Title:       "Producer missing from the deterministic queue",
+			Description: "At least one canonical block was produced by a wallet outside the queue reconstructed from canonical registry snapshots.",
 		})
 	}
 	if runner.rewardTraceFailures > 0 {
 		report.Findings = append(report.Findings, finding{
 			Severity:    "WARNING",
 			Code:        "TRANSACTION_TRACE_UNAVAILABLE",
-			Title:       "Alguns efeitos de transações não foram isolados",
-			Description: "Um ou mais blocos com transações não puderam ser rastreados; a comparação da recompensa líquida nesses blocos ficou incompleta.",
+			Title:       "Some transaction effects were not isolated",
+			Description: "One or more blocks with transactions could not be traced; the liquid reward comparison for those blocks is incomplete.",
 		})
 	}
 	report.Findings = append(report.Findings, finding{
 		Severity:    "INFO",
 		Code:        "TERMINAL_REWARD_CONTINUES",
-		Title:       "A recompensa da Era 3 continua indefinidamente",
-		Description: "O cronograma mantém 0,15 RAB por bloco na Era 3 e em todas as seguintes. A emissão é previsível, mas não existe cap máximo de supply.",
+		Title:       "The Era 3 reward continues indefinitely",
+		Description: "The schedule maintains 0.15 RAB per block in Era 3 and every subsequent era. Issuance is predictable, but there is no maximum supply cap.",
 	})
 	switch {
 	case report.Summary.FailingBlocks > 0:

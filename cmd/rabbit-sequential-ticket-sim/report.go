@@ -9,17 +9,17 @@ import (
 )
 
 func printSummary(report simulationReport) {
-	fmt.Println("Rabbit Chain — simulação de tickets sequenciais")
-	fmt.Println("Execução:", report.ExecutionStatus)
-	fmt.Println("Identidades sem trabalho adicional:", report.IdentityAmplificationStatus)
-	fmt.Println("Risco de maioria de recursos:", report.ResourceMajorityRisk)
-	fmt.Println("VDF criptográfica:", report.CryptographicVDFStatus)
-	fmt.Println("Implementação:", report.ImplementationStatus)
-	fmt.Println("Gate da mainnet:", report.MainnetGate)
+	fmt.Println("Rabbit Chain — sequential ticket simulation")
+	fmt.Println("Execution:", report.ExecutionStatus)
+	fmt.Println("Identities without additional work:", report.IdentityAmplificationStatus)
+	fmt.Println("Resource-majority risk:", report.ResourceMajorityRisk)
+	fmt.Println("Cryptographic VDF:", report.CryptographicVDFStatus)
+	fmt.Println("Implementation:", report.ImplementationStatus)
+	fmt.Println("Mainnet gate:", report.MainnetGate)
 	fmt.Println()
-	fmt.Println("Trabalho fixo, variando identidades:")
+	fmt.Println("Fixed work with varying identities:")
 	for _, scenario := range report.FixedWorkIdentityScenarios {
-		fmt.Printf("%d identidades: produtor %.2f%% | committee %.2f%% | maioria %.4f%%\n",
+		fmt.Printf("%d identities: producer %.2f%% | committee %.2f%% | majority %.4f%%\n",
 			scenario.Identities,
 			scenario.AttackerProducerPercent,
 			scenario.AttackerCommitteePercent,
@@ -27,9 +27,9 @@ func printSummary(report simulationReport) {
 		)
 	}
 	fmt.Println()
-	fmt.Println("Aumento real de hardware contra a rede de referência:")
+	fmt.Println("Actual hardware increase against the reference network:")
 	for _, scenario := range report.AttackerHardwareScenarios {
-		fmt.Printf("%d lanes atacantes contra %d honestas: produtor %.2f%% | maioria committee %.4f%% | risco %s\n",
+		fmt.Printf("%d attacker lanes against %d honest lanes: producer %.2f%% | committee majority %.4f%% | risk %s\n",
 			scenario.AttackerLanes,
 			scenario.HonestLanes,
 			scenario.AttackerProducerPercent,
@@ -37,7 +37,7 @@ func printSummary(report simulationReport) {
 			scenario.Risk,
 		)
 	}
-	fmt.Println("RESULTADO: identidades gratuitas são neutralizadas, mas maioria de recursos continua sendo um risco fundamental.")
+	fmt.Println("RESULT: free identities are neutralized, but resource majority remains a fundamental risk.")
 }
 
 func writeReports(directory string, report simulationReport) error {
@@ -52,18 +52,18 @@ func writeReports(directory string, report simulationReport) error {
 		return err
 	}
 	var text strings.Builder
-	fmt.Fprintln(&text, "# Simulação de tickets sequenciais — Rabbit Chain")
+	fmt.Fprintln(&text, "# Sequential ticket simulation — Rabbit Chain")
 	fmt.Fprintln(&text)
-	fmt.Fprintf(&text, "- Execução: **%s**\n", report.ExecutionStatus)
-	fmt.Fprintf(&text, "- Resistência à multiplicação de identidades: **%s**\n", report.IdentityAmplificationStatus)
-	fmt.Fprintf(&text, "- Risco de maioria de recursos: **%s**\n", report.ResourceMajorityRisk)
-	fmt.Fprintf(&text, "- VDF criptográfica: **%s**\n", report.CryptographicVDFStatus)
-	fmt.Fprintf(&text, "- Implementação: **%s**\n", report.ImplementationStatus)
+	fmt.Fprintf(&text, "- Execution: **%s**\n", report.ExecutionStatus)
+	fmt.Fprintf(&text, "- Resistance to identity multiplication: **%s**\n", report.IdentityAmplificationStatus)
+	fmt.Fprintf(&text, "- Resource-majority risk: **%s**\n", report.ResourceMajorityRisk)
+	fmt.Fprintf(&text, "- Cryptographic VDF: **%s**\n", report.CryptographicVDFStatus)
+	fmt.Fprintf(&text, "- Implementation: **%s**\n", report.ImplementationStatus)
 	fmt.Fprintf(&text, "- Mainnet: **%s**\n", report.MainnetGate)
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "## Trabalho fixo")
+	fmt.Fprintln(&text, "## Fixed work")
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "| Identidades | Lanes reais | Producer atacante | Committee atacante | Maioria committee |")
+	fmt.Fprintln(&text, "| Identities | Actual lanes | Attacker producer | Attacker committee | Committee majority |")
 	fmt.Fprintln(&text, "|---:|---:|---:|---:|---:|")
 	for _, scenario := range report.FixedWorkIdentityScenarios {
 		fmt.Fprintf(&text, "| %d | %d | %.4f%% | %.4f%% | %.6f%% |\n",
@@ -71,9 +71,9 @@ func writeReports(directory string, report simulationReport) error {
 			scenario.AttackerCommitteePercent, scenario.AttackerCommitteeMajorityPercent)
 	}
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "## Hardware do atacante")
+	fmt.Fprintln(&text, "## Attacker hardware")
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "| Honestas | Atacante | Producer atacante | Maioria committee | Risco |")
+	fmt.Fprintln(&text, "| Honest | Attacker | Attacker producer | Committee majority | Risk |")
 	fmt.Fprintln(&text, "|---:|---:|---:|---:|:---:|")
 	for _, scenario := range report.AttackerHardwareScenarios {
 		fmt.Fprintf(&text, "| %d | %d | %.4f%% | %.6f%% | %s |\n",
@@ -81,9 +81,9 @@ func writeReports(directory string, report simulationReport) error {
 			scenario.AttackerCommitteeMajorityPercent, scenario.Risk)
 	}
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "## Crescimento da rede")
+	fmt.Fprintln(&text, "## Network growth")
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "| Honestas | Atacante | Producer atacante | Maioria committee | Risco |")
+	fmt.Fprintln(&text, "| Honest | Attacker | Attacker producer | Committee majority | Risk |")
 	fmt.Fprintln(&text, "|---:|---:|---:|---:|:---:|")
 	for _, scenario := range report.NetworkScaleScenarios {
 		fmt.Fprintf(&text, "| %d | %d | %.4f%% | %.6f%% | %s |\n",
@@ -91,8 +91,8 @@ func writeReports(directory string, report simulationReport) error {
 			scenario.AttackerCommitteeMajorityPercent, scenario.Risk)
 	}
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "O modelo mostra chance por lane de trabalho, não uma identidade por pessoa. Uma implementação criptográfica e revisão independente continuam obrigatórias.")
+	fmt.Fprintln(&text, "The model represents probability per work lane, not one identity per person. A cryptographic implementation and independent review remain mandatory.")
 	fmt.Fprintln(&text)
-	fmt.Fprintln(&text, "**O consenso e o genesis permanecem inalterados; a mainnet continua bloqueada.**")
+	fmt.Fprintln(&text, "**Consensus and genesis remain unchanged; mainnet remains blocked.**")
 	return os.WriteFile(filepath.Join(directory, "resumo.md"), []byte(text.String()), 0o644)
 }

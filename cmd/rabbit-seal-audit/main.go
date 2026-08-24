@@ -59,13 +59,13 @@ func main() {
 
 	client, err := ethclient.DialContext(ctx, opts.rpcURL)
 	if err != nil {
-		fatalf("conectar ao RPC: %v", err)
+		fatalf("connect to RPC: %v", err)
 	}
 	defer client.Close()
 
 	result, err := audit(ctx, client, opts)
 	if err != nil {
-		fatalf("auditoria: %v", err)
+		fatalf("audit: %v", err)
 	}
 	if opts.jsonPath != "" {
 		if err := writeJSON(opts.jsonPath, result); err != nil {
@@ -73,9 +73,9 @@ func main() {
 		}
 	}
 
-	fmt.Println("AUDITORIA DE ASSINATURAS LQC CONCLUÍDA")
+	fmt.Println("LQC SIGNATURE AUDIT COMPLETED")
 	fmt.Println("Status:", result.Status)
-	fmt.Printf("Blocos: %d | assinaturas válidas: %d | produtores: %d\n", result.Blocks, result.ValidSeals, result.Distinct)
+	fmt.Printf("Blocks: %d | valid signatures: %d | producers: %d\n", result.Blocks, result.ValidSeals, result.Distinct)
 	fmt.Printf("Intervalo: %d..%d | chain ID: %s\n", result.FromBlock, result.ToBlock, result.ChainID)
 	if result.Status != "PASS" {
 		os.Exit(1)
@@ -84,11 +84,11 @@ func main() {
 
 func parseFlags() options {
 	var opts options
-	flag.StringVar(&opts.rpcURL, "rpc", "", "endpoint RPC HTTP, WebSocket ou IPC")
-	flag.Uint64Var(&opts.from, "from", 1, "primeiro bloco a auditar")
-	flag.Uint64Var(&opts.to, "to", 0, "último bloco; zero usa a cabeça atual")
-	flag.StringVar(&opts.jsonPath, "json", "", "arquivo JSON opcional")
-	flag.DurationVar(&opts.timeout, "timeout", 5*time.Minute, "tempo máximo da auditoria")
+	flag.StringVar(&opts.rpcURL, "rpc", "", "HTTP, WebSocket, or IPC RPC endpoint")
+	flag.Uint64Var(&opts.from, "from", 1, "first block to audit")
+	flag.Uint64Var(&opts.to, "to", 0, "last block; zero uses the current head")
+	flag.StringVar(&opts.jsonPath, "json", "", "optional JSON file")
+	flag.DurationVar(&opts.timeout, "timeout", 5*time.Minute, "maximum audit duration")
 	flag.Parse()
 	if opts.rpcURL == "" {
 		fatalf("informe --rpc")
@@ -99,24 +99,24 @@ func parseFlags() options {
 func audit(ctx context.Context, client headerReader, opts options) (*report, error) {
 	chainID, err := client.ChainID(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("consultar chain ID: %w", err)
+		return nil, fmt.Errorf("query chain ID: %w", err)
 	}
 	if chainID == nil || chainID.Sign() <= 0 {
-		return nil, errors.New("chain ID inválido")
+		return nil, errors.New("invalid chain ID")
 	}
 	to := opts.to
 	if to == 0 {
 		head, err := client.HeaderByNumber(ctx, nil)
 		if err != nil {
-			return nil, fmt.Errorf("consultar cabeça: %w", err)
+			return nil, fmt.Errorf("query head: %w", err)
 		}
 		if head == nil || head.Number == nil || !head.Number.IsUint64() {
-			return nil, errors.New("cabeça canônica inválida")
+			return nil, errors.New("invalid canonical head")
 		}
 		to = head.Number.Uint64()
 	}
 	if opts.from == 0 || to < opts.from {
-		return nil, fmt.Errorf("intervalo inválido: %d..%d", opts.from, to)
+		return nil, fmt.Errorf("invalid range: %d..%d", opts.from, to)
 	}
 
 	result := &report{
@@ -133,10 +133,10 @@ func audit(ctx context.Context, client headerReader, opts options) (*report, err
 	for number := opts.from; number <= to; number++ {
 		header, err := client.HeaderByNumber(ctx, new(big.Int).SetUint64(number))
 		if err != nil {
-			return nil, fmt.Errorf("consultar bloco %d: %w", number, err)
+			return nil, fmt.Errorf("query block %d: %w", number, err)
 		}
 		if header == nil || header.Number == nil || !header.Number.IsUint64() || header.Number.Uint64() != number {
-			return nil, fmt.Errorf("RPC retornou header inválido para o bloco %d", number)
+			return nil, fmt.Errorf("RPC returned an invalid header for block %d", number)
 		}
 		producer := header.Coinbase.Hex()
 		result.Producers[producer]++

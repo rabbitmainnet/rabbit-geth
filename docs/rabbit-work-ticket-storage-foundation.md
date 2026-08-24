@@ -1,49 +1,49 @@
-# Rabbit LQC — codec, pool e snapshots dos tickets
+# Rabbit LQC — Ticket Codec, Pool, and Snapshots
 
-Status: **STORAGE_FOUNDATION_ONLY — mainnet bloqueada**
+Status: **STORAGE_FOUNDATION_ONLY — mainnet blocked**
 
-Esta etapa adiciona armazenamento e validação determinísticos para os tickets
-sequenciais. Ela não coloca tickets no header ativo, não altera a escolha de
-produtor, fallback ou committee e não modifica o genesis.
+This stage adds deterministic storage and validation for sequential tickets. It
+does not place tickets in the active header, change producer, fallback, or
+committee selection, or modify genesis.
 
-## Envelope canônico
+## Canonical envelope
 
-- Prefixo binário e versão explícita.
-- RLP canônico, no máximo 16 KiB.
-- Até 64 tickets por lote.
-- Compromisso com bloco, época, âncora e raiz pós-lote.
-- Ordem independente da chegada na rede.
-- Rejeição de duplicação, encoding alternativo e raiz falsa.
+- Binary prefix and explicit version.
+- Canonical RLP, at most 16 KiB.
+- Up to 64 tickets per batch.
+- Commitment to block, epoch, anchor, and post-batch root.
+- Ordering independent of network arrival.
+- Rejection of duplicates, alternative encodings, and false roots.
 
-## Pool separado
+## Separate pool
 
-- Não utiliza txpool/EVM.
-- Capacidade global de 4.096 tickets.
-- Máximo de 64 tickets pendentes por participante.
-- Prova e assinatura verificadas antes da retenção.
-- Seleção local em rodadas: uma lane profunda não ocupa o lote antes das
-  demais lanes contínuas.
-- O pool nunca é fonte de verdade do consenso.
+- Does not use the transaction pool or EVM.
+- Global capacity of 4,096 tickets.
+- Maximum of 64 pending tickets per participant.
+- Proof and signature verified before retention.
+- Round-based local selection: one deep lane does not occupy the batch before
+  other continuous lanes.
+- The pool is never the consensus source of truth.
 
 ## Snapshots
 
-- Índice pelo hash do bloco, isolando forks e reorgs.
-- Raiz vinculada ao chain ID, época, âncora e estado de todas as lanes.
-- Reconstrução determinística de nó novo.
-- Novos participantes recebem predecessor inicial canônico.
-- A lane de quem sai é preservada para impedir reset/replay, mas tickets de um
-  participante inativo são rejeitados.
-- Persistência é somente cache; corrupção e encoding não canônico são
-  rejeitados.
+- Indexed by block hash, isolating forks and reorganizations.
+- Root bound to chain ID, epoch, anchor, and the state of every lane.
+- Deterministic reconstruction by a new node.
+- New participants receive a canonical initial predecessor.
+- A departing participant's lane is preserved to prevent reset and replay, but
+  tickets from an inactive participant are rejected.
+- Persistence is only a cache; corruption and non-canonical encoding are
+  rejected.
 
-## Limites honestos
+## Honest limitations
 
-- O envelope ainda não faz parte do header LQC ativo.
-- Ainda não existem RPC ou gossip de tickets.
-- Ainda não existe regra de seleção por trabalho.
-- Mudança de época/âncora será definida junto à ativação de laboratório.
-- Inclusão anticensura com milhares de participantes continua pendente.
-- A vulnerabilidade Sybil da seleção atual continua existindo até a integração
-  e a repetição dos auditores ofensivos.
+- The envelope is not yet part of the active LQC header.
+- Ticket RPC and gossip do not yet exist.
+- Work-based selection does not yet exist.
+- Epoch and anchor transitions will be defined with lab activation.
+- Anti-censorship inclusion with thousands of participants remains pending.
+- The current selection's Sybil vulnerability remains until integration and
+  repetition of the offensive audits.
 
-O genesis congelado permanece byte a byte idêntico.
+The frozen genesis remains byte-for-byte identical.

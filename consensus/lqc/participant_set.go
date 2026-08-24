@@ -1,20 +1,20 @@
 package lqc
 
-// ParticipantSet será a futura fonte determinística dos participantes do LQC.
-// Nesta primeira etapa ele é apenas a estrutura base.
-// Ainda não substitui o RuntimeRegistry.
+// ParticipantSet will be the future deterministic source of LQC participants.
+// At this initial stage, it is only the base structure.
+// It does not replace RuntimeRegistry yet.
 type ParticipantSet struct {
 	Participants []HybridParticipant
 }
 
-// NewParticipantSet cria um conjunto vazio.
+// NewParticipantSet creates an empty set.
 func NewParticipantSet() *ParticipantSet {
 	return &ParticipantSet{
 		Participants: make([]HybridParticipant, 0),
 	}
 }
 
-// Count retorna a quantidade de participantes.
+// Count returns the number of participants.
 func (ps *ParticipantSet) Count() int {
 	if ps == nil {
 		return 0
@@ -22,7 +22,7 @@ func (ps *ParticipantSet) Count() int {
 	return len(ps.Participants)
 }
 
-// Add adiciona um participante ao conjunto.
+// Add adds a participant to the set.
 func (ps *ParticipantSet) Add(p HybridParticipant) {
 	if ps == nil {
 		return
@@ -30,7 +30,7 @@ func (ps *ParticipantSet) Add(p HybridParticipant) {
 	ps.Participants = append(ps.Participants, p)
 }
 
-// All retorna uma cópia da lista.
+// All returns a copy of the list.
 func (ps *ParticipantSet) All() []HybridParticipant {
 	if ps == nil {
 		return nil

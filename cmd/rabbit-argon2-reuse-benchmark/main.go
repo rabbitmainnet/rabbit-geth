@@ -70,13 +70,13 @@ func main() {
 	opts := parseFlags()
 	result, err := run(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ERRO:", err)
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}
 	printReport(result)
 	if opts.outputDir != "" {
 		if err := writeReport(opts.outputDir, result); err != nil {
-			fmt.Fprintln(os.Stderr, "ERRO:", err)
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
 			os.Exit(1)
 		}
 	}
@@ -84,20 +84,20 @@ func main() {
 
 func parseFlags() options {
 	var opts options
-	flag.Uint64Var(&opts.memoryMiB, "memory-mib", 8, "memória reutilizável em MiB")
-	flag.DurationVar(&opts.duration, "duration", 750*time.Millisecond, "duração mínima de cada rodada")
-	flag.UintVar(&opts.rounds, "rounds", 7, "rodadas de medição")
-	flag.UintVar(&opts.warmups, "warmups", 2, "aquecimentos antes da medição")
-	flag.Float64Var(&opts.weakSlowdown, "weak-slowdown", 4, "fator conservador para PC fraco")
-	flag.Float64Var(&opts.verifyBudgetMs, "verify-budget-ms", 1000, "orçamento de verificação por bloco")
-	flag.StringVar(&opts.outputDir, "output", "", "diretório do relatório")
+	flag.Uint64Var(&opts.memoryMiB, "memory-mib", 8, "reusable memory in MiB")
+	flag.DurationVar(&opts.duration, "duration", 750*time.Millisecond, "minimum duration of each round")
+	flag.UintVar(&opts.rounds, "rounds", 7, "measurement rounds")
+	flag.UintVar(&opts.warmups, "warmups", 2, "warm-ups before measurement")
+	flag.Float64Var(&opts.weakSlowdown, "weak-slowdown", 4, "conservative slowdown factor for a low-end PC")
+	flag.Float64Var(&opts.verifyBudgetMs, "verify-budget-ms", 1000, "verification budget per block")
+	flag.StringVar(&opts.outputDir, "output", "", "report directory")
 	flag.Parse()
 	return opts
 }
 
 func run(opts options) (report, error) {
 	if opts.memoryMiB == 0 || opts.memoryMiB > 128 || opts.duration <= 0 || opts.rounds < 3 || opts.rounds > 21 || opts.warmups == 0 {
-		return report{}, fmt.Errorf("parâmetros inválidos")
+		return report{}, fmt.Errorf("invalid parameters")
 	}
 	resetReusableWorkspace()
 	input := make([]byte, 40)
@@ -314,19 +314,19 @@ func rounded(values []float64) []float64 {
 }
 
 func printReport(result report) {
-	fmt.Println("Rabbit Chain — benchmark Argon2id com memória reutilizável")
-	fmt.Println("Saída idêntica à oficial:", result.OfficialOutputMatches)
-	fmt.Println("Repetição determinística:", result.RepeatedOutputMatches)
-	fmt.Printf("Workspace: %d bytes | alocações: %d\n", result.WorkspaceBytes, result.WorkspaceAllocationCount)
-	fmt.Printf("P95: %.3f ms | variabilidade: %.2f%% | PC fraco: %.3f ms\n", result.OverallP95Ms, result.VariabilityPercent, result.EstimatedWeakOperationMs)
-	fmt.Printf("Mediana das rodadas: %.3f ms | MAD: %.3f ms | variabilidade robusta: %.2f%%\n", result.RoundMedianMs, result.RoundMADMs, result.RobustVariabilityPercent)
-	fmt.Printf("Outliers auditáveis: %v | rápidos: %v | lentos: %v\n", result.OutlierRounds, result.FasterOutlierRounds, result.SlowerOutlierRounds)
-	fmt.Printf("Pior rodada P95: %.3f ms | PC fraco: %.3f ms | orçamento %.3f ms: %s\n", result.WorstRoundP95Ms, result.EstimatedWeakWorstRoundMs, result.VerifyBudgetMs, result.TailSafetyStatus)
-	fmt.Println("Estabilidade contínua:", result.ContinuousStabilityStatus)
-	fmt.Println("Perfil reutilizável:", result.CandidateStatus)
-	fmt.Println("Implementação:", result.ImplementationStatus)
-	fmt.Println("Gate da mainnet:", result.MainnetGate)
-	fmt.Println("RESULTADO: diagnóstico de alocação concluído; consenso e genesis inalterados.")
+	fmt.Println("Rabbit Chain — reusable-memory Argon2id benchmark")
+	fmt.Println("Output identical to official implementation:", result.OfficialOutputMatches)
+	fmt.Println("Deterministic repetition:", result.RepeatedOutputMatches)
+	fmt.Printf("Workspace: %d bytes | allocations: %d\n", result.WorkspaceBytes, result.WorkspaceAllocationCount)
+	fmt.Printf("P95: %.3f ms | variability: %.2f%% | low-end PC: %.3f ms\n", result.OverallP95Ms, result.VariabilityPercent, result.EstimatedWeakOperationMs)
+	fmt.Printf("Round median: %.3f ms | MAD: %.3f ms | robust variability: %.2f%%\n", result.RoundMedianMs, result.RoundMADMs, result.RobustVariabilityPercent)
+	fmt.Printf("Auditable outliers: %v | faster: %v | slower: %v\n", result.OutlierRounds, result.FasterOutlierRounds, result.SlowerOutlierRounds)
+	fmt.Printf("Worst-round P95: %.3f ms | low-end PC: %.3f ms | budget %.3f ms: %s\n", result.WorstRoundP95Ms, result.EstimatedWeakWorstRoundMs, result.VerifyBudgetMs, result.TailSafetyStatus)
+	fmt.Println("Continuous stability:", result.ContinuousStabilityStatus)
+	fmt.Println("Reusable profile:", result.CandidateStatus)
+	fmt.Println("Implementation:", result.ImplementationStatus)
+	fmt.Println("Mainnet gate:", result.MainnetGate)
+	fmt.Println("RESULT: allocation diagnostics completed; consensus and genesis unchanged.")
 }
 
 func writeReport(directory string, result report) error {
@@ -341,24 +341,24 @@ func writeReport(directory string, result report) error {
 		return err
 	}
 	var summary strings.Builder
-	fmt.Fprintln(&summary, "# Argon2id com memória reutilizável — Rabbit Chain")
+	fmt.Fprintln(&summary, "# Argon2id with reusable memory — Rabbit Chain")
 	fmt.Fprintln(&summary)
-	fmt.Fprintf(&summary, "- Saída idêntica ao `golang.org/x/crypto/argon2`: **%t**\n", result.OfficialOutputMatches)
-	fmt.Fprintf(&summary, "- Repetição determinística: **%t**\n", result.RepeatedOutputMatches)
-	fmt.Fprintf(&summary, "- Workspace: **%d bytes; %d alocação**\n", result.WorkspaceBytes, result.WorkspaceAllocationCount)
+	fmt.Fprintf(&summary, "- Output identical to `golang.org/x/crypto/argon2`: **%t**\n", result.OfficialOutputMatches)
+	fmt.Fprintf(&summary, "- Deterministic repetition: **%t**\n", result.RepeatedOutputMatches)
+	fmt.Fprintf(&summary, "- Workspace: **%d bytes; %d allocation**\n", result.WorkspaceBytes, result.WorkspaceAllocationCount)
 	fmt.Fprintf(&summary, "- P95: **%.3f ms**\n", result.OverallP95Ms)
-	fmt.Fprintf(&summary, "- Variabilidade: **%.2f%%**\n", result.VariabilityPercent)
-	fmt.Fprintf(&summary, "- Variabilidade robusta após classificação MAD: **%.2f%%**\n", result.RobustVariabilityPercent)
-	fmt.Fprintf(&summary, "- Mediana/MAD das rodadas: **%.3f / %.3f ms**\n", result.RoundMedianMs, result.RoundMADMs)
-	fmt.Fprintf(&summary, "- Outliers auditáveis: **%v**\n", result.OutlierRounds)
-	fmt.Fprintf(&summary, "- Outliers rápidos/lentos: **%v / %v**\n", result.FasterOutlierRounds, result.SlowerOutlierRounds)
-	fmt.Fprintf(&summary, "- Pior rodada P95: **%.3f ms; %.3f ms no PC fraco estimado**\n", result.WorstRoundP95Ms, result.EstimatedWeakWorstRoundMs)
-	fmt.Fprintf(&summary, "- Fator de PC fraco/orçamento: **%.3fx / %.3f ms**\n", result.WeakSlowdownFactor, result.VerifyBudgetMs)
-	fmt.Fprintf(&summary, "- Segurança da cauda no orçamento: **%s**\n", result.TailSafetyStatus)
-	fmt.Fprintf(&summary, "- Método de estabilidade: **%s**\n", result.StabilityMethod)
-	fmt.Fprintf(&summary, "- Estabilidade: **%s**\n", result.ContinuousStabilityStatus)
-	fmt.Fprintf(&summary, "- Perfil reutilizável: **%s**\n", result.CandidateStatus)
+	fmt.Fprintf(&summary, "- Variability: **%.2f%%**\n", result.VariabilityPercent)
+	fmt.Fprintf(&summary, "- Robust variability after MAD classification: **%.2f%%**\n", result.RobustVariabilityPercent)
+	fmt.Fprintf(&summary, "- Round median/MAD: **%.3f / %.3f ms**\n", result.RoundMedianMs, result.RoundMADMs)
+	fmt.Fprintf(&summary, "- Auditable outliers: **%v**\n", result.OutlierRounds)
+	fmt.Fprintf(&summary, "- Faster/slower outliers: **%v / %v**\n", result.FasterOutlierRounds, result.SlowerOutlierRounds)
+	fmt.Fprintf(&summary, "- Worst-round P95: **%.3f ms; %.3f ms on the estimated low-end PC**\n", result.WorstRoundP95Ms, result.EstimatedWeakWorstRoundMs)
+	fmt.Fprintf(&summary, "- Low-end PC factor/budget: **%.3fx / %.3f ms**\n", result.WeakSlowdownFactor, result.VerifyBudgetMs)
+	fmt.Fprintf(&summary, "- Tail safety within budget: **%s**\n", result.TailSafetyStatus)
+	fmt.Fprintf(&summary, "- Stability method: **%s**\n", result.StabilityMethod)
+	fmt.Fprintf(&summary, "- Stability: **%s**\n", result.ContinuousStabilityStatus)
+	fmt.Fprintf(&summary, "- Reusable profile: **%s**\n", result.CandidateStatus)
 	fmt.Fprintln(&summary)
-	fmt.Fprintln(&summary, "Este código é somente um benchmark Linux/cgo. Ele não é uma implementação aprovada para consenso e não libera a mainnet.")
+	fmt.Fprintln(&summary, "This code is only a Linux/cgo benchmark. It is not an approved consensus implementation and does not unblock mainnet.")
 	return os.WriteFile(filepath.Join(directory, "resumo.md"), []byte(summary.String()), 0o644)
 }

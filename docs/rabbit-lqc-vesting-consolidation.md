@@ -1,36 +1,37 @@
-# Rabbit Chain — consolidação do vesting em consensus/lqc
+# Rabbit Chain — Vesting Consolidation in consensus/lqc
 
-Versão do patch: 1.0.0  
-Escopo: Reward Locker e finalização de `consensus/lqc`.
+Patch version: 1.0.0
+Scope: Reward Locker and `consensus/lqc` finalization.
 
-## Alterações
+## Changes
 
-- `lqc.distributeRewards` usa diretamente `core/vesting.CreditReward`;
-- `lqc.Finalize` executa `core/vesting.ReleaseAllUnlockedRewards` antes do reward;
-- `FinalizeAndAssemble` reutiliza `Finalize`, evitando caminhos diferentes entre produção e
-  importação;
-- `consensus/lqc/rewardlocker.go` deixa de manter estado próprio e encaminha a API antiga para
-  `core/vesting`;
-- a factory permanece apontando para `consensus/lqcv2` durante esta etapa.
+- `lqc.distributeRewards` uses `core/vesting.CreditReward` directly;
+- `lqc.Finalize` runs `core/vesting.ReleaseAllUnlockedRewards` before rewards;
+- `FinalizeAndAssemble` reuses `Finalize`, avoiding different production and
+  import paths;
+- `consensus/lqc/rewardlocker.go` no longer maintains separate state and
+  forwards the legacy API to `core/vesting`;
+- the factory continues to use `consensus/lqcv2` during this stage.
 
-## Testes adicionados
+## Added tests
 
-- limites das quatro Eras;
-- 70% para producer e 30% para committee configurado;
-- 100% para producer quando não existe committee;
-- conservação do remainder e de todos os wei;
-- criação e persistência do índice canônico de vesting sob EIP-158;
-- compatibilidade da API antiga do locker;
-- release executado por `Finalize` com `vm.StateDB` encapsulado por tracing.
+- boundaries of all four eras;
+- 70% for the producer and 30% for the configured committee;
+- 100% for the producer when no committee exists;
+- conservation of the remainder and every wei;
+- creation and persistence of the canonical vesting index under EIP-158;
+- compatibility of the legacy locker API;
+- release performed by `Finalize` with `vm.StateDB` wrapped by tracing.
 
-## Instalação e validação
+## Installation and validation
 
-O laboratório pode continuar rodando porque a engine ativa ainda é `lqcv2`. Depois de extrair
-o pacote, executar:
+The lab may continue running because the active engine is still `lqcv2`.
+After extracting the package, run:
 
 ```bash
 go test ./core/vesting ./consensus/lqc ./consensus/lqcv2
 ```
 
-Não reconstruir ou reiniciar o laboratório antes de avaliar o resultado desses testes. A
-troca da factory será um patch separado e somente acontecerá depois dessa validação.
+Do not rebuild or restart the lab before evaluating these test results. The
+factory switch will be a separate patch and will occur only after this
+validation.

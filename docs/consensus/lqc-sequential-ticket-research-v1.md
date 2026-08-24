@@ -1,44 +1,44 @@
-# Rabbit LQC — pesquisa de tickets sequenciais v1
+# Rabbit LQC — Sequential Ticket Research v1
 
-Status: modelo matemático para pesquisa. Não implementado no consenso.
+Status: mathematical research model. Not implemented in consensus.
 
-## Resultado do protótipo anterior
+## Result of the previous prototype
 
-O benchmark `rabbit-lowend-accessibility-benchmark/1.0.2` separou execução contínua e operações isoladas. O uso atual de `argon2.IDKey` apresentou pausas severas de alocação/GC e instabilidade nas memórias maiores. Esse protótipo foi rejeitado; nenhum parâmetro foi selecionado.
+The `rabbit-lowend-accessibility-benchmark/1.0.2` benchmark separated continuous execution from isolated operations. The current use of `argon2.IDKey` showed severe allocation/GC pauses and instability at larger memory sizes. The prototype was rejected and no parameter was selected.
 
-## Requisito que permanece
+## Requirement that remains
 
-Criar endereços adicionais sem trabalho adicional não pode aumentar producer, fallbacks ou committee. Um PC fraco deve conseguir produzir uma unidade válida de trabalho sem GPU, stake ou saldo de RAB.
+Creating additional addresses without additional work must not increase producer, fallback, or committee selection. A low-end PC must be able to produce one valid unit of work without a GPU, stake, or RAB balance.
 
-Nenhum mecanismo permissionless consegue provar que duas chaves pertencem à mesma pessoa. A meta tecnicamente verificável é uma chance por unidade real de recurso, e não uma chance por ser humano.
+No permissionless mechanism can prove that two keys belong to the same person. The technically verifiable goal is one chance per real unit of resource, not one chance per human.
 
-## Modelo sequencial
+## Sequential model
 
-Uma lane executa uma sequência vinculada ao desafio canônico e produz no máximo um ticket elegível por época. Dividir a mesma lane entre 1 ou 5.000 identidades não cria tickets adicionais. Para produzir em paralelo, o atacante precisa de lanes reais adicionais.
+A lane executes a sequence bound to the canonical challenge and produces at most one eligible ticket per epoch. Splitting the same lane among 1 or 5,000 identities creates no additional tickets. Parallel production requires real additional lanes.
 
-Uma futura implementação pode pesquisar uma Verifiable Delay Function. O [trabalho original sobre VDFs](https://eprint.iacr.org/2018/601) define funções que exigem uma quantidade de etapas sequenciais para produzir uma saída única, com verificação pública eficiente, e cita leader election como aplicação. Esta referência não constitui uma implementação aprovada.
+A future implementation may investigate a Verifiable Delay Function. The [original work on VDFs](https://eprint.iacr.org/2018/601) defines functions that require a number of sequential steps to produce a unique output with efficient public verification, and cites leader election as an application. This reference does not constitute an approved implementation.
 
-## Limite fundamental
+## Fundamental limit
 
-Trabalho sequencial neutraliza identidades gratuitas, mas não neutraliza recursos reais. Um atacante com 64 lanes contra 20 honestas controla aproximadamente 76% da seleção. Contra 1.000 lanes honestas, as mesmas 64 representam aproximadamente 6%.
+Sequential work neutralizes free identities, but not real resources. An attacker with 64 lanes against 20 honest lanes controls approximately 76% of selection. Against 1,000 honest lanes, the same 64 represent approximately 6%.
 
-Portanto, a segurança depende também de uma base honesta ampla. A mainnet não pode tratar 20 processos no mesmo computador como 20 participantes independentes.
+Security therefore also depends on a broad honest base. Mainnet cannot treat 20 processes on one computer as 20 independent participants.
 
-## Alternativas examinadas
+## Alternatives examined
 
-- **RandomX:** a implementação oficial informa 2.080 MiB para o modo rápido de mineração; o modo leve usa 256 MiB, mas é significativamente mais lento e destinado à verificação. Isso conflita com o perfil fraco de 4 GiB.
-- **Cuckoo Cycle:** o projeto oficial descreve trabalho fortemente limitado por memória e verificação instantânea. Continua candidato de pesquisa, mas ainda precisa de benchmark de RAM, minerador e hardware especializado.
-- **Argon2:** o RFC 9106 cobre aplicações de proof of work, porém a implementação Go medida não passou no gate de estabilidade. Uma implementação com memória reutilizável ou Argon2d exigiria novo código, vetores oficiais e revisão independente.
-- **VDF/trabalho sequencial:** melhor alinhamento conceitual com uma lane simples e verificação eficiente, porém possui maior complexidade criptográfica e não será escrita do zero sem implementação auditada.
+- **RandomX:** the official implementation reports 2,080 MiB for fast mining mode; light mode uses 256 MiB but is significantly slower and intended for verification. This conflicts with the 4 GiB low-end profile.
+- **Cuckoo Cycle:** the official project describes strongly memory-bound work and instant verification. It remains a research candidate but still requires benchmarking of RAM, miners, and specialized hardware.
+- **Argon2:** RFC 9106 covers proof-of-work applications, but the measured Go implementation did not pass the stability gate. An implementation with reusable memory or Argon2d would require new code, official vectors, and independent review.
+- **VDF/sequential work:** conceptually better aligned with a single lane and efficient verification, but cryptographically more complex and not to be written from scratch without an audited implementation.
 
-## Gates antes de qualquer integração
+## Gates before any integration
 
-1. Simular identidades fixas e recursos crescentes.
-2. Demonstrar custo acessível em PC fraco real.
-3. Usar implementação criptográfica conhecida e vetores públicos.
-4. Auditar unicidade, sequencialidade, replay, grinding e paralelização.
-5. Limitar provas por bloco e custo de entradas inválidas.
-6. Repetir ataque Sybil, committee capture, reorg e resiliência.
-7. Executar testnet pública com computadores e operadores independentes.
-8. Manter mainnet bloqueada até revisão externa.
+1. Simulate fixed identities and increasing resources.
+2. Demonstrate affordable cost on a real low-end PC.
+3. Use a recognized cryptographic implementation and public vectors.
+4. Audit uniqueness, sequentiality, replay, grinding, and parallelization.
+5. Limit proofs per block and the cost of invalid inputs.
+6. Repeat the Sybil attack, committee capture, reorganization, and resilience tests.
+7. Run a public testnet with independent computers and operators.
+8. Keep mainnet blocked until external review.
 

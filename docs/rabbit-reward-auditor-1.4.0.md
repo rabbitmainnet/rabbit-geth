@@ -1,39 +1,38 @@
-# Rabbit reward auditor 1.4.0
+# Rabbit Reward Auditor 1.4.0
 
-Esta versão corrige somente a ferramenta de auditoria. Nenhuma linha de
-`consensus/lqc` e nenhum byte do genesis congelado fazem parte do pacote.
+This version changes only the auditing tool. No line from `consensus/lqc` and
+no byte from the frozen genesis is included in the package.
 
-## Diagnóstico do relatório 20260811-183144
+## Diagnosis of report 20260811-183144
 
-- Os testes de transação, queda parcial, retorno, parada total e reinício dos
-  21 nós passaram.
-- O auditor antigo ainda esperava que as recompensas dos blocos 1 a 100000
-  fossem bloqueadas, embora a regra ativa seja crédito líquido imediato.
-- O auditor antigo conhecia inicialmente apenas os 20 bootstraps. O node21 só
-  era adicionado à lista observada depois de produzir seu primeiro bloco.
-- Nos blocos 98 e 99, uma parcela de committee de `0,18 RAB` foi creditada ao
-  node21 antes de sua primeira produção. As duas parcelas somam exatamente
-  `0,36 RAB`, a diferença apresentada no relatório antigo.
-- As diferenças por carteira também vieram da reconstrução do committee usando
-  a lista bootstrap estática em vez do registry canônico.
+- The transaction, partial-outage, return, full-shutdown, and restart tests for
+  all 21 nodes passed.
+- The old auditor still expected rewards from blocks 1 through 100,000 to be
+  locked even though the active rule is immediate liquid credit.
+- The old auditor initially knew only the 20 bootstrap participants. Node 21 was
+  added to the observed list only after producing its first block.
+- At blocks 98 and 99, a committee share of `0.18 RAB` was credited to node 21
+  before its first production. The two shares total exactly `0.36 RAB`, which
+  is the difference shown in the old report.
+- Per-wallet differences also came from reconstructing the committee with the
+  static bootstrap list instead of the canonical registry.
 
-## Correções
+## Fixes
 
-1. O registry é reconstruído desde `registryProtocolBlock` com os envelopes dos
-   headers e `RegistrySnapshot.ApplyHeader`.
-2. REGISTER, HEARTBEAT, EXIT, missed turns, jail, fila e `registryRoot` são
-   validados em cada altura.
-3. Um endereço registrado passa a ser observado no mesmo bloco do REGISTER,
-   antes de qualquer pagamento de committee.
-4. O committee usa `committeeSize` quando explícito ou a regra dinâmica de 10%
-   com os limites `committeeMin`/`committeeMax`.
-5. Toda recompensa de mineração é modelada como líquida imediatamente; o
-   storage legado de vesting deve permanecer vazio e inalterado.
+1. The registry is reconstructed from `registryProtocolBlock` using header
+   envelopes and `RegistrySnapshot.ApplyHeader`.
+2. REGISTER, HEARTBEAT, EXIT, missed turns, jail status, the queue, and
+   `registryRoot` are validated at every height.
+3. A registered address becomes observed in the REGISTER block itself, before
+   any committee payment.
+4. The committee uses `committeeSize` when explicitly set, or the dynamic 10%
+   rule with the `committeeMin` and `committeeMax` limits.
+5. Every mining reward is modeled as immediately liquid; legacy vesting storage
+   must remain empty and unchanged.
 
-## Resultado esperado
+## Expected result
 
-No laboratório atual, a nova auditoria deve contar `1,20 RAB` por bloco, obter
-diferença total de `0 wei` e reconstruir exatamente os destinatários do
-produtor e do committee. Depois desse PASS, o auditor de assinaturas percorre
-todos os blocos canônicos.
-
+In the current lab, the new auditor must count `1.20 RAB` per block, obtain a
+total difference of `0 wei`, and exactly reconstruct the producer and committee
+recipients. After this passes, the signature auditor traverses every canonical
+block.

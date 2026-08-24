@@ -1,49 +1,52 @@
-# Rabbit LQC — fundação portátil dos tickets sequenciais
+# Rabbit LQC — Portable Sequential Ticket Foundation
 
-Status: **FOUNDATION_ONLY — mainnet bloqueada**
+Status: **FOUNDATION_ONLY — mainnet blocked**
 
-Esta etapa define e testa a prova criptográfica portátil. Ela não modifica a
-seleção de produtores, fallbacks, committee, recompensas, headers ou snapshots.
+This stage defines and tests the portable cryptographic proof. It does not
+modify producer selection, fallbacks, the committee, rewards, headers, or
+snapshots.
 
-## Parâmetros candidatos
+## Candidate parameters
 
-- Algoritmo: Argon2id v1.3 por `golang.org/x/crypto/argon2`.
-- Memória: 8 MiB por prova.
-- Iterações: 1.
-- Paralelismo interno da prova: 1.
-- Saída: 32 bytes.
-- Máximo candidato: 64 tickets por bloco.
-- Verificação independente: no máximo 2 workers, 16 MiB simultâneos.
+- Algorithm: Argon2id v1.3 from `golang.org/x/crypto/argon2`.
+- Memory: 8 MiB per proof.
+- Iterations: 1.
+- Internal proof parallelism: 1.
+- Output: 32 bytes.
+- Candidate maximum: 64 tickets per block.
+- Independent verification: at most 2 workers and 16 MiB in use concurrently.
 
-## Vínculos de segurança
+## Security bindings
 
-Cada prova compromete:
+Each proof commits to:
 
-- domínio Rabbit LQC e versão;
+- Rabbit LQC domain and version;
 - chain ID;
-- época e hash-âncora;
-- endereço participante;
-- sequência da lane;
-- prova anterior da mesma lane.
+- epoch and anchor hash;
+- participant address;
+- lane sequence;
+- the previous proof from the same lane.
 
-O ticket completo é assinado com secp256k1 recuperável e low-S. Isso impede
-replay entre redes/épocas/âncoras, cópia da prova para outra identidade e salto
-de sequência. A validação em lote é canônica, limitada e atômica.
+The complete ticket is signed using recoverable low-S secp256k1. This prevents
+replay across networks, epochs, and anchors; copying a proof to another
+identity; and skipping a sequence. Batch validation is canonical, bounded, and
+atomic.
 
-## Limites honestos desta etapa
+## Honest limitations of this stage
 
-- Argon2id não é uma VDF criptográfica.
-- Hardware adicional continua produzindo trabalho proporcionalmente maior.
-- Não existe garantia de "uma pessoa por endereço" sem identidade externa.
-- A regra que transforma tickets em producer/fallback/committee ainda não foi
-  implementada; portanto a vulnerabilidade Sybil da engine ativa ainda existe.
-- A referência pura em Go é portátil, mas ainda aloca memória por prova. A
-  otimização reutilizável deverá manter equivalência byte a byte.
+- Argon2id is not a cryptographic VDF.
+- Additional hardware still produces proportionally more work.
+- There is no guarantee of one person per address without external identity.
+- The rule that converts tickets into producers, fallbacks, and committee
+  members is not yet implemented; therefore, the active engine's Sybil
+  vulnerability still exists.
+- The pure Go reference is portable but still allocates memory for each proof.
+  The reusable optimization must preserve byte-for-byte equivalence.
 
-## Próximo gate
+## Next gate
 
-Integrar pool, codec e snapshots de tickets em uma ativação exclusiva de
-laboratório. Só depois serão repetidos os ataques Sybil de até 100.000
-identidades, forks, reinícios, carga, recompensas e assinaturas.
+Integrate the ticket pool, codec, and snapshots in a lab-only activation. Only
+then repeat Sybil attacks with up to 100,000 identities, forks, restarts, load,
+reward, and signature tests.
 
-O genesis congelado permanece byte a byte idêntico.
+The frozen genesis remains byte-for-byte identical.

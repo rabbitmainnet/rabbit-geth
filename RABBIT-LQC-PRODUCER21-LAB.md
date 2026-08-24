@@ -1,28 +1,27 @@
-# Rabbit Chain — laboratório permissionless do produtor 21
+# Rabbit Chain — Permissionless Producer 21 Lab
 
-Este laboratório cria uma blockchain temporária nova em
-`/tmp/rabbit-permissionless-21nodes`. Vinte endereços formam apenas o conjunto
-inicial do genesis. O endereço do `node21` não aparece no genesis, não recebe
-RAB e conecta-se a somente três peers, simulando um usuário externo.
+This lab creates a new temporary blockchain at
+`/tmp/rabbit-permissionless-21nodes`. Twenty addresses form only the initial
+genesis set. The `node21` address does not appear in the genesis, receives no
+RAB, and connects to only three peers, simulating an external user.
 
-O protocolo canônico é ativado no bloco 1. O auditor executa automaticamente:
+The canonical protocol activates at block 1. The auditor automatically performs:
 
-1. convergência inicial dos 21 nós;
-2. confirmação de que o node21 não está cadastrado e possui saldo zero;
-3. REGISTER com LightHash e assinatura local;
-4. inclusão canônica e elegibilidade em 21/21 nós;
-5. produção de um bloco pelo novo participante;
-6. HEARTBEAT assinado;
-7. EXIT assinado e 30 blocos sem produção pelo endereço inativo;
-8. novo REGISTER sem administrador;
-9. nova produção após o retorno;
-10. convergência e distribuição finais.
+1. initial convergence of all 21 nodes;
+2. confirmation that node21 is not registered and has a zero balance;
+3. `REGISTER` with LightHash and a local signature;
+4. canonical inclusion and eligibility on 21/21 nodes;
+5. production of a block by the new participant;
+6. a signed `HEARTBEAT`;
+7. a signed `EXIT` followed by 30 blocks without production by the inactive address;
+8. a new `REGISTER` without an administrator;
+9. new production after returning;
+10. final convergence and distribution.
 
-As chaves privadas e a senha não entram no relatório. O laboratório padrão de
-20 nós permanece com a ativação desabilitada. O auditor interrompe os processos
-desse laboratório antigo para evitar uso excessivo de memória, mas não apaga os
-bancos antigos.
+Private keys and the password are not included in the report. The standard
+20-node lab keeps activation disabled. The auditor stops processes from that
+older lab to avoid excessive memory use, but does not delete its databases.
 
-O teste exige pelo menos 20 GiB livres tanto no disco virtual do WSL quanto no
-disco C: que armazena esse disco virtual. Se a trava falhar, nenhum banco novo é
-criado.
+The test requires at least 20 GiB free both on the WSL virtual disk and on the
+C: drive that stores that virtual disk. If the gate fails, no new database is
+created.

@@ -10,7 +10,7 @@ import (
 
 func runSimulation(opts options) (simulationReport, error) {
 	if opts.honestParticipants == 0 || opts.scaleAttackerLanes == 0 || opts.fallbacks == 0 || opts.committeeSize == 0 {
-		return simulationReport{}, fmt.Errorf("parâmetros devem ser maiores que zero")
+		return simulationReport{}, fmt.Errorf("parameters must be greater than zero")
 	}
 	identities, err := parsePositiveList(opts.identities)
 	if err != nil {
@@ -37,10 +37,10 @@ func runSimulation(opts options) (simulationReport, error) {
 		ConsensusChanged:            false,
 		GenesisChanged:              false,
 		Warnings: []string{
-			"o modelo não implementa nem certifica uma VDF criptográfica",
-			"identidades sem trabalho não criam poder, mas hardware adicional cria",
-			"nenhum protocolo permissionless garante uma pessoa por lane sem identidade externa",
-			"uma rede pequena pode ser dominada por um atacante com mais lanes que todos os honestos",
+			"the model neither implements nor certifies a cryptographic VDF",
+			"identities without work create no power, but additional hardware does",
+			"no permissionless protocol guarantees one person per lane without external identity",
+			"a small network can be dominated by an attacker with more lanes than all honest participants",
 		},
 	}
 
@@ -133,7 +133,7 @@ func parsePositiveList(value string) ([]uint64, error) {
 	for _, field := range strings.Split(value, ",") {
 		parsed, err := strconv.ParseUint(strings.TrimSpace(field), 10, 64)
 		if err != nil || parsed == 0 || parsed > 1_000_000 {
-			return nil, fmt.Errorf("valor inválido %q", field)
+			return nil, fmt.Errorf("invalid value %q", field)
 		}
 		if !seen[parsed] {
 			seen[parsed] = true
@@ -141,7 +141,7 @@ func parsePositiveList(value string) ([]uint64, error) {
 		}
 	}
 	if len(values) == 0 {
-		return nil, fmt.Errorf("lista vazia")
+		return nil, fmt.Errorf("empty list")
 	}
 	sort.Slice(values, func(left, right int) bool { return values[left] < values[right] })
 	return values, nil

@@ -1,29 +1,30 @@
-# Rabbit Chain — correção de recuperação de fork LQC
+# Rabbit Chain — LQC Fork Recovery Fix
 
-## Evidência do laboratório
+## Lab evidence
 
-Durante o teste com 20 produtores, sete nós foram desligados no bloco 191. Os
-13 nós ativos avançaram juntos e confirmaram uma transação no bloco 195. Ao
-retornar, cada nó desligado produziu um ramo próprio a partir do bloco 192.
+During the 20-producer test, seven nodes were shut down at block 191. The 13
+active nodes advanced together and confirmed a transaction at block 195. After
+returning, each stopped node produced its own branch starting at block 192.
 
-O sincronizador LQC anterior solicitava somente o próximo cabeçalho por número.
-Como o bloco 192 local pertencia a outro ramo, o cabeçalho remoto 193 não tinha
-um ancestral conhecido. Os logs registraram repetidamente `unknown ancestor`.
-Além disso, construir `types.NewBlockWithHeader` descartava corpos, transações e
+The previous LQC synchronizer requested only the next header by number. Because
+the local block 192 belonged to another branch, remote header 193 had no known
+ancestor. The logs repeatedly recorded `unknown ancestor`. In addition,
+constructing `types.NewBlockWithHeader` discarded bodies, transactions, and
 receipts.
 
-## Correção
+## Fix
 
-- o anúncio `BlockRangeUpdate` seleciona uma cadeia de altura maior;
-- empates de altura usam o menor hash como desempate determinístico;
-- o cabeçalho-alvo é solicitado pelo hash anunciado;
-- `downloader.BeaconSync` em modo full encontra o ancestral comum, baixa os
-  cabeçalhos e corpos e executa a reorganização canônica;
-- somente uma recuperação LQC é iniciada por vez;
-- `lqcv2.VerifyHeaders` agora executa `VerifyHeader` para cada cabeçalho do
-  lote, impedindo que o backfill ignore a validação do produtor.
+- the `BlockRangeUpdate` announcement selects the chain with the greater height;
+- height ties use the lower hash as a deterministic tie-breaker;
+- the target header is requested using its announced hash;
+- `downloader.BeaconSync` in full mode finds the common ancestor, downloads
+  headers and bodies, and performs the canonical reorganization;
+- only one LQC recovery runs at a time;
+- `lqcv2.VerifyHeaders` now runs `VerifyHeader` for every header in the batch,
+  preventing backfill from bypassing producer validation.
 
-A correção não altera reward, committee, vesting, halving nem os arquivos de
-genesis. A ausência de assinatura criptográfica dos blocos da engine ativa
-`lqcv2` permanece como achado arquitetural separado e bloqueia uma liberação de
-mainnet até ser resolvida ou até a ativação auditada da engine LQC definitiva.
+The fix does not change rewards, the committee, vesting, halvings, or genesis
+files. The absence of a cryptographic block signature in the active `lqcv2`
+engine remains a separate architectural finding and blocks a mainnet release
+until it is resolved or the definitive LQC engine is activated through an
+audited process.

@@ -27,22 +27,22 @@ expect_hash() {
     local expected="$1"
     local file="$2"
     local actual
-    [ -f "$file" ] || fail "arquivo ausente: $file"
+    [ -f "$file" ] || fail "missing file: $file"
     actual="$(sha256sum "$file" | awk '{print $1}')"
     [ "$actual" = "$expected" ] || fail \
-        "SHA-256 inesperado para $file (esperado $expected, atual $actual)"
+        "unexpected SHA-256 for $file (expected $expected, actual $actual)"
 }
 
-[ "$(uname -s)" = "Linux" ] || fail "o release Work V1 atual é Linux-only"
-[ "$(uname -m)" = "x86_64" ] || fail "o release Work V1 atual é amd64-only"
-[ -n "$GO_BIN" ] && [ -x "$GO_BIN" ] || fail "Go não encontrado"
-[ -n "$GOFMT_BIN" ] && [ -x "$GOFMT_BIN" ] || fail "gofmt não encontrado"
-command -v readelf >/dev/null 2>&1 || fail "readelf não encontrado (instale binutils)"
-command -v timeout >/dev/null 2>&1 || fail "timeout não encontrado (instale coreutils)"
+[ "$(uname -s)" = "Linux" ] || fail "the current Work V1 release is Linux-only"
+[ "$(uname -m)" = "x86_64" ] || fail "the current Work V1 release is amd64-only"
+[ -n "$GO_BIN" ] && [ -x "$GO_BIN" ] || fail "Go not found"
+[ -n "$GOFMT_BIN" ] && [ -x "$GOFMT_BIN" ] || fail "gofmt not found"
+command -v readelf >/dev/null 2>&1 || fail "readelf not found (install binutils)"
+command -v timeout >/dev/null 2>&1 || fail "timeout not found (install coreutils)"
 
 GO_VERSION="$("$GO_BIN" version | awk '{print $3}')"
 [ "$GO_VERSION" = "$EXPECTED_GO_VERSION" ] || fail \
-    "Go inesperado: $GO_VERSION (esperado $EXPECTED_GO_VERSION)"
+    "unexpected Go version: $GO_VERSION (expected $EXPECTED_GO_VERSION)"
 
 expect_hash "$EXPECTED_GENESIS" "$GENESIS"
 expect_hash "$EXPECTED_RANDOMX_HEADER" "$RANDOMX_ROOT/src/randomx.h"
@@ -51,7 +51,7 @@ expect_hash "$EXPECTED_RANDOMX_LIB" "$RANDOMX_LIB"
 if [ -d "$RANDOMX_ROOT/.git" ]; then
     RANDOMX_COMMIT="$(git -C "$RANDOMX_ROOT" rev-parse HEAD)"
     [ "$RANDOMX_COMMIT" = "$EXPECTED_RANDOMX_COMMIT" ] || fail \
-        "commit RandomX inesperado: $RANDOMX_COMMIT"
+        "unexpected RandomX commit: $RANDOMX_COMMIT"
 else
     echo "RANDOMX_GIT_METADATA=ABSENT_SOURCE_HASHES_AUTHORITATIVE"
 fi
@@ -95,12 +95,12 @@ cd "$ROOT"
 "$GO_BIN" build -trimpath -o "$DEFAULT_BIN" ./cmd/geth
 
 STACK_LINE="$(readelf -W -l "$BIN" | awk '$1 == "GNU_STACK" {print; found=1} END {if (!found) exit 1}')" || \
-    fail "segmento GNU_STACK ausente"
+    fail "GNU_STACK segment missing"
 printf 'PRODUCTION_GNU_STACK=%s\n' "$STACK_LINE"
 printf '%s\n' "$STACK_LINE" | grep -Eq '(^|[[:space:]])RW([[:space:]]|$)' || \
-    fail "binário de produção não está com GNU_STACK RW"
+    fail "production binary does not have GNU_STACK RW"
 if printf '%s\n' "$STACK_LINE" | grep -Eq '(^|[[:space:]])RWE([[:space:]]|$)'; then
-    fail "binário de produção possui pilha executável"
+    fail "production binary has an executable stack"
 fi
 
 mkdir -p "$SMOKE_DIR/production" "$SMOKE_DIR/default"
@@ -136,18 +136,18 @@ set -e
 if [ "$PRODUCTION_STATUS" -ne 124 ]; then
     echo "===== START PRODUCTION LOG =====" >&2
     sed -n '1,240p' "$OUT/start-production.log" >&2
-    fail "smoke de produção terminou inesperadamente: $PRODUCTION_STATUS"
+    fail "production smoke test ended unexpectedly: $PRODUCTION_STATUS"
 fi
 grep -q 'LQC Work V1 RandomX transport enabled' "$OUT/start-production.log" || fail \
-    "transporte Work V1 de produção não foi ativado"
+    "production Work V1 transport was not activated"
 
 if [ "$DEFAULT_STATUS" -eq 0 ] || [ "$DEFAULT_STATUS" -eq 124 ]; then
     echo "===== START DEFAULT-GUARD LOG =====" >&2
     sed -n '1,240p' "$OUT/start-default.log" >&2
-    fail "binário default não recusou o genesis oficial"
+    fail "default binary did not reject the official genesis"
 fi
 grep -q 'requires a production Work V1 build' "$OUT/start-default.log" || fail \
-    "motivo de recusa do binário default não foi encontrado"
+    "default binary rejection reason was not found"
 
 install -m 0644 "$GENESIS" "$OUT/genesis.json"
 (

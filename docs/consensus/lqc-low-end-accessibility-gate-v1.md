@@ -1,85 +1,85 @@
-# Rabbit LQC — gate de acessibilidade para PCs fracos v1
+# Rabbit LQC — Low-End PC Accessibility Gate v1
 
-Status: protocolo de benchmark. Não é uma escolha de algoritmo e não está implementado no consenso.
+Status: benchmark protocol. It is not an algorithm choice and is not implemented in consensus.
 
-## Por que este gate existe
+## Why this gate exists
 
-O teste Sybil confirmou que uma posição por endereço permite que um controlador transforme milhares de chaves em quase todo o poder de producer, fallbacks e committee. A simulação de tickets contínuos removeu esse ganho gratuito quando o trabalho total permanece fixo.
+The Sybil test confirmed that one position per address lets a controller turn thousands of keys into nearly all producer, fallback, and committee power. The continuous-ticket simulation removed this free gain when total work remained fixed.
 
-Isso ainda não prova que a defesa é acessível. Antes de qualquer implementação, a Rabbit Chain precisa medir se uma pessoa com computador simples consegue participar sem GPU, stake, saldo de RAB ou equipamento especializado.
+That result does not prove the defense is accessible. Before any implementation, Rabbit Chain must measure whether a person with a basic computer can participate without a GPU, stake, RAB balance, or specialized equipment.
 
-## Garantia possível
+## Available guarantee
 
-Uma blockchain permissionless não consegue garantir "uma chance por pessoa" sem identidade externa. IP, MAC, fingerprint e serial de dispositivo não resolvem esse problema: podem ser compartilhados, trocados, falsificados ou controlados por VPNs, nuvens e fabricantes.
+A permissionless blockchain cannot guarantee "one chance per person" without external identity. IP, MAC, fingerprints, and device serial numbers do not solve this problem: they can be shared, changed, forged, or controlled by VPNs, cloud platforms, and manufacturers.
 
-A garantia técnica buscada é:
+The intended technical guarantee is:
 
-> dividir o mesmo trabalho entre muitas identidades não aumenta a chance; cada unidade adicional de chance exige trabalho adicional verificável.
+> Splitting the same work among many identities does not increase the chance; every additional unit of chance requires additional verifiable work.
 
-IP e reputação de conexão podem limitar abuso no transporte P2P, mas nunca podem decidir producer, fallback, committee ou recompensa.
+IP and connection reputation may rate-limit abuse in P2P transport, but can never decide producer, fallback, committee, or reward.
 
-## Perfil fraco de referência
+## Reference low-end profile
 
-O primeiro gate usa como referência conservadora:
+The first gate uses this conservative reference:
 
-- 2 núcleos de CPU disponíveis;
-- 4 GiB de RAM total;
-- nenhum requisito de GPU;
-- um worker de mineração;
-- até 128 MiB de memória para a prova;
-- computador estimado quatro vezes mais lento que a máquina do laboratório.
+- 2 available CPU cores;
+- 4 GiB total RAM;
+- no GPU requirement;
+- one mining worker;
+- at most 128 MiB of proof memory;
+- a computer estimated to be four times slower than the lab machine.
 
-Essa estimativa não substitui testes físicos. O resultado permanece `PROVISIONAL` até existir execução em pelo menos três classes reais de hardware, incluindo o perfil fraco.
+This estimate does not replace physical testing. The result remains `PROVISIONAL` until execution on at least three real hardware classes, including the low-end profile.
 
-## Protótipo mensurável
+## Measurable prototype
 
-O benchmark usa Argon2id v1.3 somente para medir custo de CPU e memória. Ele não propõe ativar Argon2id no consenso. A versão 1.0.3 intercala os perfis em ordem crescente e decrescente, aquece cada perfil, executa cinco rodadas e usa p95 para os gates. Ela também mede operações isoladas com a coleta de memória fora do cronômetro. Isso separa instabilidade criptográfica de pausas causadas por alocação ou GC. Inversões grandes ou variabilidade superior a 35% rejeitam o perfil afetado.
+The benchmark uses Argon2id v1.3 only to measure CPU and memory cost. It does not propose activating Argon2id in consensus. Version 1.0.3 interleaves profiles in ascending and descending order, warms each profile, runs five rounds, and uses p95 for the gates. It also measures isolated operations with memory collection outside the timer. This separates cryptographic instability from allocation or garbage-collection pauses. Large inversions or variability above 35% reject the affected profile.
 
-O gate escolhe o menor perfil que seja simultaneamente estável na execução contínua, estável na verificação isolada e compatível com o orçamento. Perfis maiores instáveis são rejeitados individualmente; eles não anulam um perfil menor que tenha passado. O relatório usa `PARTIAL` para deixar essa distinção explícita e continua sendo apenas uma medição local provisória.
+The gate selects the smallest profile that is simultaneously stable under continuous execution, stable under isolated verification, and within budget. Larger unstable profiles are rejected individually; they do not invalidate a smaller profile that passed. The report uses `PARTIAL` to make this distinction explicit and remains only a provisional local measurement.
 
-O [RFC 9106](https://datatracker.ietf.org/doc/rfc9106/) define a família Argon2 e sua memória configurável. A literatura do próprio RFC diferencia variantes e usos; portanto, uma medição positiva não basta para transformar uma função de derivação de chave em proof of work.
+[RFC 9106](https://datatracker.ietf.org/doc/rfc9106/) defines the Argon2 family and its configurable memory. The RFC literature distinguishes variants and use cases; a positive measurement is therefore not enough to turn a key derivation function into proof of work.
 
-Também deverão ser comparadas implementações independentes antes de uma escolha:
+Independent implementations must also be compared before any choice:
 
-- [RandomX](https://github.com/tevador/randomx), otimizado para CPUs de propósito geral com execução de código aleatório e técnicas memory-hard;
-- [Cuckoo Cycle](https://github.com/tromp/cuckoo), uma família memory-bound com verificação rápida.
+- [RandomX](https://github.com/tevador/randomx), optimized for general-purpose CPUs using random code execution and memory-hard techniques;
+- [Cuckoo Cycle](https://github.com/tromp/cuckoo), a memory-bound family with fast verification.
 
-Essas referências são candidatas de pesquisa, não decisões da Rabbit Chain.
+These references are research candidates, not Rabbit Chain decisions.
 
-## O que o benchmark mede
+## What the benchmark measures
 
-Para 8, 16, 32 e 64 MiB, o programa registra:
+For 8, 16, 32, and 64 MiB, the program records:
 
-- milissegundos por tentativa na máquina local;
-- estimativa para um PC quatro vezes mais lento;
-- tentativas por segundo;
-- verificações possíveis dentro de 1 segundo por bloco;
-- dificuldade derivada para 80% de chance de encontrar ao menos um ticket em uma época de 1.280 segundos;
-- tempo esperado de um ticket;
-- custo estimado de produzir mil tickets.
+- milliseconds per attempt on the local machine;
+- an estimate for a PC four times slower;
+- attempts per second;
+- verifications possible within one second per block;
+- derived difficulty for an 80% chance of finding at least one ticket in a 1,280-second epoch;
+- expected time for one ticket;
+- estimated cost of producing one thousand tickets.
 
-Um perfil local é apenas provisoriamente qualificado quando:
+A local profile is provisionally qualified only when:
 
-- usa no máximo 128 MiB;
-- a tentativa estimada no PC fraco leva no máximo 2 segundos;
-- pelo menos 8 provas cabem no orçamento de verificação de 1 segundo;
-- o tempo esperado do ticket não ultrapassa a época.
+- it uses at most 128 MiB;
+- the estimated attempt on the low-end PC takes at most 2 seconds;
+- at least 8 proofs fit within the one-second verification budget;
+- expected ticket time does not exceed the epoch.
 
-## Gates ainda obrigatórios
+## Gates still required
 
-Mesmo que o benchmark local passe, a implementação continua proibida até concluir:
+Even if the local benchmark passes, implementation remains prohibited until completing:
 
-1. testes físicos em hardware fraco, intermediário e moderno;
-2. comparação entre CPU, GPU, nuvem e hardware especializado;
-3. consumo elétrico e aquecimento durante execução prolongada;
-4. custo de verificar provas válidas e inválidas sob flood;
-5. limites canônicos de tickets por bloco e por época;
-6. ajuste determinístico de dificuldade, fronteiras e overflow;
-7. grinding, retenção de tickets, reorgs e replay;
-8. novo ataque Sybil com até 100.000 identidades;
-9. resiliência, transações, recompensas e assinaturas novamente em PASS;
-10. revisão independente do desenho e da implementação.
+1. physical tests on low-end, mid-range, and modern hardware;
+2. comparison across CPU, GPU, cloud, and specialized hardware;
+3. power consumption and heat during prolonged execution;
+4. cost of verifying valid and invalid proofs under flooding;
+5. canonical limits for tickets per block and per epoch;
+6. deterministic difficulty adjustment, boundaries, and overflow;
+7. grinding, ticket withholding, reorganizations, and replay;
+8. a new Sybil attack with up to 100,000 identities;
+9. resilience, transaction, reward, and signature tests returning to `PASS`;
+10. independent review of the design and implementation.
 
-## Regra de lançamento
+## Launch rule
 
-Este benchmark nunca libera a mainnet. Seu resultado máximo é `PROVISIONAL`. O genesis congelado, `consensus/lqc` e o laboratório em execução não podem ser modificados pela ferramenta.
+This benchmark can never authorize mainnet. Its maximum result is `PROVISIONAL`. The frozen genesis, `consensus/lqc`, and the running lab cannot be modified by this tool.

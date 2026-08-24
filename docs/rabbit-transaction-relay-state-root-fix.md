@@ -1,42 +1,45 @@
-# Rabbit Chain — correção de relay e raiz de estado com transações
+# Rabbit Chain — Transaction Relay and State Root Fix
 
-## Evidência do laboratório
+## Lab evidence
 
-O laboratório com 20 produtores continuou avançando normalmente e todos os nós mantiveram
-19 peers. Uma transferência EIP-1559 assinada corretamente foi aceita no txpool do node20,
-mas não apareceu nos outros 19 txpools. Quando o node20 tentou montar um bloco contendo a
-transação, o próprio cliente rejeitou o bloco com `invalid merkle root`. Todos os blocos
-canônicos permaneceram com zero transações.
+The 20-producer lab continued advancing normally, and every node maintained 19
+peers. A correctly signed EIP-1559 transfer was accepted into node 20's
+transaction pool but did not appear in the other 19 pools. When node 20 tried to
+assemble a block containing the transaction, the client itself rejected the
+block with `invalid merkle root`. Every canonical block remained empty.
 
-## Causa 1: relay de transações desativado
+## Cause 1: transaction relay disabled
 
-O loop de produção LQC importa blocos diretamente e não conclui o ciclo tradicional do
-downloader Ethereum. O protocolo ETH, portanto, mantinha `AcceptTxs` desativado e descartava
-transações recebidas dos peers.
+The LQC production loop imports blocks directly and does not complete the
+traditional Ethereum downloader cycle. Consequently, the ETH protocol kept
+`AcceptTxs` disabled and discarded transactions received from peers.
 
-`eth/backend.go` agora aguarda um cabeçalho LQC recente e diferente do genesis antes de marcar
-os recursos pós-sincronização como prontos. Isso ativa o recebimento e a propagação de
-transações sem aceitar tráfego durante um banco vazio ou uma cadeia antiga ainda parada.
+`eth/backend.go` now waits for a recent LQC header different from genesis
+before marking post-synchronization services as ready. This enables transaction
+reception and propagation without accepting traffic while the database is empty
+or an old chain remains stalled.
 
-## Causa 2: destinatários de taxa diferentes
+## Cause 2: different fee recipients
 
-O engine LQC grava o produtor canônico em `header.Coinbase`. Um nó fallback pode construir o
-bloco usando outro endereço local. Antes da correção, o EVM do construtor creditava a priority
-fee ao endereço local, mas a reexecução do bloco creditava a taxa ao produtor do cabeçalho.
-Os dois estados terminavam com raízes diferentes.
+The LQC engine records the canonical producer in `header.Coinbase`. A fallback
+node may assemble the block using a different local address. Before the fix, the
+builder's EVM credited the priority fee to the local address, while block
+re-execution credited it to the header producer. The two states ended with
+different roots.
 
-`miner/worker.go` agora usa `header.Coinbase` como destinatário de taxa sempre que a chain
-possui configuração LQC. Redes sem LQC preservam o comportamento original do geth.
+`miner/worker.go` now uses `header.Coinbase` as the fee recipient whenever
+the chain has an LQC configuration. Networks without LQC retain the original
+geth behavior.
 
-## Testes de regressão
+## Regression tests
 
-- `miner/rabbit_lqc_fee_recipient_test.go` valida o destinatário LQC e preserva o comportamento
-  das demais redes.
-- `eth/rabbit_lqc_sync_test.go` valida que genesis, cabeçalho antigo e horário futuro inválido
-  não habilitam relay; um cabeçalho LQC recente habilita.
-- Os mocks legados em `miner/miner_test.go` e `miner/payload_building_test.go` agora implementam
-  `AccountManager()`, que já fazia parte da interface de produção, permitindo que todo o pacote
-  `miner` volte a compilar durante os testes.
+- `miner/rabbit_lqc_fee_recipient_test.go` validates the LQC recipient and
+  preserves behavior for other networks.
+- `eth/rabbit_lqc_sync_test.go` validates that genesis, an old header, and an
+  invalid future timestamp do not enable relay; a recent LQC header enables it.
+- Legacy mocks in `miner/miner_test.go` and `miner/payload_building_test.go`
+  now implement `AccountManager()`, which was already part of the production
+  interface, allowing the entire `miner` package to compile during tests.
 
-Nenhum arquivo em `consensus/lqc`, `consensus/lqcv2`, `core/vesting` ou `networks` foi alterado
-por esta correção.
+This fix did not change any file in `consensus/lqc`, `consensus/lqcv2`,
+`core/vesting`, or `networks`.

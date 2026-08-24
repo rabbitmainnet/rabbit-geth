@@ -333,7 +333,7 @@ func TestRegistrySnapshotDoesNotExpireParticipantByElapsedHeartbeat(t *testing.T
 		t.Fatal(err)
 	}
 
-	// Passa deliberadamente da antiga janela heartbeat+grace.
+	// Deliberately move beyond the former heartbeat+grace window.
 	limit := registrySnapshotTestRules.HeartbeatWindow +
 		registrySnapshotTestRules.HeartbeatGrace + 1
 
@@ -366,8 +366,8 @@ func TestRegistrySnapshotDoesNotExpireParticipantByElapsedHeartbeat(t *testing.T
 		t.Fatalf("participant B disappeared after elapsed heartbeat window: %+v", participantB)
 	}
 
-	// Mesmo depois da antiga janela de expiração, B continua fazendo parte
-	// da fila e deve conseguir assumir um bloco quando sua janela chegar.
+	// Even after the former expiration window, B remains in the queue
+	// and must be able to take over a block when its window arrives.
 	headerB := buildRegistrySnapshotHeader(
 		t,
 		snapshot,

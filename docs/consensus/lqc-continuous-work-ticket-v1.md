@@ -1,22 +1,22 @@
-# Rabbit LQC — proposta de tickets de trabalho contínuos v1
+# Rabbit LQC — Continuous Work Ticket Proposal v1
 
-Status: especificação para simulação. Não implementada no consenso.
+Status: specification for simulation. Not implemented in consensus.
 
-## Problema confirmado
+## Confirmed problem
 
-O cadastro atual concede uma posição completa na seleção para cada endereço que conclui um LightHash de registro. A prova é paga apenas uma vez. Um único controlador pode criar milhares de chaves e manter milhares de posições na fila, nos fallbacks e no committee.
+The current registry grants one complete selection position to every address that completes a registration LightHash. The proof is paid only once. A single controller can create thousands of keys and retain thousands of positions in the queue, fallbacks, and committee.
 
-O auditor `rabbit-lqc-sybil-auditor/1.0.0` confirmou que 5.000 endereços, contra 20 honestos, recebem aproximadamente 99,6% da seleção.
+The `rabbit-lqc-sybil-auditor/1.0.0` auditor confirmed that 5,000 addresses competing against 20 honest addresses receive approximately 99.6% of selection.
 
-## Objetivo de segurança
+## Security goal
 
-Criar endereços adicionais não pode gerar poder sem custo adicional. A participação deve ser proporcional a trabalho computacional recente e verificável.
+Creating additional addresses must not create power without additional cost. Participation must be proportional to recent, verifiable computational work.
 
-Esta proposta não promete uma identidade por pessoa. Isso exigiria uma autoridade de identidade, KYC, stake, hardware confiável ou outro recurso externo. A garantia possível em uma rede permissionless é uma chance por unidade de trabalho.
+This proposal does not promise one identity per person. That would require an identity authority, KYC, stake, trusted hardware, or another external resource. The guarantee available to a permissionless network is one chance per unit of work.
 
-## Ticket de trabalho
+## Work ticket
 
-Um ticket é uma prova hash válida para uma época futura:
+A ticket is a valid hash proof for a future epoch:
 
 ```text
 ticketHash = Keccak256(
@@ -32,107 +32,107 @@ ticketHash = Keccak256(
 ticketHash < target
 ```
 
-Cada tentativa exige trabalho. Criar chaves ou carteiras sem encontrar hashes abaixo do target não cria tickets e não altera a seleção.
+Every attempt requires work. Creating keys or wallets without finding hashes below the target creates no tickets and does not affect selection.
 
-## Ciclo de vida por época
+## Per-epoch lifecycle
 
-1. A época `N` começa com um desafio derivado de um checkpoint canônico já finalizado.
-2. Mineradores procuram tickets durante uma janela pública de submissão.
-3. Cada ticket é assinado e vinculado à chain ID, época, chave produtora e endereço de pagamento.
-4. A janela fecha antes de existir a seed de seleção da época de uso.
-5. A seed nasce de um checkpoint posterior ao fechamento.
-6. Os tickets são usados somente na época indicada e expiram ao final dela.
-7. A próxima participação exige trabalho novo.
+1. Epoch `N` starts with a challenge derived from an already finalized canonical checkpoint.
+2. Miners search for tickets during a public submission window.
+3. Each ticket is signed and bound to the chain ID, epoch, producer key, and payout address.
+4. The window closes before the selection seed for the use epoch exists.
+5. The seed is derived from a checkpoint after the window closes.
+6. Tickets are used only in the specified epoch and expire at its end.
+7. Future participation requires new work.
 
-Uma ativação atrasada de duas épocas separa o trabalho da seed de seleção e reduz grinding:
+A two-epoch activation delay separates the work from the selection seed and reduces grinding:
 
 ```text
-época N:     minerar e publicar tickets
-época N+1:   fechamento, confirmação e seed futura
-época N+2:   tickets elegíveis para producer, fallbacks e committee
+epoch N:     mine and publish tickets
+epoch N+1:   closing, confirmation, and future seed
+epoch N+2:   tickets eligible for producer, fallbacks, and committee
 ```
 
-## Seleção LCQ
+## LCQ selection
 
-A fila deixa de ordenar endereços registrados e passa a ordenar identificadores de tickets válidos:
+Instead of ordering registered addresses, the queue orders valid ticket identifiers:
 
 ```text
 score = Keccak256(selectionSeed || ticketHash)
 ```
 
-Os menores scores ocupam, em ordem:
+The lowest scores fill, in order:
 
 1. producer;
 2. fallbacks;
 3. committee.
 
-Um controlador pode usar várias chaves, mas cada posição adicional exige outro ticket válido. Dividir a mesma quantidade de tentativas entre mil chaves não altera o número esperado de tickets.
+A controller may use multiple keys, but every additional position requires another valid ticket. Splitting the same number of attempts among one thousand keys does not change the expected number of tickets.
 
-## Experiência do usuário
+## User experience
 
-O usuário mantém uma única carteira de pagamento. O cliente Rabbit deve criar e renovar tickets automaticamente em segundo plano, sem exigir que a pessoa administre milhares de chaves, nonces ou operações RPC. Chaves efêmeras de produção podem ser vinculadas ao mesmo payout por assinatura, mas nunca podem criar peso sem a prova correspondente.
+The user keeps one payout wallet. The Rabbit client should create and renew tickets automatically in the background without requiring the user to manage thousands of keys, nonces, or RPC operations. Ephemeral producer keys may be bound to the same payout by signature, but can never create weight without the corresponding proof.
 
-A tela do minerador deve mostrar pelo menos: época atual, desafio, taxa de tentativas, tickets encontrados, validade, chance estimada e confirmação canônica. Participar não exige saldo de RAB, stake ou autorização administrativa.
+The miner interface should show at least the current epoch, challenge, attempt rate, tickets found, validity, estimated chance, and canonical confirmation. Participation requires no RAB balance, stake, or administrative authorization.
 
-## Papel de IP e dispositivo
+## Role of IP address and device identity
 
-IP, ASN, fingerprint, MAC e identificadores de hardware não participam do cálculo de consenso. Eles podem limitar conexões ou mensagens no transporte P2P, mas nunca podem decidir ticket, producer, fallback, committee ou recompensa. Isso evita prejudicar usuários sob NAT/CGNAT e evita entregar poder a provedores, VPNs, nuvens ou fabricantes.
+IP, ASN, fingerprints, MAC addresses, and hardware identifiers do not participate in consensus calculations. They may rate-limit connections or messages in P2P transport, but can never decide a ticket, producer, fallback, committee, or reward. This avoids penalizing users behind NAT/CGNAT and avoids granting power to providers, VPNs, cloud platforms, or manufacturers.
 
-## Dificuldade e capacidade
+## Difficulty and capacity
 
-A dificuldade deve ser determinística e usar somente dados canônicos de épocas anteriores. O ajuste precisa:
+Difficulty must be deterministic and use only canonical data from earlier epochs. Adjustment must:
 
-- mirar uma quantidade limitada de tickets por época;
-- ter limites mínimos e máximos;
-- reagir com atraso para evitar manipulação instantânea;
-- usar aritmética inteira idêntica em todos os clientes;
-- ser coberto por testes de fronteira e overflow.
+- target a bounded number of tickets per epoch;
+- have minimum and maximum limits;
+- react with delay to prevent instant manipulation;
+- use identical integer arithmetic in every client;
+- be covered by boundary and overflow tests.
 
-O protocolo também precisa definir limites para operações por bloco, tickets por época, tamanho de mensagens e cache. Quando a procura ultrapassar a capacidade, a dificuldade deve reduzir a taxa de tickets, em vez de depender da ordem de chegada RPC.
+The protocol must also define limits for operations per block, tickets per epoch, message size, and cache size. When demand exceeds capacity, difficulty must reduce the ticket rate instead of relying on RPC arrival order.
 
-## Estado canônico
+## Canonical state
 
-O estado mínimo de um ticket contém:
+The minimum ticket state contains:
 
-- versão;
+- version;
 - chain ID;
-- época de elegibilidade;
+- eligibility epoch;
 - challenge;
 - ticket hash;
-- chave de assinatura;
+- signing key;
 - payout;
-- assinatura;
-- bloco canônico de inclusão.
+- signature;
+- canonical inclusion block.
 
-Tickets devem ser reconstruíveis pelos headers, isolados por hash de bloco, revertidos em reorgs e removidos após expiração. Cache local nunca pode ser fonte de consenso.
+Tickets must be reconstructible from headers, isolated by block hash, reverted during reorganizations, and removed after expiry. Local cache can never be a source of consensus truth.
 
 ## Bootstrap
 
-Participantes bootstrap podem ter uma janela curta de inicialização, definida antes do lançamento. Depois dela, todos, inclusive bootstraps, precisam de tickets. Não pode existir privilégio permanente.
+Bootstrap participants may receive a short startup window defined before launch. After that window, everyone, including bootstrap participants, must have tickets. No permanent privilege is allowed.
 
-## Recompensas
+## Rewards
 
-O ticket selecionado define a chave autorizada a assinar o bloco e o payout da recompensa. A divisão 70/30, a emissão, o halving e a recompensa imediata não precisam mudar por causa desta proposta.
+The selected ticket identifies the key authorized to sign the block and the reward payout. The 70/30 split, issuance, halving, and immediate reward do not need to change because of this proposal.
 
-## Ataques que precisam de testes dedicados
+## Attacks requiring dedicated tests
 
-- multiplicação de 100, 1.000, 5.000 e 100.000 chaves com trabalho fixo;
-- aumento real de capacidade computacional do adversário;
-- grinding de chaves, payout, nonce, timestamp e checkpoint;
-- retenção estratégica de tickets;
-- flood do pool e gossip;
-- tickets duplicados, replay entre épocas e redes;
-- reorg durante submissão, fechamento e ativação;
-- queda parcial e reinício total;
-- produtor e committee formados por tickets do mesmo controlador;
-- ajuste de dificuldade sob crescimento e perda brusca de hashpower;
-- sincronização de nó novo e reconstrução histórica;
-- consumo de CPU, memória, disco e largura de banda.
+- multiplication to 100, 1,000, 5,000, and 100,000 keys with fixed total work;
+- a real increase in adversarial computing capacity;
+- grinding of keys, payout, nonce, timestamp, and checkpoint;
+- strategic withholding of tickets;
+- pool and gossip flooding;
+- duplicate tickets and replay across epochs and networks;
+- reorganizations during submission, closing, and activation;
+- partial outage and total restart;
+- producer and committee composed of tickets from one controller;
+- difficulty adjustment during growth and sudden loss of hash power;
+- new-node synchronization and historical reconstruction;
+- CPU, memory, disk, and bandwidth consumption.
 
-## Gates obrigatórios
+## Mandatory gates
 
-1. O simulador deve mostrar que identidades adicionais, com trabalho total constante, não aumentam producer, fallbacks ou committee.
-2. A implementação deve passar testes unitários e fuzzing.
-3. Um laboratório limpo deve repetir o cenário de milhares de chaves.
-4. Recompensas, assinaturas, transações, resiliência e fronteiras devem continuar em PASS.
-5. Somente depois desses gates a mainnet pode ser reconsiderada.
+1. The simulator must show that additional identities with constant total work do not increase producer, fallback, or committee selection.
+2. The implementation must pass unit tests and fuzzing.
+3. A clean lab must repeat the thousands-of-keys scenario.
+4. Rewards, signatures, transactions, resilience, and boundaries must remain in `PASS`.
+5. Mainnet may be reconsidered only after all these gates pass.

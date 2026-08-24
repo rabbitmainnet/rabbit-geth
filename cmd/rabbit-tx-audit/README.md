@@ -1,30 +1,33 @@
 # Rabbit Chain Transaction Auditor
 
-Teste de integração somente para o laboratório Rabbit. Assina localmente uma transferência
-EIP-1559 com o keystore criptografado do node20, envia a transação bruta por IPC e verifica:
+Integration test exclusively for the Rabbit lab. It locally signs an EIP-1559
+transfer using node 20's encrypted keystore, submits the raw transaction through
+IPC, and verifies:
 
-- inclusão e receipt canônico;
-- valor e nonce do remetente;
-- saldo do destinatário;
-- custo total do gas;
-- base fee queimada;
-- tip creditado ao producer do bloco;
-- hash do bloco e receipt nos nós selecionados.
+- inclusion and canonical receipt;
+- sender value and nonce;
+- recipient balance;
+- total gas cost;
+- burned base fee;
+- tip credited to the block producer;
+- block hash and receipt on the selected nodes.
 
-O delta da transação é isolado com `prestateTracer`. Dessa forma, recompensas
-imediatas de produtor e committee creditadas no mesmo bloco não são confundidas
-com valor, gas, burn ou tip da transferência.
+The transaction delta is isolated using `prestateTracer`. Consequently,
+immediate producer and committee rewards credited in the same block are not
+confused with the transfer value, gas, burn, or tip.
 
-Por padrão todos os 20 nós são verificados. A opção `--verify-nodes` permite
-informar uma lista como `1,3,4,20` para auditar uma transação durante um teste
-controlado no qual os demais nós estão desligados.
+By default, all 20 nodes are verified. The `--verify-nodes` option accepts a
+list such as `1,3,4,20` to audit a transaction during a controlled test in
+which the remaining nodes are offline.
 
-O script `scripts/rabbit-devnet/run-transaction-audit.sh` executa este programa e, em seguida,
-o auditor de rewards para separar efeitos da transação, reward líquido e Reward Locker.
+The `scripts/rabbit-devnet/run-transaction-audit.sh` script runs this program
+and then the reward auditor to separate transaction effects, liquid rewards,
+and the Reward Locker.
 
-A conta node20 recebe 1.000 RAB somente no `genesis-runtime.json` temporário criado pelo script
-do laboratório. `networks/rabbit-devnet/genesis.json` e o genesis de mainnet não são alterados.
+The node 20 account receives 1,000 RAB only in the temporary
+`genesis-runtime.json` created by the lab script.
+`networks/rabbit-devnet/genesis.json` and the mainnet genesis are not changed.
 
-O script `scripts/rabbit-devnet/run-network-resilience-audit.sh` usa essa opção
-para testar transações com perda parcial de produtores, retorno dos produtores
-e reinício completo dos 20 nós.
+The `scripts/rabbit-devnet/run-network-resilience-audit.sh` script uses this
+option to test transactions during a partial producer outage, after the
+producers return, and after a complete restart of all 20 nodes.

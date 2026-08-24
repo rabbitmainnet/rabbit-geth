@@ -47,10 +47,10 @@ func runBenchmark(opts options) (benchmarkReport, error) {
 		EpochSeconds:               opts.epochSeconds,
 		VerificationBudgetMs:       opts.verifyBudgetMs,
 		Warnings: []string{
-			"medição em uma máquina não certifica todos os PCs fracos",
-			"Argon2id é apenas um protótipo mensurável e ainda não foi escolhido para o consenso",
-			"GPU, ASIC, consumo elétrico e ataques de negação de serviço exigem laboratório separado",
-			"igualdade por pessoa continua impossível sem uma fonte externa de identidade",
+			"a measurement on one machine does not certify all low-end PCs",
+			"Argon2id is only a measurable prototype and has not yet been selected for consensus",
+			"GPU, ASIC, power consumption, and denial-of-service attacks require separate lab testing",
+			"per-person equality remains impossible without an external identity source",
 		},
 	}
 
@@ -71,10 +71,10 @@ func runBenchmark(opts options) (benchmarkReport, error) {
 	continuousAnomalies := continuousMeasurementAnomalies(report.Profiles)
 	isolatedAnomalies := isolatedMeasurementAnomalies(report.Profiles)
 	for _, anomaly := range continuousAnomalies {
-		report.MeasurementAnomalies = append(report.MeasurementAnomalies, "contínuo: "+anomaly)
+		report.MeasurementAnomalies = append(report.MeasurementAnomalies, "continuous: "+anomaly)
 	}
 	for _, anomaly := range isolatedAnomalies {
-		report.MeasurementAnomalies = append(report.MeasurementAnomalies, "isolado: "+anomaly)
+		report.MeasurementAnomalies = append(report.MeasurementAnomalies, "isolated: "+anomaly)
 	}
 	if len(continuousAnomalies) > 0 {
 		report.ContinuousStabilityStatus = "FAIL"
@@ -235,14 +235,14 @@ func continuousMeasurementAnomalies(profiles []profileResult) []string {
 	var anomalies []string
 	for _, profile := range profiles {
 		if profile.RoundVariabilityPercent > 35 {
-			anomalies = append(anomalies, fmt.Sprintf("%d MiB variou %.2f%% entre rodadas", profile.MemoryMiB, profile.RoundVariabilityPercent))
+			anomalies = append(anomalies, fmt.Sprintf("%d MiB varied by %.2f%% across rounds", profile.MemoryMiB, profile.RoundVariabilityPercent))
 		}
 	}
 	for index := 1; index < len(profiles); index++ {
 		previous := profiles[index-1]
 		current := profiles[index]
 		if current.MedianOperationMs < previous.MedianOperationMs*0.85 {
-			anomalies = append(anomalies, fmt.Sprintf("%d MiB ficou inesperadamente mais rápido que %d MiB", current.MemoryMiB, previous.MemoryMiB))
+			anomalies = append(anomalies, fmt.Sprintf("%d MiB was unexpectedly faster than %d MiB", current.MemoryMiB, previous.MemoryMiB))
 		}
 	}
 	return anomalies
@@ -252,14 +252,14 @@ func isolatedMeasurementAnomalies(profiles []profileResult) []string {
 	var anomalies []string
 	for _, profile := range profiles {
 		if profile.IsolatedVariabilityPercent > 35 {
-			anomalies = append(anomalies, fmt.Sprintf("%d MiB variou %.2f%% entre amostras", profile.MemoryMiB, profile.IsolatedVariabilityPercent))
+			anomalies = append(anomalies, fmt.Sprintf("%d MiB varied by %.2f%% across samples", profile.MemoryMiB, profile.IsolatedVariabilityPercent))
 		}
 	}
 	for index := 1; index < len(profiles); index++ {
 		previous := profiles[index-1]
 		current := profiles[index]
 		if current.IsolatedMedianOperationMs < previous.IsolatedMedianOperationMs*0.85 {
-			anomalies = append(anomalies, fmt.Sprintf("%d MiB ficou inesperadamente mais rápido que %d MiB", current.MemoryMiB, previous.MemoryMiB))
+			anomalies = append(anomalies, fmt.Sprintf("%d MiB was unexpectedly faster than %d MiB", current.MemoryMiB, previous.MemoryMiB))
 		}
 	}
 	return anomalies
@@ -309,7 +309,7 @@ func parseMemoryProfiles(value string) ([]uint64, error) {
 	for _, field := range strings.Split(value, ",") {
 		parsed, err := strconv.ParseUint(strings.TrimSpace(field), 10, 64)
 		if err != nil || parsed == 0 || parsed > 1024 {
-			return nil, fmt.Errorf("perfil de memória inválido %q", field)
+			return nil, fmt.Errorf("invalid memory profile %q", field)
 		}
 		if !seen[parsed] {
 			seen[parsed] = true
@@ -317,7 +317,7 @@ func parseMemoryProfiles(value string) ([]uint64, error) {
 		}
 	}
 	if len(values) == 0 {
-		return nil, fmt.Errorf("lista de memória vazia")
+		return nil, fmt.Errorf("empty memory list")
 	}
 	sort.Slice(values, func(left, right int) bool { return values[left] < values[right] })
 	return values, nil

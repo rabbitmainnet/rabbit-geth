@@ -268,10 +268,10 @@ func CreditReward(
 
 const VestingStartBlock uint64 = 100000
 
-// 1 ano em blocos de 10 segundos.
+// 1 year in 10-second blocks.
 const BlocksPerYear uint64 = 3153600
 
-// 3 meses.
+// 3 months.
 const BlocksPerQuarter uint64 = BlocksPerYear / 4
 
 func CurrentReleaseStage(block uint64) uint8 {

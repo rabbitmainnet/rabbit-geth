@@ -1,139 +1,143 @@
-# Rabbit Chain — cadastro permissionless canônico
+# Rabbit Chain — Canonical Permissionless Registry
 
-Versão da especificação: `1.3.0-draft`
+Specification version: `1.3.0-draft`
 
-Status: engine, pool, RPC e gossip implementados atrás de ativação explícita por
-bloco; desabilitados por padrão e ainda não habilitados no genesis do laboratório.
+Status: engine, pool, RPC, and gossip implemented behind explicit block
+activation; disabled by default and not yet enabled in the lab genesis.
 
-## Objetivos
+## Goals
 
-- qualquer pessoa pode solicitar entrada sem possuir ou bloquear RAB;
-- nenhuma carteira administradora aprova ou remove participantes;
-- todos os nós derivam a mesma fila a partir da cadeia canônica;
-- um nó novo reconstrói o cadastro somente pelos headers;
-- registro, heartbeat e saída são verificáveis sem contrato inteligente;
-- todos os participantes ativos continuam com peso igual na fila.
+- anyone can request admission without owning or locking RAB;
+- no administrator wallet approves or removes participants;
+- every node derives the same queue from the canonical chain;
+- a new node reconstructs the registry from headers alone;
+- registration, heartbeat, and exit are verifiable without a smart contract;
+- every active participant retains equal weight in the queue.
 
-## Registro
+## Registration
 
-O candidato cria uma operação `REGISTER` contendo versão, endereço, sequência,
-validade e nonce de prova. Ele procura um nonce cujo hash Keccak-256 esteja
-abaixo do alvo definido por `proofDifficulty` e assina a operação com a própria
-chave secp256k1.
+A candidate creates a `REGISTER` operation containing a version, address,
+sequence, validity limit, and proof nonce. The candidate searches for a nonce
+whose Keccak-256 hash is below the target defined by `proofDifficulty`, then
+signs the operation with its own secp256k1 key.
 
-A prova serve somente para limitar spam de cadastros. Ela não aumenta peso,
-prioridade ou recompensa. Não existe depósito de tokens.
+The proof exists only to limit registration spam. It does not increase weight,
+priority, or reward. No token deposit is required.
 
-## Inclusão canônica
+## Canonical inclusion
 
-As operações serão propagadas por um pool LQC próprio, sem taxa e sem EVM. Um
-produtor ativo inclui um conjunto limitado de operações no `Extra` do header.
-O header também contém o `registryRoot` resultante. Todos os nós:
+Operations are propagated through a dedicated LQC pool, without fees or the
+EVM. An active producer includes a limited set of operations in the header's
+`Extra` field. The header also contains the resulting `registryRoot`. Every node:
 
-1. verificam assinatura, sequência, validade e LightHash;
-2. aplicam as operações sobre o snapshot do header pai;
-3. calculam novamente o `registryRoot`;
-4. rejeitam o bloco se qualquer byte divergir.
+1. verifies the signature, sequence, validity, and LightHash;
+2. applies the operations to the parent header snapshot;
+3. recalculates the `registryRoot`;
+4. rejects the block if any byte differs.
 
-Uma entrada incluída no bloco `N` participa da seleção somente a partir de
-`N + 1 + activationDelay`. Assim, o produtor do próprio bloco nunca se autoriza.
+An entry included in block `N` participates in selection only from
+`N + 1 + activationDelay`. The producer of a block can therefore never
+authorize itself in that same block.
 
-## Formato canônico do header
+## Canonical header format
 
-O envelope binário começa com os quatro bytes `LQC\\x00`, seguidos por RLP
-canônico contendo:
+The binary envelope begins with the four bytes `LQC\\x00`, followed by
+canonical RLP containing:
 
-1. versão do envelope (`2`);
-2. número do bloco;
-3. `registryRoot` pós-bloco;
-4. lista de operações assinadas.
+1. envelope version (`2`);
+2. block number;
+3. post-block `registryRoot`;
+4. list of signed operations.
 
-O codec limita o `Extra` a 16 KiB e aceita no máximo 64 operações por bloco.
-As operações são ordenadas por endereço e sequência, com critérios de desempate
-determinísticos. Um par endereço/sequência duplicado, raiz zero, assinatura com
-tamanho incorreto, ordem não canônica, RLP malformado ou versão desconhecida é
-rejeitado. A validação criptográfica usa o `chainId`, a altura e a dificuldade
-LightHash. A conferência do `registryRoot` é executada pela camada de snapshots
-antes de um header ser aceito pela engine.
+The codec limits `Extra` to 16 KiB and accepts at most 64 operations per block.
+Operations are ordered by address and sequence using deterministic tie-breakers.
+A duplicate address/sequence pair, zero root, incorrectly sized signature,
+non-canonical order, malformed RLP, or unknown version is rejected.
+Cryptographic validation uses the `chainId`, height, and LightHash difficulty.
+The snapshot layer verifies `registryRoot` before the engine accepts a header.
 
-O pool em memória aceita no máximo 4.096 operações e mantém uma operação
-pendente por endereço. Uma sequência maior só substitui a anterior depois de
-ser válida contra o snapshot canônico atual. Operações expiradas são podadas;
-operações já incluídas podem permanecer retidas até expirar para tolerar reorg,
-mas nunca voltam a um header sem serem revalidadas contra o novo pai.
+The in-memory pool accepts at most 4,096 operations and retains one pending
+operation per address. A higher sequence replaces the previous operation only
+after it is valid against the current canonical snapshot. Expired operations
+are pruned. Included operations may remain retained until expiry to tolerate a
+reorganization, but they never return to a header without being revalidated
+against the new parent.
 
-O RPC `lqc_submitRegistryOperation` recebe somente operações já assinadas; o nó
-não recebe chave privada e não assina pelo usuário. Consultas de status e
-pendências usam o mesmo namespace. O protocolo P2P separado `lqcr/1` confere
-versão, network ID e genesis antes de propagar lotes limitados. Cada peer mantém
-um conjunto limitado de hashes conhecidos para cortar loops de gossip.
+The `lqc_submitRegistryOperation` RPC accepts only operations that are already
+signed; the node never receives a private key and never signs for the user.
+Status and pending-operation queries use the same namespace. The separate
+`lqcr/1` P2P protocol verifies version, network ID, and genesis before
+propagating bounded batches. Each peer maintains a bounded set of known hashes
+to stop gossip loops.
 
-## Heartbeat e saída
+## Heartbeat and exit
 
-- produzir um bloco atualiza o heartbeat automaticamente;
-- quem ainda não produziu envia uma operação `HEARTBEAT` assinada;
-- `EXIT` é assinado pelo próprio participante;
-- inatividade após `heartbeatWindow + heartbeatGrace` remove automaticamente o
-  participante da fila, sem apagar seu histórico;
-- reentrada exige nova sequência e nova prova LightHash.
+- producing a block automatically updates the heartbeat;
+- a participant that has not yet produced sends a signed `HEARTBEAT` operation;
+- `EXIT` is signed by the participant itself;
+- inactivity beyond `heartbeatWindow + heartbeatGrace` automatically removes
+  the participant from the queue without deleting its history;
+- re-entry requires a new sequence and a new LightHash proof.
 
-## Reconstrução, reorg e checkpoints
+## Reconstruction, reorganization, and checkpoints
 
-O cadastro é um snapshot derivado de headers. Snapshots são indexados pelo hash
-do bloco, nunca apenas pela altura. Uma reorganização seleciona o snapshot do
-novo pai. Checkpoints periódicos podem ser armazenados localmente para acelerar
-sincronização, mas o cache local nunca é fonte de consenso.
+The registry is a snapshot derived from headers. Snapshots are indexed by block
+hash, never by height alone. A reorganization selects the snapshot belonging to
+the new parent. Periodic checkpoints may be stored locally to accelerate
+synchronization, but the local cache is never a source of consensus truth.
 
-Cada snapshot armazena altura, hash do bloco, raiz do cadastro e participantes
-em ordem canônica. Ao aplicar um filho, o nó confere continuidade, produtor
-elegível no snapshot pai, envelope, operações e raiz pós-bloco. Produzir o bloco
-atualiza o heartbeat antes das operações. A reconstrução de um nó novo começa no
-snapshot-base determinístico da transição e reaplica os headers canônicos.
+Each snapshot stores the height, block hash, registry root, and participants in
+canonical order. When applying a child, the node verifies continuity, producer
+eligibility in the parent snapshot, the envelope, operations, and post-block
+root. Block production updates the heartbeat before applying operations. A new
+node begins reconstruction from the deterministic transition base snapshot and
+reapplies canonical headers.
 
-## Ativação na engine
+## Engine activation
 
-O campo `registryProtocolBlock` controla a transição. O valor zero mantém o
-formato legado. Antes da altura configurada, a engine exige `LQC:1:N`; a partir
-dela, exige o envelope binário e deriva seleção, committee e heartbeat pelo
-snapshot do pai. A rota canônica não consulta o `RuntimeRegistry`, não exige
-bond e não possui fallback que autorize automaticamente o coinbase do header.
+The `registryProtocolBlock` field controls the transition. A zero value retains
+the legacy format. Before the configured height, the engine requires `LQC:1:N`;
+from that height onward, it requires the binary envelope and derives selection,
+committee, and heartbeat from the parent snapshot. The canonical path does not
+consult `RuntimeRegistry`, does not require a bond, and has no fallback that
+automatically authorizes the header coinbase.
 
-Na fronteira de ativação, o snapshot-base é criado deterministicamente a partir
-dos participantes de bootstrap configurados e do hash do pai. Checkpoints
-locais completos são gravados somente a cada `epochLength`; os demais snapshots
-recentes ficam em cache LRU limitado. Um cache ausente ou inválido é reconstruído
-pelos headers.
+At the activation boundary, the base snapshot is created deterministically
+from the configured bootstrap participants and the parent hash. Complete local
+checkpoints are written only every `epochLength`; other recent snapshots remain
+in a bounded LRU cache. A missing or invalid cache is reconstructed from
+headers.
 
-Uma configuração ativada sem dificuldade LightHash ou sem bootstrap válido é
-rejeitada. Depois que uma das alturas conflitantes já foi alcançada, um nó também
-rejeita a troca local de `registryProtocolBlock`, evitando uma bifurcação causada
-por alteração tardia do genesis/configuração.
+An activated configuration without LightHash difficulty or a valid bootstrap
+set is rejected. After either conflicting height has been reached, a node also
+rejects a local change to `registryProtocolBlock`, preventing a fork caused by
+a late genesis/configuration change.
 
-## Limites obrigatórios
+## Mandatory limits
 
-- tamanho máximo do `Extra`;
-- máximo de operações por bloco;
-- validade máxima futura de uma operação;
-- uma operação por endereço e sequência;
-- ordenação canônica das operações antes da codificação;
-- domínio de assinatura inclui o `chainId`;
-- dificuldade nunca pode ser zero.
+- maximum `Extra` size;
+- maximum operations per block;
+- maximum future validity of an operation;
+- one operation per address and sequence;
+- canonical operation ordering before encoding;
+- signature domain includes the `chainId`;
+- difficulty can never be zero.
 
 ## Genesis
 
-Uma cadeia vazia não pode selecionar com segurança o primeiro produtor. Antes
-da mainnet haverá uma cerimônia pública de genesis: candidatos publicam provas
-LightHash, a lista é ordenada por regra verificável e inserida no genesis. Após
-o bloco zero, o cadastro fica permanentemente aberto e nenhuma chave possui
-poder administrativo.
+An empty chain cannot safely select its first producer. Before mainnet, there
+will be a public genesis ceremony: candidates publish LightHash proofs, the
+list is ordered by a verifiable rule, and the result is inserted into the
+genesis. After block zero, the registry remains permanently open and no key has
+administrative power.
 
-## Fases de integração
+## Integration phases
 
-1. núcleo matemático e testes isolados — concluído;
-2. codec do envelope versionado e `registryRoot` — concluído, não ativado;
-3. snapshots por hash e reconstrução por headers — concluído, não ativado;
-4. integração controlada na engine — concluída atrás de ativação;
-5. pool/gossip/RPC de operações — implementados atrás de ativação e em validação;
-6. laboratório com bootstrap + produtor 21 desconhecido;
-7. saída, expiração, retorno, reorg e sincronização de nó novo;
-8. repetição de recompensas, resiliência, carga e fronteiras.
+1. mathematical core and isolated tests — completed;
+2. versioned envelope codec and `registryRoot` — completed, not activated;
+3. hash-indexed snapshots and header-based reconstruction — completed, not activated;
+4. controlled engine integration — completed behind activation;
+5. operation pool/gossip/RPC — implemented behind activation and under validation;
+6. lab with bootstrap participants plus unknown producer 21;
+7. exit, expiry, return, reorganization, and new-node synchronization;
+8. repeat reward, resilience, load, and boundary tests.

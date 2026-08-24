@@ -1,19 +1,19 @@
-# Rabbit Chain — auditoria do cadastro permissionless
+# Rabbit Chain — Permissionless Registry Audit
 
-Esta auditoria verifica se nós independentes, partindo do mesmo head canônico,
-calculam exatamente o mesmo conjunto de participantes.
+This audit verifies whether independent nodes starting from the same canonical
+head calculate exactly the same participant set.
 
-Ela cobre três propriedades obrigatórias:
+It covers three mandatory properties:
 
-1. dois produtores com memórias locais diferentes precisam derivar a mesma fila;
-2. um produtor fora do genesis precisa possuir um caminho determinístico de entrada;
-3. um nó novo precisa reconstruir o cadastro somente a partir de dados canônicos.
+1. two producers with different local memory states must derive the same queue;
+2. a producer outside the genesis must have a deterministic admission path;
+3. a new node must reconstruct the registry solely from canonical data.
 
-O laboratório de 20 produtores usa `registryMode=bootstrap`. Por isso, os testes
-de convergência, transações, resiliência e recompensas aprovados não demonstram
-entrada permissionless.
+The 20-producer lab uses `registryMode=bootstrap`. Therefore, the successful
+convergence, transaction, resilience, and reward tests do not demonstrate
+permissionless admission.
 
-O genesis mainnet usa `registryMode=native`. Na implementação auditada, o modo
-native consulta `runtimeRegistry`, que existe apenas na memória de cada processo.
-Enquanto isso não for substituído por dados determinísticos derivados da cadeia,
-o lançamento público deve permanecer bloqueado.
+The mainnet genesis uses `registryMode=native`. In the audited implementation,
+native mode queries `runtimeRegistry`, which exists only in each process's
+memory. Until it is replaced with deterministic data derived from the chain,
+the public launch must remain blocked.

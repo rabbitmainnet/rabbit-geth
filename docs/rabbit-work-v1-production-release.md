@@ -1,49 +1,53 @@
-# Rabbit Work V1 — perfil de produção
+# Rabbit Work V1 — Production Profile
 
-O release Linux/amd64 da Rabbit mainnet deve ser compilado com:
+The Rabbit mainnet Linux/AMD64 release must be built with:
 
 ```text
 rabbit_workv1 rabbit_randomx
 ```
 
-O build `rabbit_workv1_engine_lab` continua reservado a genesis isolado. O
-binário default recusa o genesis oficial `RABBIT_MAINNET_GENESIS_V1`, evitando
-que um operador crie acidentalmente uma cadeia incompatível sem Work V1.
+The `rabbit_workv1_engine_lab` build remains restricted to an isolated
+genesis. The default binary rejects the official
+`RABBIT_MAINNET_GENESIS_V1` genesis, preventing an operator from accidentally
+creating an incompatible chain without Work V1.
 
-No genesis oficial, o build de produção ativa automaticamente o transporte
-`lqcw/1`; o flag `--lqc.worktickets.labtransport` continua proibido.
+For the official genesis, the production build automatically enables the
+`lqcw/1` transport; the `--lqc.worktickets.labtransport` flag remains
+prohibited.
 
-## Regras congeladas
+## Frozen rules
 
-- initial Work difficulty: `lqc.proofDifficulty` do genesis (`100000`);
-- retarget canônico atrasado por paridade de epochs;
-- elegibilidade na admissão: snapshot histórico do challenge block;
-- seleção: seats ainda elegíveis no registry canônico atual;
-- reward: 70% para o autor efetivo autorizado e 30% para o comitê por seat;
-- fallback autorizado recebe a parcela de produtor quando efetivamente produz;
-- sem WorkSeats elegíveis: registry preserva liveness e o subsídio base é zero;
-- reconstrução de runtime e anchors segue `(hash, number)` da própria branch;
-- pool pending é persistido e tickets removidos por reorg são readmitidos
-  somente enquanto ainda válidos.
+- initial Work difficulty: genesis `lqc.proofDifficulty` (`100000`);
+- canonical retarget delayed by epoch parity;
+- admission eligibility: historical snapshot of the challenge block;
+- selection: seats that remain eligible in the current canonical registry;
+- reward: 70% to the actual authorized author and 30% to the committee by seat;
+- an authorized fallback receives the producer share when it actually produces;
+- with no eligible WorkSeats, the registry preserves liveness and the base
+  subsidy is zero;
+- runtime reconstruction and anchors follow the branch's own `(hash, number)`;
+- the pending pool is persisted, and tickets removed by a reorganization are
+  readmitted only while still valid.
 
-## Build oficial
+## Official build
 
-Use `scripts/rabbit-release/build-rabbit-mainnet-workv1.sh`. O script:
+Use `scripts/rabbit-release/build-rabbit-mainnet-workv1.sh`. The script:
 
-- confere o genesis congelado;
-- confere o commit e a biblioteca RandomX pinados;
-- exige Linux/amd64 e Go 1.24.0;
-- executa testes default e de produção;
-- cria um binário com `-trimpath`;
-- força `-Wl,-z,noexecstack` e rejeita `GNU_STACK RWE`;
-- inicializa datadirs descartáveis com o genesis oficial;
-- prova que o binário de produção ativa Work V1;
-- prova que o binário default recusa a mainnet;
-- grava `SHA256SUMS`.
+- verifies the frozen genesis;
+- verifies the pinned commit and RandomX library;
+- requires Linux/AMD64 and Go 1.24.0;
+- runs default and production tests;
+- creates a binary with `-trimpath`;
+- enforces `-Wl,-z,noexecstack` and rejects `GNU_STACK RWE`;
+- initializes disposable data directories with the official genesis;
+- proves that the production binary enables Work V1;
+- proves that the default binary rejects mainnet;
+- writes `SHA256SUMS`.
 
-Nunca use `geth --mainnet`: esse flag pertence à Ethereum mainnet upstream.
-Rabbit usa `geth init networks/rabbit-mainnet/genesis.json` e `--networkid 928`.
+Never use `geth --mainnet`: that flag belongs to the upstream Ethereum
+mainnet. Rabbit uses `geth init networks/rabbit-mainnet/genesis.json` and
+`--networkid 928`.
 
-O build fecha o release candidate do software. O lançamento público ainda
-requer bootnodes/ENRs reais, servidores independentes, RPC, archive node e
-explorer. Nenhum endpoint ou nodekey do laboratório pode ser reutilizado.
+The build completes the software release candidate. Public launch still
+requires real bootnodes and ENRs, independent servers, RPC, an archive node, and
+an explorer. No lab endpoint or node key may be reused.

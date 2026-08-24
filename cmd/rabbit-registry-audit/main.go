@@ -159,13 +159,13 @@ func main() {
 
 	encoded, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERRO: codificar relatório: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ERROR: encode report: %v\n", err)
 		os.Exit(2)
 	}
 
 	if output := os.Getenv("RABBIT_REGISTRY_AUDIT_JSON"); output != "" {
 		if err := os.WriteFile(output, append(encoded, '\n'), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "ERRO: gravar relatório: %v\n", err)
+			fmt.Fprintf(os.Stderr, "ERROR: write report: %v\n", err)
 			os.Exit(2)
 		}
 	}
@@ -174,7 +174,7 @@ func main() {
 	for _, item := range report.Checks {
 		fmt.Printf("%s: %s\n  %s\n", item.Name, item.Status, item.Detail)
 	}
-	fmt.Printf("\nCADASTRO PERMISSIONLESS: %s\n", report.Status)
+	fmt.Printf("\nPERMISSIONLESS REGISTRY: %s\n", report.Status)
 
 	if report.Status != "PASS" {
 		os.Exit(1)
