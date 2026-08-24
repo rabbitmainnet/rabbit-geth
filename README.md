@@ -84,6 +84,10 @@ Wallet passwords and private keys remain local. The miner submits only signed Wo
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [LCQ protocol overview](docs/consensus/lcq-protocol.md)
+- [Rewards and emission](docs/economics/rewards-and-emission.md)
+- [Decentralized network operation](docs/operators/decentralized-network.md)
+- [Public testnet launch plan](docs/testnet/launch-and-decentralization.md)
 - [Testnet quick start](docs/testnet/quickstart.md)
 - [Testnet network reference](docs/testnet/network-reference.md)
 - [Rabbit Core](docs/rabbit-core.md)

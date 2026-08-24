@@ -4,13 +4,18 @@
 
 - [Rabbit Testnet quick start](testnet/quickstart.md)
 - [Rabbit Testnet network reference](testnet/network-reference.md)
+- [Public testnet launch and decentralization plan](testnet/launch-and-decentralization.md)
 - [Rabbit Core guide](rabbit-core.md)
 - [Rabbit Miner Work V1](rabbit-miner.md)
+- [LCQ protocol overview](consensus/lcq-protocol.md)
+- [Rewards and emission](economics/rewards-and-emission.md)
 - [Official links](official-links.md)
 - [Security policy](../SECURITY.md)
 
 ## Operators and developers
 
+- [Decentralized network operation](operators/decentralized-network.md)
+- [Public RPC, explorer, and bootnode services](operators/public-services.md)
 - [Native release process](rabbit-native-release.md)
 - [Rabbit Work V1 production release](rabbit-work-v1-production-release.md)
 - [Work ticket foundation](rabbit-work-ticket-foundation.md)

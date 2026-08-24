@@ -21,7 +21,8 @@ This page summarizes the authoritative testnet genesis at `networks/rabbit-testn
 | --- | ---: |
 | Committee minimum | 32 |
 | Committee maximum | 128 |
-| Committee ratio | 30% |
+| Committee reward ratio | 30% |
+| Committee sizing | ceil(active participants × 10%), clamped to 32–128 and available seats |
 | Fallback slots | 5 |
 | Fallback window | 3,000 ms |
 | Target block time | 10,000 ms |
@@ -40,6 +41,10 @@ This page summarizes the authoritative testnet genesis at `networks/rabbit-testn
 | Major slash | 20% |
 
 These are testnet parameters. They must not be assumed to be final mainnet parameters.
+
+The committee sizing percentage and committee reward percentage are different
+rules. See [LCQ protocol overview](../consensus/lcq-protocol.md) and
+[Rewards and emission](../economics/rewards-and-emission.md).
 
 ## Reserved public endpoints
 
