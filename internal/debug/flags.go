@@ -203,13 +203,14 @@ func Setup(ctx *cli.Context) error {
 		context = append(context, "format", "terminal")
 	}
 	if rotation {
-		// Lumberjack uses <processname>-lumberjack.log in is.TempDir() if empty.
-		// so typically /tmp/geth-lumberjack.log on linux
-		if len(logFile) > 0 {
-			context = append(context, "location", logFile)
-		} else {
-			context = append(context, "location", filepath.Join(os.TempDir(), "geth-lumberjack.log"))
+		if len(logFile) == 0 {
+			var err error
+			logFile, err = secureRotatingLogFile()
+			if err != nil {
+				return fmt.Errorf("failed to create secure rotating log file: %v", err)
+			}
 		}
+		context = append(context, "location", logFile)
 		logOutputFile = &lumberjack.Logger{
 			Filename:   logFile,
 			MaxSize:    ctx.Int(logMaxSizeMBsFlag.Name),
@@ -317,6 +318,22 @@ func Setup(ctx *cli.Context) error {
 	return nil
 }
 
+// secureRotatingLogFile reserves a process-unique log file before lumberjack
+// opens it. This avoids the predictable shared /tmp filename used by
+// lumberjack when Filename is empty.
+func secureRotatingLogFile() (string, error) {
+	file, err := os.CreateTemp("", "geth-lumberjack-*.log")
+	if err != nil {
+		return "", err
+	}
+	name := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
 func StartPProf(address string, withMetrics bool) {
 	// Hook go-metrics into expvar on any /debug/metrics request, load all vars
 	// from the registry into expvar, and execute regular expvar handler.
@@ -346,12 +363,16 @@ func validateLogLocation(path string) error {
 	if err := os.MkdirAll(path, os.ModePerm); err != nil {
 		return fmt.Errorf("error creating the directory: %w", err)
 	}
-	// Check if the path is writable by trying to create a temporary file
-	tmp := filepath.Join(path, "tmp")
-	if f, err := os.Create(tmp); err != nil {
+	// Check if the path is writable with a process-unique file. A fixed name
+	// permits another local user to race this check in a shared directory.
+	f, err := os.CreateTemp(path, ".geth-log-write-test-*")
+	if err != nil {
 		return err
-	} else {
-		f.Close()
+	}
+	tmp := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
 	}
 	return os.Remove(tmp)
 }

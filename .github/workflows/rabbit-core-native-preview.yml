@@ -3,9 +3,6 @@ name: Rabbit Core Testnet Native Preview
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 env:
   GO_VERSION: "1.25.13"
   RANDOMX_REPOSITORY: https://github.com/tevador/RandomX.git
@@ -15,6 +12,8 @@ env:
 jobs:
   native:
     name: ${{ matrix.target }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -85,6 +84,7 @@ jobs:
     name: Preview manifest
     needs: native
     runs-on: ubuntu-24.04
+    permissions: {}
     steps:
       - name: Download previews
         uses: actions/download-artifact@v4

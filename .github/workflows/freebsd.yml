@@ -16,7 +16,7 @@ jobs:
 
     - name: Test in FreeBSD
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: vmactions/freebsd-vm@d0518f912576ae759075aa00fb9fe27037940271 # v1
       with:
         release: "15.0"
         usesh: true
