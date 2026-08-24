@@ -13,14 +13,22 @@ COPY go.mod /go-ethereum/
 COPY go.sum /go-ethereum/
 RUN cd /go-ethereum && go mod download
 
-ADD . /go-ethereum
+COPY . /go-ethereum
 RUN cd /go-ethereum && go run build/ci.go install -static ./cmd/geth
 
 # Pull Geth into a second stage deploy alpine container
 FROM alpine:latest
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S geth \
+    && adduser -S -D -H -h /home/geth -G geth geth \
+    && mkdir -p /home/geth/.ethereum \
+    && chown -R geth:geth /home/geth
 COPY --from=builder /go-ethereum/build/bin/geth /usr/local/bin/
+
+ENV HOME=/home/geth
+WORKDIR /home/geth
+USER geth
 
 EXPOSE 8545 8546 30303 30303/udp
 ENTRYPOINT ["geth"]

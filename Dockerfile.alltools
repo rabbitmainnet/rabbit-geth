@@ -13,7 +13,7 @@ COPY go.mod /go-ethereum/
 COPY go.sum /go-ethereum/
 RUN cd /go-ethereum && go mod download
 
-ADD . /go-ethereum
+COPY . /go-ethereum
 
 # This is not strictly necessary, but it matches the "Dockerfile" steps, thus
 # makes it so that under certain circumstances, the docker layer can be cached,
@@ -21,13 +21,28 @@ ADD . /go-ethereum
 #
 RUN cd /go-ethereum && go run build/ci.go install -static ./cmd/geth
 
-RUN cd /go-ethereum && go run build/ci.go install -static
+# Benchmarks remain available in the source tree and test suite, but they are
+# not production tools. The native Argon2 benchmarks intentionally require a
+# dynamic system library and therefore cannot be included in this static image.
+RUN cd /go-ethereum \
+    && packages="$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./cmd/... \
+        | grep -vE '/cmd/rabbit-(argon2-batch|argon2-reuse|lowend)-benchmark$')" \
+    && test -n "$packages" \
+    && go run build/ci.go install -static $packages
 
 # Pull all binaries into a second stage deploy alpine container
 FROM alpine:latest
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S geth \
+    && adduser -S -D -H -h /home/geth -G geth geth \
+    && mkdir -p /home/geth/.ethereum \
+    && chown -R geth:geth /home/geth
 COPY --from=builder /go-ethereum/build/bin/* /usr/local/bin/
+
+ENV HOME=/home/geth
+WORKDIR /home/geth
+USER geth
 
 EXPOSE 8545 8546 30303 30303/udp
 
