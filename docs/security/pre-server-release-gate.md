@@ -22,3 +22,13 @@
 This gate did not change LCQ, RandomX, rewards, halving, terminal subsidy,
 genesis or mining eligibility. It did not start mining or public servers.
 Open static-analysis findings remain publicly documented and visible.
+
+## RandomX executable-stack hardening
+
+The pinned RandomX GNU assembly is annotated with `.note.GNU-stack` during
+the Linux build. The release gate verified `GNU_STACK=RW` for `rabbit-node`,
+`rabbit-miner` and `rabbit-core`; none requests an executable process stack.
+
+- Hardened build commit: `47a1474e0d7e8472a94f3f7677af084b40621ade`
+- Hardened package: `rabbit-core-testnet-linux-amd64-47a1474e0d7e-noexec.tar.gz`
+- Hardened package SHA-256: `4f033ee8fecaf0bc6bcb36ee47546944f49b9361da85f11f97642fb30b2517b8`
