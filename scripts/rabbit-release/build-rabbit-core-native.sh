@@ -41,6 +41,16 @@ git -C "$work/RandomX" apply "$PWD/scripts/rabbit-release/randomx/rabbit-randomx
 git -C "$work/RandomX" diff --check
 grep -q '^#define RANDOMX_DATASET_BASE_SIZE  1073741824$' "$work/RandomX/src/configuration.h"
 
+# GNU/ELF assembly must explicitly declare that it does not require an
+# executable process stack. This changes binary hardening metadata only.
+if [[ "$expected_os" == linux ]]; then
+  stack_asm="$work/RandomX/src/jit_compiler_x86_static.S"
+  if ! grep -Fq '.section .note.GNU-stack' "$stack_asm"; then
+    printf '\n.section .note.GNU-stack,"",@progbits\n' >> "$stack_asm"
+  fi
+  grep -Fqx '.section .note.GNU-stack,"",@progbits' "$stack_asm"
+fi
+
 cmake -S "$work/RandomX" -B "$work/RandomX/build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF
@@ -62,6 +72,15 @@ mkdir -p "$stage" dist
 go build -tags 'rabbit_workv1 rabbit_randomx' -trimpath -o "$stage/rabbit-node" ./cmd/geth
 go build -tags 'rabbit_workv1 rabbit_randomx' -trimpath -o "$stage/rabbit-miner" ./cmd/rabbit-miner
 go build -tags 'rabbit_workv1 rabbit_randomx' -trimpath -o "$stage/rabbit-core" ./cmd/rabbit-core
+
+if [[ "$expected_os" == linux ]]; then
+  command -v readelf >/dev/null
+  for binary in rabbit-node rabbit-miner rabbit-core; do
+    stack_flags="$(readelf -W -l "$stage/$binary" | awk '$1 == "GNU_STACK" {print $7}')"
+    printf '%s GNU_STACK=%s\n' "$binary" "$stack_flags"
+    [[ "$stack_flags" == RW ]]
+  done
+fi
 
 cp networks/rabbit-testnet/genesis.json "$stage/genesis.json"
 cp docs/rabbit-core.md docs/rabbit-miner.md "$stage/"
