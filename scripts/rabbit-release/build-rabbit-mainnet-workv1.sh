@@ -27,30 +27,30 @@ expect_hash() {
     local expected="$1"
     local file="$2"
     local actual
-    [ -f "$file" ] || fail "missing file: $file"
+    [[ -f "$file" ]] || fail "missing file: $file"
     actual="$(sha256sum "$file" | awk '{print $1}')"
-    [ "$actual" = "$expected" ] || fail \
+    [[ "$actual" == "$expected" ]] || fail \
         "unexpected SHA-256 for $file (expected $expected, actual $actual)"
 }
 
-[ "$(uname -s)" = "Linux" ] || fail "the current Work V1 release is Linux-only"
-[ "$(uname -m)" = "x86_64" ] || fail "the current Work V1 release is amd64-only"
-[ -n "$GO_BIN" ] && [ -x "$GO_BIN" ] || fail "Go not found"
-[ -n "$GOFMT_BIN" ] && [ -x "$GOFMT_BIN" ] || fail "gofmt not found"
+[[ "$(uname -s)" == "Linux" ]] || fail "the current Work V1 release is Linux-only"
+[[ "$(uname -m)" == "x86_64" ]] || fail "the current Work V1 release is amd64-only"
+[[ -n "$GO_BIN" && -x "$GO_BIN" ]] || fail "Go not found"
+[[ -n "$GOFMT_BIN" && -x "$GOFMT_BIN" ]] || fail "gofmt not found"
 command -v readelf >/dev/null 2>&1 || fail "readelf not found (install binutils)"
 command -v timeout >/dev/null 2>&1 || fail "timeout not found (install coreutils)"
 
 GO_VERSION="$("$GO_BIN" version | awk '{print $3}')"
-[ "$GO_VERSION" = "$EXPECTED_GO_VERSION" ] || fail \
+[[ "$GO_VERSION" == "$EXPECTED_GO_VERSION" ]] || fail \
     "unexpected Go version: $GO_VERSION (expected $EXPECTED_GO_VERSION)"
 
 expect_hash "$EXPECTED_GENESIS" "$GENESIS"
 expect_hash "$EXPECTED_RANDOMX_HEADER" "$RANDOMX_ROOT/src/randomx.h"
 expect_hash "$EXPECTED_RANDOMX_LIB" "$RANDOMX_LIB"
 
-if [ -d "$RANDOMX_ROOT/.git" ]; then
+if [[ -d "$RANDOMX_ROOT/.git" ]]; then
     RANDOMX_COMMIT="$(git -C "$RANDOMX_ROOT" rev-parse HEAD)"
-    [ "$RANDOMX_COMMIT" = "$EXPECTED_RANDOMX_COMMIT" ] || fail \
+    [[ "$RANDOMX_COMMIT" == "$EXPECTED_RANDOMX_COMMIT" ]] || fail \
         "unexpected RandomX commit: $RANDOMX_COMMIT"
 else
     echo "RANDOMX_GIT_METADATA=ABSENT_SOURCE_HASHES_AUTHORITATIVE"
@@ -133,7 +133,7 @@ timeout --foreground 8 "$DEFAULT_BIN" \
 DEFAULT_STATUS="$?"
 set -e
 
-if [ "$PRODUCTION_STATUS" -ne 124 ]; then
+if [[ "$PRODUCTION_STATUS" -ne 124 ]]; then
     echo "===== START PRODUCTION LOG =====" >&2
     sed -n '1,240p' "$OUT/start-production.log" >&2
     fail "production smoke test ended unexpectedly: $PRODUCTION_STATUS"
@@ -141,7 +141,7 @@ fi
 grep -q 'LQC Work V1 RandomX transport enabled' "$OUT/start-production.log" || fail \
     "production Work V1 transport was not activated"
 
-if [ "$DEFAULT_STATUS" -eq 0 ] || [ "$DEFAULT_STATUS" -eq 124 ]; then
+if [[ "$DEFAULT_STATUS" -eq 0 || "$DEFAULT_STATUS" -eq 124 ]]; then
     echo "===== START DEFAULT-GUARD LOG =====" >&2
     sed -n '1,240p' "$OUT/start-default.log" >&2
     fail "default binary did not reject the official genesis"

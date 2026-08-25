@@ -60,7 +60,7 @@ wait_height_at_least() {
     for _ in $(seq 1 120); do
         local h
         h="$(height "$port" 2>/dev/null || echo 0)"
-        if [ "$h" -ge "$target" ]; then
+        if [[ "$h" -ge "$target" ]]; then
             return 0
         fi
         sleep 1
@@ -96,7 +96,7 @@ start_node() {
 stop_node() {
     local i="$1"
 
-    if [ -f "$LAB/node$i.pid" ]; then
+    if [[ -f "$LAB/node$i.pid" ]]; then
         kill "$(cat "$LAB/node$i.pid")" 2>/dev/null || true
         rm -f "$LAB/node$i.pid"
     fi
@@ -123,12 +123,12 @@ require_cmd sha256sum
 
 log "PRECONDITIONS"
 
-[ -x "$BIN" ] || {
+[[ -x "$BIN" ]] || {
     echo "ERROR: binary not found: $BIN" >&2
     exit 1
 }
 
-[ -f "$GENESIS" ] || {
+[[ -f "$GENESIS" ]] || {
     echo "ERROR: genesis not found" >&2
     exit 1
 }
@@ -136,7 +136,7 @@ log "PRECONDITIONS"
 EXPECTED_GENESIS="e0850d1f19a516269e476e29fbe9e63282c88a88c2ff43d01bd9eae17898014b"
 ACTUAL_GENESIS="$(sha256sum "$GENESIS" | awk '{print $1}')"
 
-[ "$ACTUAL_GENESIS" = "$EXPECTED_GENESIS" ] || {
+[[ "$ACTUAL_GENESIS" == "$EXPECTED_GENESIS" ]] || {
     echo "ERROR: genesis does not match the frozen version" >&2
     echo "expected=$EXPECTED_GENESIS" >&2
     echo "actual=$ACTUAL_GENESIS" >&2
@@ -180,8 +180,8 @@ for i in $(seq 0 $((NODES-1))); do
     chain="$(rpc_result $((RPC_BASE+i)) eth_chainId)"
     net="$(rpc_result $((RPC_BASE+i)) net_version)"
 
-    [ "$chain" = "0x3a0" ] || fail "node$i chainId=$chain"
-    [ "$net" = "928" ] || fail "node$i networkid=$net"
+    [[ "$chain" == "0x3a0" ]] || fail "node$i chainId=$chain"
+    [[ "$net" == "928" ]] || fail "node$i networkid=$net"
 done
 
 pass "all nodes are on Rabbit Chain 928"
@@ -242,7 +242,7 @@ done
 MAX="$(for i in $(seq 0 $((NODES-1))); do height $((RPC_BASE+i)); done | sort -n | tail -1)"
 MIN="$(for i in $(seq 0 $((NODES-1))); do height $((RPC_BASE+i)); done | sort -n | head -1)"
 
-if [ "$((MAX-MIN))" -le 3 ]; then
+if [[ "$((MAX-MIN))" -le 3 ]]; then
     pass "node heights remain close"
 else
     fail "excessive height divergence: min=$MIN max=$MAX"
@@ -269,7 +269,7 @@ ACCOUNT="$(
     head -1 || true
 )"
 
-if [ -n "$ACCOUNT" ]; then
+if [[ -n "$ACCOUNT" ]]; then
     pass "test wallet created: $ACCOUNT"
 else
     echo "wallet was not created automatically; continuing with consensus tests"
@@ -304,7 +304,7 @@ sleep 5
 
 AFTER_RESTART="$(height "$RPC_BASE")"
 
-if [ "$AFTER_RESTART" -ge "$BEFORE_RESTART" ]; then
+if [[ "$AFTER_RESTART" -ge "$BEFORE_RESTART" ]]; then
     pass "chain preserved after restart: $BEFORE_RESTART -> $AFTER_RESTART"
 else
     fail "height decreased after restart"
@@ -373,7 +373,7 @@ for i in $(seq 0 $((NODES-1))); do
 
     echo "node$i final_hash=$HASH"
 
-    [ -n "$HASH" ] || fail "node$i has no final block"
+    [[ -n "$HASH" ]] || fail "node$i has no final block"
 done
 
 log "SUMMARY"
@@ -384,7 +384,7 @@ echo "START_HEIGHT=$START_HEIGHT"
 echo "FINAL_HEIGHT=$FINAL_HEIGHT"
 echo "GENESIS_SHA256=$ACTUAL_GENESIS"
 
-if [ "$FAIL" -ne 0 ]; then
+if [[ "$FAIL" -ne 0 ]]; then
     echo
     echo "RABBIT FINAL SURVIVAL AUDIT = FAIL"
     echo "Logs: $LAB"

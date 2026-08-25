@@ -24,10 +24,10 @@ hash_file() {
   fi
 }
 
-test "$actual_os" = "$expected_os"
-test "$actual_arch" = "$expected_arch"
-test "$(go version | awk '{print $3}')" = "go1.25.13"
-test "$(hash_file networks/rabbit-testnet/genesis.json)" = "$EXPECTED_GENESIS"
+[[ "$actual_os" == "$expected_os" ]]
+[[ "$actual_arch" == "$expected_arch" ]]
+[[ "$(go version | awk '{print $3}')" == "go1.25.13" ]]
+[[ "$(hash_file networks/rabbit-testnet/genesis.json)" == "$EXPECTED_GENESIS" ]]
 
 work="$(mktemp -d)"
 cleanup() { rm -rf -- "$work"; }
@@ -35,7 +35,7 @@ trap cleanup EXIT
 
 git clone --filter=blob:none "$RANDOMX_REPOSITORY" "$work/RandomX"
 git -C "$work/RandomX" checkout --detach "$RANDOMX_COMMIT"
-test "$(git -C "$work/RandomX" rev-parse HEAD)" = "$RANDOMX_COMMIT"
+[[ "$(git -C "$work/RandomX" rev-parse HEAD)" == "$RANDOMX_COMMIT" ]]
 git -C "$work/RandomX" apply --check "$PWD/scripts/rabbit-release/randomx/rabbit-randomx-1g-profile.patch"
 git -C "$work/RandomX" apply "$PWD/scripts/rabbit-release/randomx/rabbit-randomx-1g-profile.patch"
 git -C "$work/RandomX" diff --check
@@ -47,7 +47,7 @@ cmake -S "$work/RandomX" -B "$work/RandomX/build" \
 cmake --build "$work/RandomX/build" --config Release --parallel 2
 
 library="$work/RandomX/build/librandomx.a"
-test -s "$library"
+[[ -s "$library" ]]
 
 export CGO_ENABLED=1
 export CGO_CFLAGS="-O2 -D__BLST_PORTABLE__ -I$work/RandomX/src"
@@ -80,8 +80,8 @@ chmod 755 "$stage/rabbit-core" "$stage/rabbit-node" "$stage/rabbit-miner" "$stag
   cd "$stage"
   : > SHA256SUMS.txt
   for file in *; do
-    test -f "$file" || continue
-    test "$file" = SHA256SUMS.txt && continue
+    [[ -f "$file" ]] || continue
+    [[ "$file" == SHA256SUMS.txt ]] && continue
     printf '%s  %s\n' "$(hash_file "$file")" "$file" >> SHA256SUMS.txt
   done
   ./rabbit-core --check
