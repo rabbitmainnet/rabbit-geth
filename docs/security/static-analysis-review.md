@@ -1,90 +1,70 @@
 # Static analysis and security review
 
 This document records the public static-analysis state of Rabbit Chain.
-It deliberately distinguishes source-code fixes from findings that were
-accepted or classified as false positives. A passing quality gate is not
-presented as proof that the implementation is defect-free.
+No finding in this snapshot is classified as `Accepted` or `False Positive`.
+All findings remain visible for independent examination.
 
 ## Snapshot identity
 
 - Branch: `testnet-release-v1`
-- Source commit: `ff849ac0246cdf5abe524ce53a64cc6ecbd76fcf`
-- Report generated: `2026-08-25 00:55 UTC`
+- Source baseline: `8391068a6b76162deab7bca145d8f8b527383715`
+- Report generated: `2026-08-25 01:21 UTC`
 - Sonar project: `rabbitmainnet_rabbit-geth`
-- Sonar data source: public SonarQube Cloud API
+- Classified or hidden findings: `0`
 
-## Current public findings
+## Complete open findings
 
 | Quality | Status | Blocker | High | Medium | Low | Info | Total |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Security | Accepted | 0 | 8 | 0 | 0 | 0 | 8 |
-| Security | False Positive | 0 | 0 | 74 | 26 | 0 | 100 |
-| Reliability | Accepted | 0 | 87 | 0 | 0 | 0 | 87 |
-| Reliability | False Positive | 1 | 0 | 40 | 33 | 0 | 74 |
-| Maintainability | Open | 0 | 147 | 28 | 91 | 59 | 325 |
-| Maintainability | False Positive | 0 | 175 | 0 | 0 | 0 | 175 |
+| Security | Open | 0 | 8 | 74 | 26 | 0 | 108 |
+| Reliability | Open | 1 | 87 | 40 | 33 | 0 | 161 |
+| Maintainability | Open | 5 | 773 | 447 | 1045 | 170 | 2440 |
 
-The `Accepted` and `False Positive` rows are intentionally shown. Those
-findings were reviewed or classified; they were not silently repaired.
+A Sonar issue may affect more than one software quality. These totals must not
+be added together as though they represented unique issues.
 
-## Changes that were actually implemented
+## Changes actually implemented
 
-- Updated vulnerable Go dependencies and migrated the legacy OpenPGP import.
+- Vulnerable Go dependencies were updated.
+- Legacy OpenPGP usage was migrated to a maintained implementation.
 - `govulncheck ./...` reported zero reachable vulnerabilities.
-- Pinned the FreeBSD GitHub Action to a full commit SHA.
-- Restricted workflow permissions to the required job.
-- Replaced a predictable temporary log filename with `os.CreateTemp`.
-- Added a regression test for secure temporary-file creation.
-- Changed Docker runtime images to the non-root `geth` user.
-- Corrected 34 Rabbit release-script reliability findings in source code.
-- Classified test fixtures, benchmark tools, binary fuzz corpora and
-  vendored dependency CI separately from Rabbit production code.
+- Workflow permissions and third-party Action pinning were hardened.
+- Predictable temporary-file creation was replaced with `os.CreateTemp`.
+- A temporary-file security regression test was added.
+- Docker runtime images now use the non-root `geth` user.
+- Thirty-four Rabbit release-script reliability findings were fixed in code.
+- Test fixtures, benchmarks and binary fuzz inputs remain preserved.
 
-## Reviewed findings that were not source-code fixes
+## Open findings policy
 
-- Eight Security High findings concern inherited compatibility-sensitive
-  cryptographic or protocol code. Their accepted status does not mean the
-  implementation was rewritten.
-- Remaining inherited Reliability High findings are concentrated in
-  upstream or vendored compatibility code and scripts.
-- The `libsecp256k1` scratch-object finding occurs through a negative-test
-  path using an intentionally invalid object. If classified as a false
-  positive in Sonar, that classification remains visible in the table.
-- Medium, Low and Maintainability findings remain recorded rather than
-  being closed merely to improve the displayed rating.
+All findings shown above remain open. Vendored, inherited, test-only and
+compatibility-sensitive findings are not hidden merely to improve a rating.
+An open static-analysis finding is not automatically a confirmed defect.
+Future corrections or dispositions require public technical justification,
+tests where applicable and a versioned commit.
 
-## Rabbit consensus scope
+## Consensus integrity
 
-The static-analysis hardening did not change:
+These analysis changes did not alter LCQ, RandomX, participant selection,
+mining eligibility, rewards, the 70/30 split, halving, terminal subsidy or
+genesis. Mining was not started.
 
-- LCQ consensus rules;
-- RandomX or proof validation;
-- block rewards or the 70/30 reward split;
-- halving boundaries or terminal subsidy;
-- genesis allocation or genesis hash;
-- participant selection or mining eligibility.
+## Limitations
 
-Mining was not started as part of this work.
+Static analysis cannot prove consensus correctness, network safety,
+decentralization or economic correctness. Reproducible builds, protocol
+invariants, multi-node recovery tests, adversarial tests and independent
+review remain necessary.
 
-## Important limitations
+The binary transaction-fetcher fuzz corpus intentionally contains arbitrary
+non-UTF-8 input. It remains tracked and unmodified, although Sonar may show an
+encoding warning before applying exclusions.
 
-Static analysis cannot prove consensus correctness, economic correctness,
-network safety or decentralization. Rabbit Chain also requires reproducible
-builds, consensus tests, multi-node restart tests, adversarial tests and
-independent review.
-
-Binary fuzz corpus files remain tracked and unmodified. They are excluded
-from text analysis because arbitrary fuzz input is not required to be valid
-UTF-8. This may still produce a scanner-level encoding warning before
-exclusion rules are applied.
-
-## Reproduce the public counts
-
-The findings can be independently queried from the public Sonar API:
+## Public reproduction
 
 ```text
-https://sonarcloud.io/api/issues/search?componentKeys=rabbitmainnet_rabbit-geth&branch=testnet-release-v1&issueStatuses=OPEN,CONFIRMED,ACCEPTED,FALSE_POSITIVE&ps=500
+https://sonarcloud.io/api/issues/search?componentKeys=rabbitmainnet_rabbit-geth&branch=testnet-release-v1&issueStatuses=OPEN,CONFIRMED
 ```
 
-No Sonar result should be interpreted as a substitute for an independent
-professional security or consensus audit.
+No Sonar rating substitutes for an independent professional security or
+consensus audit.
