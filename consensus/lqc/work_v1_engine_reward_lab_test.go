@@ -23,7 +23,7 @@ func workV1RewardAmountForV1(
 	return uint256.NewInt(0)
 }
 
-func TestWorkV1EngineLabRewardRepeatedCommitteeSeatsKeepWeight(
+func TestWorkV1EngineLabRewardUniqueCommitteeKeepsSeventyThirty(
 	t *testing.T,
 ) {
 	producer := common.HexToAddress(
@@ -32,17 +32,18 @@ func TestWorkV1EngineLabRewardRepeatedCommitteeSeatsKeepWeight(
 	other := common.HexToAddress(
 		"0x00000000000000000000000000000000000000b2",
 	)
+	third := common.HexToAddress(
+		"0x00000000000000000000000000000000000000c3",
+	)
 
 	// 70% producer + 30% committee.
-	// Committee seats = [producer, producer, other].
-	// Therefore producer receives 7000 + 1000 + 1000 = 9000.
+	// Two unique committee wallets receive 15% each.
 	credits := workV1EngineLabSeatRewardCredits(
 		uint256.NewInt(10_000),
 		producer,
 		[]HybridParticipant{
-			{Address: producer},
-			{Address: producer},
 			{Address: other},
+			{Address: third},
 		},
 		3000,
 	)
@@ -50,14 +51,20 @@ func TestWorkV1EngineLabRewardRepeatedCommitteeSeatsKeepWeight(
 	if got := workV1RewardAmountForV1(
 		credits,
 		producer,
-	); got.Uint64() != 9000 {
-		t.Fatalf("producer aggregate=%s want=9000", got)
+	); got.Uint64() != 7000 {
+		t.Fatalf("producer aggregate=%s want=7000", got)
 	}
 	if got := workV1RewardAmountForV1(
 		credits,
 		other,
-	); got.Uint64() != 1000 {
-		t.Fatalf("other aggregate=%s want=1000", got)
+	); got.Uint64() != 1500 {
+		t.Fatalf("other aggregate=%s want=1500", got)
+	}
+	if got := workV1RewardAmountForV1(
+		credits,
+		third,
+	); got.Uint64() != 1500 {
+		t.Fatalf("third aggregate=%s want=1500", got)
 	}
 	if got := workV1EngineLabRewardTotalV1(
 		credits,
@@ -66,7 +73,45 @@ func TestWorkV1EngineLabRewardRepeatedCommitteeSeatsKeepWeight(
 	}
 }
 
-func TestWorkV1EngineLabRewardRemainderConservesEveryWeiBySeat(
+func TestWorkV1EngineLabRewardDuplicateCommitteeCannotIncreaseWeight(
+	t *testing.T,
+) {
+	producer := common.HexToAddress(
+		"0x00000000000000000000000000000000000000a1",
+	)
+	other := common.HexToAddress(
+		"0x00000000000000000000000000000000000000b2",
+	)
+	third := common.HexToAddress(
+		"0x00000000000000000000000000000000000000c3",
+	)
+	credits := workV1EngineLabSeatRewardCredits(
+		uint256.NewInt(10_000),
+		producer,
+		[]HybridParticipant{
+			{Address: producer},
+			{Address: producer},
+			{Address: other},
+			{Address: other},
+			{Address: third},
+		},
+		3000,
+	)
+	if got := workV1RewardAmountForV1(credits, producer); got.Uint64() != 7000 {
+		t.Fatalf("producer=%s want=7000", got)
+	}
+	if got := workV1RewardAmountForV1(credits, other); got.Uint64() != 1500 {
+		t.Fatalf("other=%s want=1500", got)
+	}
+	if got := workV1RewardAmountForV1(credits, third); got.Uint64() != 1500 {
+		t.Fatalf("third=%s want=1500", got)
+	}
+	if got := workV1EngineLabRewardTotalV1(credits); got.Uint64() != 10_000 {
+		t.Fatalf("total=%s want=10000", got)
+	}
+}
+
+func TestWorkV1EngineLabRewardRemainderConservesEveryWeiByUniqueWallet(
 	t *testing.T,
 ) {
 	producer := common.HexToAddress(
@@ -88,19 +133,19 @@ func TestWorkV1EngineLabRewardRemainderConservesEveryWeiBySeat(
 	)
 
 	// producer share = floor(10001*70%) = 7000
-	// committee = 3001; seat shares = 1001,1000,1000
-	// producer total = 7000+1001+1000 = 9001.
+	// committee = 3001; one unique committee wallet receives 3001
+	// duplicate producer entries are ignored; producer remains at 7000.
 	if got := workV1RewardAmountForV1(
 		credits,
 		producer,
-	); got.Uint64() != 9001 {
-		t.Fatalf("producer aggregate=%s want=9001", got)
+	); got.Uint64() != 7000 {
+		t.Fatalf("producer aggregate=%s want=7000", got)
 	}
 	if got := workV1RewardAmountForV1(
 		credits,
 		other,
-	); got.Uint64() != 1000 {
-		t.Fatalf("other aggregate=%s want=1000", got)
+	); got.Uint64() != 3001 {
+		t.Fatalf("other aggregate=%s want=3001", got)
 	}
 	if got := workV1EngineLabRewardTotalV1(
 		credits,
@@ -197,29 +242,35 @@ func TestWorkV1EngineLabShortSeatPoolReservesCommitteeReward(
 	b := common.HexToAddress(
 		"0x00000000000000000000000000000000000000b2",
 	)
+	c := common.HexToAddress(
+		"0x00000000000000000000000000000000000000c3",
+	)
+	d := common.HexToAddress(
+		"0x00000000000000000000000000000000000000d4",
+	)
 	seats := []WorkSeatV1{
 		{
 			TicketHash:  crypto.Keccak256Hash([]byte("seat-a-1")),
 			Participant: a,
 		},
 		{
-			TicketHash:  crypto.Keccak256Hash([]byte("seat-a-2")),
-			Participant: a,
+			TicketHash:  crypto.Keccak256Hash([]byte("seat-c-1")),
+			Participant: c,
 		},
 		{
 			TicketHash:  crypto.Keccak256Hash([]byte("seat-b-1")),
 			Participant: b,
 		},
 		{
-			TicketHash:  crypto.Keccak256Hash([]byte("seat-b-2")),
-			Participant: b,
+			TicketHash:  crypto.Keccak256Hash([]byte("seat-d-1")),
+			Participant: d,
 		},
 	}
 
 	snapshot, err := NewBootstrapRegistrySnapshot(
 		256,
 		crypto.Keccak256Hash([]byte("live-registry-256")),
-		[]common.Address{a, b},
+		[]common.Address{a, b, c, d},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +280,7 @@ func TestWorkV1EngineLabShortSeatPoolReservesCommitteeReward(
 		t.Fatal(err)
 	}
 	engine := &LQC{
-		config: canonicalRegistryEngineConfig([]common.Address{a, b}, 1),
+		config: canonicalRegistryEngineConfig([]common.Address{a, b, c, d}, 1),
 	}
 	engine.config.FallbackCount = 5
 	engine.config.CommitteeSize = 2
@@ -277,11 +328,31 @@ func TestWorkV1EngineLabShortSeatPoolReservesCommitteeReward(
 		selection.Committee,
 		3000,
 	)
-	if got := workV1RewardAmountForV1(credits, a); got.IsZero() {
-		t.Fatal("participant A received no WorkSeat reward")
+	producerReward := workV1RewardAmountForV1(
+		credits,
+		selection.Producer.Address,
+	)
+	if producerReward.Cmp(
+		uint256.NewInt(840_000_000_000_000_000),
+	) != 0 {
+		t.Fatalf("producer=%s want=840000000000000000", producerReward)
 	}
-	if got := workV1RewardAmountForV1(credits, b); got.IsZero() {
-		t.Fatal("participant B received no WorkSeat reward")
+	seenCommittee := make(map[common.Address]struct{}, len(selection.Committee))
+	committeeTotal := uint256.NewInt(0)
+	for _, member := range selection.Committee {
+		if _, exists := seenCommittee[member.Address]; exists {
+			t.Fatalf("duplicate committee wallet %s", member.Address)
+		}
+		seenCommittee[member.Address] = struct{}{}
+		committeeTotal.Add(
+			committeeTotal,
+			workV1RewardAmountForV1(credits, member.Address),
+		)
+	}
+	if committeeTotal.Cmp(
+		uint256.NewInt(360_000_000_000_000_000),
+	) != 0 {
+		t.Fatalf("committee=%s want=360000000000000000", committeeTotal)
 	}
 	if got := workV1EngineLabRewardTotalV1(credits); got.Cmp(
 		uint256.NewInt(1_200_000_000_000_000_000),

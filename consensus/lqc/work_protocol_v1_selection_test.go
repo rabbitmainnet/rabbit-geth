@@ -30,7 +30,7 @@ func selectionV1SeedForTest(block uint64) common.Hash {
 	return seed
 }
 
-func TestWorkSelectionV1PreservesRepeatedParticipantSeats(t *testing.T) {
+func TestWorkSelectionV1RejectsRepeatedParticipantSeats(t *testing.T) {
 	a := common.HexToAddress("0x00000000000000000000000000000000000000a1")
 	seats := []WorkSeatV1{
 		{TicketHash: selectionV1TicketHash(1), Participant: a},
@@ -40,34 +40,26 @@ func TestWorkSelectionV1PreservesRepeatedParticipantSeats(t *testing.T) {
 		{TicketHash: selectionV1TicketHash(5), Participant: a},
 	}
 
-	sel, err := BuildWorkSelectionV1(seats, selectionV1SeedForTest(100), 2, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sel.Ordered) != 5 ||
-		sel.Producer == nil ||
-		len(sel.Fallbacks) != 2 ||
-		len(sel.Committee) != 2 {
-		t.Fatalf("unexpected selection: %+v", sel)
-	}
-	for _, seat := range sel.Ordered {
-		if seat.Participant != a {
-			t.Fatalf("participant changed: %s", seat.Participant)
-		}
+	_, err := BuildWorkSelectionV1(seats, selectionV1SeedForTest(100), 2, 2)
+	if err != ErrDuplicateWorkParticipantV1 {
+		t.Fatalf("error = %v, want %v", err, ErrDuplicateWorkParticipantV1)
 	}
 }
 
 func TestWorkSelectionV1ParticipantDoesNotAffectSeatOrder(t *testing.T) {
-	a := common.HexToAddress("0x00000000000000000000000000000000000000a1")
-	b := common.HexToAddress("0x00000000000000000000000000000000000000b1")
-
 	left := make([]WorkSeatV1, 64)
 	right := make([]WorkSeatV1, 64)
 
 	for i := 0; i < 64; i++ {
 		hash := selectionV1TicketHash(i + 1)
-		left[i] = WorkSeatV1{TicketHash: hash, Participant: a}
-		right[i] = WorkSeatV1{TicketHash: hash, Participant: b}
+		left[i] = WorkSeatV1{
+			TicketHash:  hash,
+			Participant: common.BigToAddress(big.NewInt(int64(i + 1))),
+		}
+		right[i] = WorkSeatV1{
+			TicketHash:  hash,
+			Participant: common.BigToAddress(big.NewInt(int64(i + 1001))),
+		}
 	}
 
 	orderedLeft, err := DeterministicallyOrderWorkSeatsV1(left, selectionV1SeedForTest(321))
@@ -94,7 +86,7 @@ func TestWorkSelectionV1ParticipantDoesNotAffectSeatOrder(t *testing.T) {
 	}
 }
 
-func TestWorkSelectionV1OneVsFiveThousandIdentitiesNoFreePower(t *testing.T) {
+func TestWorkSelectionV1UniqueWalletWeightsAreStableAcrossSeeds(t *testing.T) {
 	// 80 honest seats + 20 attacker seats. The exact same 20 ticket hashes
 	// represent the attacker's fixed work in both scenarios.
 	const honestSeats = 80
@@ -110,9 +102,6 @@ func TestWorkSelectionV1OneVsFiveThousandIdentitiesNoFreePower(t *testing.T) {
 		})
 	}
 
-	oneAddress := common.HexToAddress(
-		"0x0000000000000000000000000000000000000a01",
-	)
 	one := append([]WorkSeatV1(nil), honest...)
 	split := append([]WorkSeatV1(nil), honest...)
 
@@ -126,16 +115,14 @@ func TestWorkSelectionV1OneVsFiveThousandIdentitiesNoFreePower(t *testing.T) {
 		splitAddresses = append(splitAddresses, address)
 	}
 
-	oneController := map[common.Address]struct{}{
-		oneAddress: {},
-	}
+	oneController := splitController
 
 	for i := 0; i < attackerSeats; i++ {
 		hash := selectionV1TicketHash(honestSeats + i + 1)
 
 		one = append(one, WorkSeatV1{
 			TicketHash:  hash,
-			Participant: oneAddress,
+			Participant: splitAddresses[i],
 		})
 		split = append(split, WorkSeatV1{
 			TicketHash:  hash,

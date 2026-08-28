@@ -83,6 +83,9 @@ func TestWorkChainSnapshotV1ClosesEpochForNPlus2Selection(t *testing.T) {
 	participant := common.HexToAddress(
 		"0x00000000000000000000000000000000000000a1",
 	)
+	participantB := common.HexToAddress(
+		"0x00000000000000000000000000000000000000b1",
+	)
 	difficulty := big.NewInt(8)
 
 	for number := uint64(129); number <= 256; number++ {
@@ -90,7 +93,7 @@ func TestWorkChainSnapshotV1ClosesEpochForNPlus2Selection(t *testing.T) {
 		if number == 129 {
 			verified = []VerifiedRandomXWorkTicketV1{
 				verifiedWorkV1(1, participant, 1, 1),
-				verifiedWorkV1(1, participant, 2, 2),
+				verifiedWorkV1(1, participantB, 2, 2),
 			}
 		}
 
@@ -175,6 +178,37 @@ func TestWorkChainSnapshotV1RejectsDuplicateAcrossBlocks(t *testing.T) {
 			err,
 			ErrDuplicateRandomXWorkHash,
 		)
+	}
+}
+
+func TestWorkChainSnapshotV1RejectsParticipantAcrossBlocks(t *testing.T) {
+	chainID := big.NewInt(928)
+	genesisHash := workSnapshotHashV1("genesis-participant", 0)
+	snapshot, err := NewWorkChainSnapshotV1(chainID, 0, genesisHash, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot = advanceEmptyWorkBlocksV1(t, chainID, snapshot, 128)
+	participant := common.HexToAddress("0x00000000000000000000000000000000000000a1")
+	block129, err := snapshot.ApplyVerifiedBlockV1(
+		chainID, 129, workSnapshotHashV1("participant", 129),
+		snapshot.Hash, genesisHash, big.NewInt(8),
+		[]VerifiedRandomXWorkTicketV1{
+			verifiedWorkV1(1, participant, 1, 1),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = block129.ApplyVerifiedBlockV1(
+		chainID, 130, workSnapshotHashV1("participant", 130),
+		block129.Hash, genesisHash, big.NewInt(8),
+		[]VerifiedRandomXWorkTicketV1{
+			verifiedWorkV1(1, participant, 2, 2),
+		},
+	)
+	if err != ErrDuplicateWorkParticipantV1 {
+		t.Fatalf("error = %v, want %v", err, ErrDuplicateWorkParticipantV1)
 	}
 }
 

@@ -54,7 +54,7 @@ func TestWorkV1EngineLabHistoricalEligibilityIsRegistryBound(
 	}
 }
 
-func TestWorkV1EngineLabSeatSelectionPreservesRepeatedSeats(
+func TestWorkV1EngineLabSeatSelectionRejectsRepeatedWallet(
 	t *testing.T,
 ) {
 	a := common.HexToAddress(
@@ -112,7 +112,7 @@ func TestWorkV1EngineLabSeatSelectionPreservesRepeatedSeats(
 		},
 	}
 
-	selection, active, err := engine.workV1EngineLabBuildSeatSelection(
+	_, active, err := engine.workV1EngineLabBuildSeatSelection(
 		big.NewInt(928),
 		1,
 		crypto.Keccak256Hash([]byte("closed-selection-root")),
@@ -132,42 +132,11 @@ func TestWorkV1EngineLabSeatSelectionPreservesRepeatedSeats(
 			), nil
 		},
 	)
-	if err != nil {
-		t.Fatal(err)
+	if err != ErrDuplicateWorkParticipantV1 {
+		t.Fatalf("error=%v want=%v", err, ErrDuplicateWorkParticipantV1)
 	}
-	if !active {
-		t.Fatal("non-empty eligible WorkSeat set fell back to registry")
-	}
-	if len(selection.Ordered) != len(seats) {
-		t.Fatalf(
-			"ordered seats=%d want=%d",
-			len(selection.Ordered),
-			len(seats),
-		)
-	}
-	countA := 0
-	for _, participant := range selection.Ordered {
-		if participant.Address == a {
-			countA++
-		}
-	}
-	if countA != 3 {
-		t.Fatalf("repeated seats for A=%d want=3", countA)
-	}
-	if selection.Producer == nil {
-		t.Fatal("missing WorkSeat producer")
-	}
-	if len(selection.Fallbacks) != 1 {
-		t.Fatalf(
-			"fallback seats=%d want=1",
-			len(selection.Fallbacks),
-		)
-	}
-	if len(selection.Committee) != 2 {
-		t.Fatalf(
-			"committee seats=%d want=2",
-			len(selection.Committee),
-		)
+	if active {
+		t.Fatal("invalid repeated-wallet seats became active")
 	}
 }
 

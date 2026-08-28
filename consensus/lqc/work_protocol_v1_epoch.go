@@ -115,6 +115,7 @@ func WorkSelectionSourceEpochV1(
 func canonicalWorkEpochSeatsV1(input []WorkSeatV1) ([]WorkSeatV1, error) {
 	out := append([]WorkSeatV1(nil), input...)
 	seen := make(map[common.Hash]struct{}, len(out))
+	seenParticipants := make(map[common.Address]struct{}, len(out))
 
 	for _, seat := range out {
 		if seat.TicketHash == (common.Hash{}) ||
@@ -125,6 +126,10 @@ func canonicalWorkEpochSeatsV1(input []WorkSeatV1) ([]WorkSeatV1, error) {
 			return nil, ErrDuplicateRandomXWorkHash
 		}
 		seen[seat.TicketHash] = struct{}{}
+		if _, exists := seenParticipants[seat.Participant]; exists {
+			return nil, ErrDuplicateWorkParticipantV1
+		}
+		seenParticipants[seat.Participant] = struct{}{}
 	}
 
 	sort.Slice(out, func(i, j int) bool {

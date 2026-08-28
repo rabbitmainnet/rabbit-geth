@@ -73,7 +73,7 @@ func TestLQCHeaderV3RoundTripCanonicalWorkOrder(t *testing.T) {
 
 	a := signedHeaderWorkTicketV3(t, 7, 1, 3)
 	b := signedHeaderWorkTicketV3(t, 7, 2, 1)
-	c := signedHeaderWorkTicketV3(t, 7, 1, 1)
+	c := signedHeaderWorkTicketV3(t, 7, 3, 1)
 
 	left, err := EncodeLQCHeaderExtraV3(
 		300,
@@ -136,6 +136,22 @@ func TestLQCHeaderV3RejectsSemanticDuplicateTicket(t *testing.T) {
 	)
 	if err != ErrDuplicateWorkTicketV3 {
 		t.Fatalf("error = %v, want %v", err, ErrDuplicateWorkTicketV3)
+	}
+}
+
+func TestLQCHeaderV3RejectsDuplicateParticipant(t *testing.T) {
+	a := signedHeaderWorkTicketV3(t, 7, 1, 1)
+	b := signedHeaderWorkTicketV3(t, 7, 1, 2)
+	_, err := EncodeLQCHeaderExtraV3(
+		300,
+		common.HexToHash("0x1111"),
+		common.HexToHash("0x2222"),
+		nil,
+		[]SignedRandomXWorkTicketV1{a, b},
+		16,
+	)
+	if err != ErrDuplicateWorkParticipantV1 {
+		t.Fatalf("error = %v, want %v", err, ErrDuplicateWorkParticipantV1)
 	}
 }
 
@@ -251,15 +267,15 @@ func TestLQCHeaderV3RejectsZeroRootsAndBlockMismatch(t *testing.T) {
 }
 
 func TestLQCHeaderV3RespectsExisting16KiBExtraBound(t *testing.T) {
-	tickets := make([]SignedRandomXWorkTicketV1, 0, 256)
-	for i := 0; i < 256; i++ {
+	tickets := make([]SignedRandomXWorkTicketV1, 0, 200)
+	for i := 0; i < 200; i++ {
 		tickets = append(
 			tickets,
 			signedHeaderWorkTicketV3(
 				t,
 				7,
-				byte((i%250)+1),
-				uint64(i+1),
+				byte(i+1),
+				1,
 			),
 		)
 	}
@@ -270,7 +286,7 @@ func TestLQCHeaderV3RespectsExisting16KiBExtraBound(t *testing.T) {
 		common.HexToHash("0x2222"),
 		nil,
 		tickets,
-		256,
+		200,
 	)
 	if !errors.Is(err, ErrInvalidLQCHeaderExtraV3) {
 		t.Fatalf("oversized V3 error = %v", err)

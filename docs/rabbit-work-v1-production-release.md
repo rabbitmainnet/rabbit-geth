@@ -20,8 +20,12 @@ prohibited.
 - initial Work difficulty: genesis `lqc.proofDifficulty` (`100000`);
 - canonical retarget delayed by epoch parity;
 - admission eligibility: historical snapshot of the challenge block;
-- selection: seats that remain eligible in the current canonical registry;
-- reward: 70% to the actual authorized author and 30% to the committee by seat;
+- admission: RandomX work remains permissionless, but each wallet may hold at
+  most one canonical WorkSeat in an epoch;
+- selection: unique-wallet seats that remain eligible in the current canonical
+  registry, each with equal weight;
+- reward: 70% to the actual authorized author and 30% divided among unique
+  committee wallets;
 - an authorized fallback receives the producer share when it actually produces;
 - with no eligible WorkSeats, the registry preserves liveness and the base
   subsidy is zero;

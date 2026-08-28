@@ -92,6 +92,7 @@ func CanonicalWorkTicketsV3(
 
 	out := make([]SignedRandomXWorkTicketV1, len(input))
 	seen := make(map[workTicketSemanticKeyV3]struct{}, len(input))
+	seenParticipants := make(map[common.Address]struct{}, len(input))
 
 	for index, signed := range input {
 		if err := validateWorkTicketHeaderShapeV3(signed); err != nil {
@@ -107,6 +108,10 @@ func CanonicalWorkTicketsV3(
 			return nil, ErrDuplicateWorkTicketV3
 		}
 		seen[key] = struct{}{}
+		if _, exists := seenParticipants[signed.Ticket.Participant]; exists {
+			return nil, ErrDuplicateWorkParticipantV1
+		}
+		seenParticipants[signed.Ticket.Participant] = struct{}{}
 		out[index] = cloneSignedRandomXWorkTicketV1(signed)
 	}
 

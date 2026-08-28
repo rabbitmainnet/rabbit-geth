@@ -125,7 +125,7 @@ func TestWorkCommitV1ArrivalOrderDoesNotChangeBatch(t *testing.T) {
 	}
 }
 
-func TestWorkCommitV1IdentityDoesNotChangeFixedProofPriority(t *testing.T) {
+func TestWorkCommitV1RejectsMultipleTicketsForOneWallet(t *testing.T) {
 	one := make([]WorkCommitCandidateV1, 0, 32)
 	split := make([]WorkCommitCandidateV1, 0, 32)
 
@@ -148,25 +148,15 @@ func TestWorkCommitV1IdentityDoesNotChangeFixedProofPriority(t *testing.T) {
 		))
 	}
 
-	left, err := SelectWorkCommitBatchV1(one, 7)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := SelectWorkCommitBatchV1(one, 7); err != ErrDuplicateWorkParticipantV1 {
+		t.Fatalf("same-wallet error = %v, want %v", err, ErrDuplicateWorkParticipantV1)
 	}
 	right, err := SelectWorkCommitBatchV1(split, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if len(left) != len(right) {
-		t.Fatal("identity split changed selected count")
-	}
-	for i := range left {
-		if left[i].ProofHash != right[i].ProofHash {
-			t.Fatalf(
-				"identity split changed proof priority at %d",
-				i,
-			)
-		}
+	if len(right) != int(MaxWorkTicketsPerBlockV1) {
+		t.Fatalf("unique-wallet batch = %d, want %d", len(right), MaxWorkTicketsPerBlockV1)
 	}
 }
 

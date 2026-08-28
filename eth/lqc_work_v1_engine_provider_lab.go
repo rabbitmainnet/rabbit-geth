@@ -339,7 +339,8 @@ func (p *workV1EnginePoolProviderLab) canonicalIncludes(
 			continue
 		}
 		for _, signed := range included {
-			if workV1EnginePoolSignedEqualLab(candidate.Signed, signed) {
+			if signed.Ticket.Epoch == commitEpoch &&
+				signed.Ticket.Participant == candidate.Signed.Ticket.Participant {
 				return true
 			}
 		}

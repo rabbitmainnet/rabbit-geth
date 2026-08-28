@@ -3,6 +3,7 @@ package lqc
 import (
 	"bytes"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -112,103 +113,63 @@ func TestWorkCommitPoolV1DeterministicPendingAcrossArrivalOrder(
 	}
 }
 
-func TestWorkCommitPoolV1HasNoPerWalletLaneOrQuota(
+func TestWorkCommitPoolV1OneWalletOneCandidateUnderConcurrency(
 	t *testing.T,
 ) {
-	pool := NewWorkCommitPoolV1(64)
+	pool := NewWorkCommitPoolV1(128)
 	if err := pool.ResetCommitEpochV1(7); err != nil {
 		t.Fatal(err)
 	}
 
-	// All 16 valid-work candidates belong to the SAME wallet.
-	for i := 0; i < 16; i++ {
+	results := make(chan error, 100)
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
 		candidate := commitCandidateV1(
-			t,
-			7,
-			1,
-			uint64(i+1),
-			commitProofHashV1(i+1),
+			t, 7, 1, uint64(i+1), commitProofHashV1(i+1),
 		)
-		if err := pool.AddVerifiedV1(candidate); err != nil {
-			t.Fatal(err)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- pool.AddVerifiedV1(candidate)
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	accepted := 0
+	rejected := 0
+	for err := range results {
+		switch err {
+		case nil:
+			accepted++
+		case ErrDuplicateWorkParticipantV1:
+			rejected++
+		default:
+			t.Fatalf("unexpected add error: %v", err)
 		}
 	}
-
-	pending, err := pool.PendingV1()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pending) != int(MaxWorkTicketsPerBlockV1) {
-		t.Fatalf(
-			"pending = %d, want %d",
-			len(pending),
-			MaxWorkTicketsPerBlockV1,
-		)
-	}
-
-	wantAddress := pending[0].Signed.Ticket.Participant
-	for _, candidate := range pending {
-		if candidate.Signed.Ticket.Participant != wantAddress {
-			t.Fatal("same-wallet work was unexpectedly split/filtered")
-		}
+	if accepted != 1 || rejected != 99 || pool.LenV1() != 1 {
+		t.Fatalf("accepted=%d rejected=%d pool=%d", accepted, rejected, pool.LenV1())
 	}
 }
 
-func TestWorkCommitPoolV1IdentitySplitSameProofsSameBatch(
+func TestWorkCommitPoolV1HundredWalletsRemainHundredCandidates(
 	t *testing.T,
 ) {
-	one := NewWorkCommitPoolV1(64)
-	split := NewWorkCommitPoolV1(64)
-	if err := one.ResetCommitEpochV1(7); err != nil {
-		t.Fatal(err)
-	}
-	if err := split.ResetCommitEpochV1(7); err != nil {
+	pool := NewWorkCommitPoolV1(128)
+	if err := pool.ResetCommitEpochV1(7); err != nil {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 32; i++ {
-		proof := commitProofHashV1(i + 1)
-
-		if err := one.AddVerifiedV1(commitCandidateV1(
-			t,
-			7,
-			1,
-			uint64(i+1),
-			proof,
-		)); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := split.AddVerifiedV1(commitCandidateV1(
-			t,
-			7,
-			1000+i,
-			1,
-			proof,
+	for i := 0; i < 100; i++ {
+		if err := pool.AddVerifiedV1(commitCandidateV1(
+			t, 7, i+1, 1, commitProofHashV1(i+1),
 		)); err != nil {
 			t.Fatal(err)
 		}
 	}
-
-	left, err := one.PendingV1()
-	if err != nil {
-		t.Fatal(err)
-	}
-	right, err := split.PendingV1()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(left) != len(right) {
-		t.Fatal("identity split changed pending count")
-	}
-	for i := range left {
-		if left[i].ProofHash != right[i].ProofHash {
-			t.Fatalf(
-				"identity split changed pending proof at %d",
-				i,
-			)
-		}
+	if pool.LenV1() != 100 {
+		t.Fatalf("pool=%d want=100", pool.LenV1())
 	}
 }
 

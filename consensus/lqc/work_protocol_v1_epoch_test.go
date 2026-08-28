@@ -93,11 +93,12 @@ func TestWorkEpochV1RootIgnoresArrivalOrder(t *testing.T) {
 
 	a := common.HexToAddress("0x00000000000000000000000000000000000000a1")
 	b := common.HexToAddress("0x00000000000000000000000000000000000000b1")
+	c := common.HexToAddress("0x00000000000000000000000000000000000000c1")
 
 	left := []WorkSeatV1{
 		{TicketHash: workV1Hash(3), Participant: a},
 		{TicketHash: workV1Hash(1), Participant: b},
-		{TicketHash: workV1Hash(2), Participant: a},
+		{TicketHash: workV1Hash(2), Participant: c},
 	}
 	right := []WorkSeatV1{
 		left[1],
@@ -175,6 +176,7 @@ func TestWorkEpochV1SnapshotValidation(t *testing.T) {
 	chainID := big.NewInt(928)
 	anchor := common.HexToHash("0x3333")
 	a := common.HexToAddress("0x00000000000000000000000000000000000000a1")
+	b := common.HexToAddress("0x00000000000000000000000000000000000000b1")
 
 	snapshot, err := NewWorkEpochSnapshotV1(
 		chainID,
@@ -183,7 +185,7 @@ func TestWorkEpochV1SnapshotValidation(t *testing.T) {
 		big.NewInt(8),
 		[]WorkSeatV1{
 			{TicketHash: workV1Hash(2), Participant: a},
-			{TicketHash: workV1Hash(1), Participant: a},
+			{TicketHash: workV1Hash(1), Participant: b},
 		},
 	)
 	if err != nil {
@@ -196,6 +198,23 @@ func TestWorkEpochV1SnapshotValidation(t *testing.T) {
 	snapshot.Root = common.HexToHash("0xdead")
 	if err := snapshot.Validate(chainID); err != ErrInvalidWorkEpochRootV1 {
 		t.Fatalf("tampered root error = %v", err)
+	}
+}
+
+func TestWorkEpochV1RejectsDuplicateParticipant(t *testing.T) {
+	a := common.HexToAddress("0x00000000000000000000000000000000000000a1")
+	_, _, err := WorkEpochRootV1(
+		big.NewInt(928),
+		3,
+		common.HexToHash("0x5555"),
+		big.NewInt(8),
+		[]WorkSeatV1{
+			{TicketHash: workV1Hash(1), Participant: a},
+			{TicketHash: workV1Hash(2), Participant: a},
+		},
+	)
+	if err != ErrDuplicateWorkParticipantV1 {
+		t.Fatalf("error = %v, want %v", err, ErrDuplicateWorkParticipantV1)
 	}
 }
 

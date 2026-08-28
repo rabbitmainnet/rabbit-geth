@@ -13,9 +13,8 @@ var ErrInvalidWorkSelectionV1 = errors.New("invalid lqc work selection v1")
 
 // WorkSelectionV1 is an inactive consensus-model structure.
 //
-// Every element is a WORK SEAT, not a unique address. Repeated Participant
-// addresses are intentional and must not be deduplicated before role/reward
-// weight is calculated.
+// Every element is a unique participant's WORK SEAT. Repeated Participant
+// addresses are invalid consensus input.
 type WorkSelectionV1 struct {
 	Ordered   []WorkSeatV1
 	Producer  *WorkSeatV1
@@ -48,6 +47,7 @@ func DeterministicallyOrderWorkSeatsV1(
 
 	scored := make([]scoredWorkSeatV1, len(input))
 	seen := make(map[common.Hash]struct{}, len(input))
+	seenParticipants := make(map[common.Address]struct{}, len(input))
 
 	for index, seat := range input {
 		if seat.TicketHash == (common.Hash{}) ||
@@ -58,6 +58,10 @@ func DeterministicallyOrderWorkSeatsV1(
 			return nil, ErrDuplicateRandomXWorkHash
 		}
 		seen[seat.TicketHash] = struct{}{}
+		if _, exists := seenParticipants[seat.Participant]; exists {
+			return nil, ErrDuplicateWorkParticipantV1
+		}
+		seenParticipants[seat.Participant] = struct{}{}
 
 		scored[index] = scoredWorkSeatV1{
 			Seat: seat,

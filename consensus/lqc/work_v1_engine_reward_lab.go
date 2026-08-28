@@ -47,11 +47,8 @@ func workV1EngineLabCommitteeBps(l *LQC) uint64 {
 	return committeeBps
 }
 
-// workV1EngineLabSeatRewardCredits calculates reward weight BY COMMITTEE SEAT.
-//
-// committee is intentionally not deduplicated and the producer is intentionally
-// not excluded. If the producer owns committee seats, it receives the normal
-// producer share plus those seat shares.
+// workV1EngineLabSeatRewardCredits calculates reward weight across a committee
+// whose addresses must already be unique under the Work V1 seat invariant.
 //
 // The integer remainder goes to the first deterministic committee seat, then
 // transfers are aggregated by address. This preserves exact wei conservation.
@@ -101,10 +98,16 @@ func workV1EngineLabSeatRewardCredits(
 	committeeReward.Sub(committeeReward, producerReward)
 
 	validSeats := make([]common.Address, 0, len(committee))
+	seenCommittee := make(map[common.Address]struct{}, len(committee))
 	for _, seat := range committee {
-		if seat.Address != (common.Address{}) {
-			validSeats = append(validSeats, seat.Address)
+		if seat.Address == (common.Address{}) || seat.Address == producer {
+			continue
 		}
+		if _, exists := seenCommittee[seat.Address]; exists {
+			continue
+		}
+		seenCommittee[seat.Address] = struct{}{}
+		validSeats = append(validSeats, seat.Address)
 	}
 
 	if len(validSeats) == 0 || committeeReward.IsZero() {

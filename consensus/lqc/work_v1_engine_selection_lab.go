@@ -417,8 +417,9 @@ func (l *LQC) selectionForHeaderMaybeWorkV1Lab(
 	return HybridSelection{}
 }
 
-// Work-seat mode deliberately does NOT apply address-based missed-turn
-// penalties. Repeated seats make the old address-strike rule invalid.
+// Work-seat mode deliberately does NOT apply the legacy registry
+// address-strike rule. Eligibility and role assignment come from the canonical
+// unique-wallet WorkSeat set for the source epoch.
 func (l *LQC) workV1EngineLabPrepareRegistryBySeats(
 	chain consensus.ChainHeaderReader,
 	parent *RegistrySnapshot,

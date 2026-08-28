@@ -114,6 +114,12 @@ func (p *WorkCommitPoolV1) WorkCommitPoolContainsCandidateV1(
 	if _, exists := p.byProof[candidate.ProofHash]; exists {
 		return true
 	}
+	for _, existing := range p.byProof {
+		if existing.Signed.Ticket.Epoch == candidate.Signed.Ticket.Epoch &&
+			existing.Signed.Ticket.Participant == candidate.Signed.Ticket.Participant {
+			return true
+		}
+	}
 
 	key := workTicketSemanticKeyV3{
 		Epoch:       candidate.Signed.Ticket.Epoch,

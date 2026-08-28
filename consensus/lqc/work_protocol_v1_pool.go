@@ -47,8 +47,7 @@ type WorkCommitPoolPersistenceV1 interface {
 // candidates.
 //
 // It has:
-//   - no participant lane,
-//   - no per-wallet quota,
+//   - one candidate per participant and commit epoch,
 //   - no sequence chain,
 //   - no identity-based priority.
 //
@@ -115,6 +114,7 @@ func buildWorkCommitPoolStateV1(
 		map[workTicketSemanticKeyV3]common.Hash,
 		len(candidates),
 	)
+	seenParticipants := make(map[common.Address]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.ProofHash == (common.Hash{}) {
 			return nil, nil, ErrInvalidWorkCommitV1
@@ -139,6 +139,10 @@ func buildWorkCommitPoolStateV1(
 		if _, exists := semantic[key]; exists {
 			return nil, nil, ErrDuplicateWorkTicketV3
 		}
+		if _, exists := seenParticipants[candidate.Signed.Ticket.Participant]; exists {
+			return nil, nil, ErrDuplicateWorkParticipantV1
+		}
+		seenParticipants[candidate.Signed.Ticket.Participant] = struct{}{}
 
 		cloned := cloneWorkCommitCandidateV1(candidate)
 		byProof[cloned.ProofHash] = cloned
@@ -271,6 +275,11 @@ func (p *WorkCommitPoolV1) AddVerifiedV1(
 	}
 	if _, exists := p.semantic[key]; exists {
 		return ErrDuplicateWorkTicketV3
+	}
+	for _, existing := range p.byProof {
+		if existing.Signed.Ticket.Participant == candidate.Signed.Ticket.Participant {
+			return ErrDuplicateWorkParticipantV1
+		}
 	}
 
 	if uint64(len(p.byProof)) >= p.capacity {

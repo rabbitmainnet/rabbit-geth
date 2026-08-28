@@ -13,10 +13,11 @@ import (
 const RandomXWorkProtocolVersion uint8 = 1
 
 var (
-	ErrInvalidRandomXWorkTicket = errors.New("invalid lqc randomx work ticket")
-	ErrDuplicateRandomXWorkHash = errors.New("duplicate lqc randomx work hash")
-	ErrInvalidWorkSeat          = errors.New("invalid lqc work seat")
-	ErrInvalidWorkSeatReward    = errors.New("invalid lqc work seat reward")
+	ErrInvalidRandomXWorkTicket   = errors.New("invalid lqc randomx work ticket")
+	ErrDuplicateRandomXWorkHash   = errors.New("duplicate lqc randomx work hash")
+	ErrDuplicateWorkParticipantV1 = errors.New("duplicate lqc work participant v1")
+	ErrInvalidWorkSeat            = errors.New("invalid lqc work seat")
+	ErrInvalidWorkSeatReward      = errors.New("invalid lqc work seat reward")
 )
 
 // RandomXWorkTicketV1 is the minimal wire identity of one future RandomX proof.
@@ -38,16 +39,15 @@ type VerifiedRandomXWorkTicketV1 struct {
 	Hash   common.Hash
 }
 
-// WorkSeatV1 is one unit of consensus weight. Multiple seats may belong to the
-// same participant. This is intentional: weight follows verified work, not the
-// number of addresses.
+// WorkSeatV1 is one unit of consensus eligibility. A canonical work epoch may
+// contain at most one seat for each participant.
 type WorkSeatV1 struct {
 	TicketHash  common.Hash
 	Participant common.Address
 }
 
-// WorkSeatRewardV1 is an address-aggregated payout after reward weight has
-// already been calculated per seat.
+// WorkSeatRewardV1 is an address payout after reward weight has been calculated
+// across unique eligible wallets.
 type WorkSeatRewardV1 struct {
 	Address common.Address
 	Amount  *uint256.Int
@@ -63,12 +63,13 @@ func validateRandomXWorkTicketV1(ticket RandomXWorkTicketV1) error {
 }
 
 // CanonicalWorkSeatsV1 converts verified RandomX results into a canonical set
-// of work seats. It never deduplicates by participant.
+// of work seats. Duplicate participants are rejected, never silently removed.
 func CanonicalWorkSeatsV1(
 	verified []VerifiedRandomXWorkTicketV1,
 ) ([]WorkSeatV1, error) {
 	seats := make([]WorkSeatV1, 0, len(verified))
 	seenHashes := make(map[common.Hash]struct{}, len(verified))
+	seenParticipants := make(map[common.Address]struct{}, len(verified))
 
 	for _, item := range verified {
 		if err := validateRandomXWorkTicketV1(item.Ticket); err != nil {
@@ -81,6 +82,10 @@ func CanonicalWorkSeatsV1(
 			return nil, ErrDuplicateRandomXWorkHash
 		}
 		seenHashes[item.Hash] = struct{}{}
+		if _, exists := seenParticipants[item.Ticket.Participant]; exists {
+			return nil, ErrDuplicateWorkParticipantV1
+		}
+		seenParticipants[item.Ticket.Participant] = struct{}{}
 
 		seats = append(seats, WorkSeatV1{
 			TicketHash:  item.Hash,
@@ -100,9 +105,7 @@ func CanonicalWorkSeatsV1(
 	return seats, nil
 }
 
-// AggregateWorkSeatRewardsV1 divides reward by SEAT, then aggregates the final
-// transfers by address. Address deduplication is therefore never used to
-// calculate weight.
+// AggregateWorkSeatRewardsV1 divides reward among unique canonical seats.
 //
 // The integer remainder is assigned to the first canonical seat so every wei
 // is conserved deterministically.
@@ -117,11 +120,16 @@ func AggregateWorkSeatRewardsV1(
 		return nil, nil
 	}
 
+	seenParticipants := make(map[common.Address]struct{}, len(seats))
 	for _, seat := range seats {
 		if seat.TicketHash == (common.Hash{}) ||
 			seat.Participant == (common.Address{}) {
 			return nil, ErrInvalidWorkSeat
 		}
+		if _, exists := seenParticipants[seat.Participant]; exists {
+			return nil, ErrDuplicateWorkParticipantV1
+		}
+		seenParticipants[seat.Participant] = struct{}{}
 	}
 
 	perSeat := new(uint256.Int).Set(total)

@@ -83,6 +83,7 @@ func CanonicalWorkCommitCandidatesV1(
 	scored := make([]scoredWorkCommitCandidateV1, len(input))
 	seenProofs := make(map[common.Hash]struct{}, len(input))
 	seenSemantic := make(map[workTicketSemanticKeyV3]struct{}, len(input))
+	seenParticipants := make(map[common.Address]struct{}, len(input))
 
 	for index, candidate := range input {
 		if candidate.ProofHash == (common.Hash{}) {
@@ -111,6 +112,10 @@ func CanonicalWorkCommitCandidatesV1(
 			return nil, ErrDuplicateWorkTicketV3
 		}
 		seenSemantic[key] = struct{}{}
+		if _, exists := seenParticipants[candidate.Signed.Ticket.Participant]; exists {
+			return nil, ErrDuplicateWorkParticipantV1
+		}
+		seenParticipants[candidate.Signed.Ticket.Participant] = struct{}{}
 
 		priority, err := WorkCommitPriorityV1(
 			commitEpoch,
@@ -158,7 +163,7 @@ func CanonicalWorkCommitCandidatesV1(
 // SelectWorkCommitBatchV1 chooses at most MaxWorkTicketsPerBlockV1 candidates
 // from the producer's verified local candidate set.
 //
-// It intentionally has NO per-wallet quota or participant lane.
+// It enforces one candidate per participant for the commit epoch.
 func SelectWorkCommitBatchV1(
 	input []WorkCommitCandidateV1,
 	commitEpoch uint64,

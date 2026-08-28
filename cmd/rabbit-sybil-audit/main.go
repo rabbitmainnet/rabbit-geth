@@ -20,7 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-const auditorVersion = "rabbit-lqc-sybil-auditor/2.0.0"
+const auditorVersion = "rabbit-lqc-sybil-auditor/2.1.0"
 
 type options struct {
 	honest         int
@@ -142,8 +142,8 @@ func run(opts options) error {
 	gate := "PASS"
 	findings := []string{
 		"Registering an address does not create a producer, fallback, or committee seat.",
-		"Producer, fallbacks, and committee are assigned by canonical WorkSeat; repeated or split addresses do not change the amount of work.",
-		"Each scenario keeps exactly the same set of attacker ticket hashes and varies only the number of controlled identities.",
+		"Each canonical WorkSeat belongs to a unique wallet for its epoch; repeated tickets from one wallet cannot create additional consensus weight.",
+		"Each scenario keeps the attacker work capacity fixed and varies only the number of controlled identities; usable seats are capped by unique wallets.",
 	}
 	if securityFailed {
 		resistance = "FAIL"
@@ -157,7 +157,7 @@ func run(opts options) error {
 		AuditExecution:  "PASS",
 		SybilResistance: resistance,
 		LaunchGate:      gate,
-		Method:          "consensus/lqc.BuildWorkSelectionV1 with fixed work split across identities + real secp256k1/LightHash REGISTER operations",
+		Method:          "consensus/lqc.BuildWorkSelectionV1 with fixed work capacity capped at one seat per wallet + real secp256k1/LightHash REGISTER operations",
 		ChainID:         opts.chainID,
 		FallbackCount:   opts.fallbacks,
 		CommitteeMin:    opts.committeeMin,
@@ -199,9 +199,13 @@ func parseScenarios(value string) ([]int, error) {
 }
 
 func analyzeScenario(opts options, sybils int, hashesPerSecond float64) scenarioResult {
-	attackerSeats := opts.honest / 4
-	if attackerSeats < 1 {
-		attackerSeats = 1
+	attackerSeatCapacity := opts.honest / 4
+	if attackerSeatCapacity < 1 {
+		attackerSeatCapacity = 1
+	}
+	attackerSeats := attackerSeatCapacity
+	if attackerSeats > sybils {
+		attackerSeats = sybils
 	}
 	seats := make([]lqc.WorkSeatV1, 0, opts.honest+attackerSeats)
 	attacker := make(map[common.Address]bool, sybils)

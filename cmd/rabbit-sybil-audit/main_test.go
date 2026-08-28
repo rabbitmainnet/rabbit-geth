@@ -44,6 +44,24 @@ func TestWorkSeatSelectionRejectsMassIdentityDominance(t *testing.T) {
 	}
 }
 
+func TestWorkSeatSelectionCapsOneSeatPerWallet(t *testing.T) {
+	opts := options{
+		honest:       20,
+		blocks:       1000,
+		fallbacks:    5,
+		committeeMin: 32,
+		committeeMax: 128,
+		difficulty:   100000,
+	}
+	got := analyzeScenario(opts, 1, 1_000_000)
+	if got.TheoreticalAttackerSharePercent > 5 {
+		t.Fatalf("one attacker wallet received excess theoretical weight: %+v", got)
+	}
+	if got.ProducerSharePercent > 10 || got.DominatesProducerSelection || got.DominatesCommittee {
+		t.Fatalf("one attacker wallet received duplicate consensus weight: %+v", got)
+	}
+}
+
 func TestRealSignedLightHashOperationsEnterCanonicalRegistry(t *testing.T) {
 	opts := options{
 		proofSamples: 3,
