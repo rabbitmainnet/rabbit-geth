@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# LEGACY MAINNET LAB ONLY.
+#
+# This script targets the historical chain-ID 928 RC1 survival laboratory. It
+# is not the Rabbit Testnet 9280 pre-server gate and must not be used to approve
+# the public testnet release. The testnet gate uses the frozen testnet genesis,
+# production Work V1 build and fresh disposable datadirs.
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BIN="${RABBIT_BIN:-$ROOT/build/rabbit-mainnet-workv1-rc1/geth-rabbit-mainnet-workv1-linux-amd64}"
 GENESIS="$ROOT/networks/rabbit-mainnet/genesis.json"
