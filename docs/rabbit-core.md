@@ -6,7 +6,17 @@ genesis initialization.
 
 ## First run
 
-1. Open Rabbit Core.
+1. On Windows, extract the ZIP, open the extracted folder and run
+   `Start-Rabbit-Core.cmd`. On Linux, extract the archive, enter the package
+   directory, run `./# Windows PowerShell, before extracting
+Get-FileHash .\rabbit-core-testnet-v1-windows-amd64.zip -Algorithm SHA256
+
+# Linux, before extracting
+sha256sum rabbit-core-testnet-v1-linux-amd64.tar.gz
+
+# Inside the extracted package
+rabbit-core --check` and then
+   `./start-rabbit-core.command`.
 2. If no mining wallet exists, choose a strong local password twice.
 3. Rabbit Core displays the wallet address and the exact encrypted wallet file
    that must be copied to a safe backup location.
@@ -29,7 +39,7 @@ rabbit-core --check
 
 - Chain ID: `9280`
 - Network ID: `9280`
-- Native coin: `RAB`
+- Native coin: `tRAB` (Rabbit Testnet only)
 - Genesis SHA-256: `8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7`
 
 Rabbit Core refuses a different genesis or chain ID.

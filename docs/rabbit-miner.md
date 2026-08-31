@@ -30,13 +30,13 @@ automatically resumes when a valid context becomes available.
 
 ## Components of Rabbit Core
 
-The final Rabbit Core package will contain:
+The Rabbit Core Testnet v1 package contains:
 
-- the Rabbit node (`rabbit-core`);
+- the Rabbit node (`rabbit-node`);
 - the Work V1 miner (`rabbit-miner`);
 - the frozen official `genesis.json`;
 - a launcher for the operating system;
 - checksums and security documentation.
 
-Public bootnodes and RPC domains are release configuration. They must be frozen
-only after the official public nodes and DNS/TLS endpoints exist.
+Public bootnodes and RPC domains are frozen for Rabbit Core Testnet v1.
+Bootnodes provide discovery only and have no consensus or administrative authority.
