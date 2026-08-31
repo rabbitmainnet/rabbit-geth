@@ -2,7 +2,7 @@
 
 Rabbit Chain is an EVM-compatible Layer 1 blockchain powered by **LCQ (Live Consensus Queue)** and Rabbit Work V1. The network is designed for open participation: download the official software, run a node, and participate without manual registration or permission from an operator.
 
-> The public testnet is currently in native preview. The binaries are available for verification, but the public network will be activated only after the official bootnodes and RPC infrastructure are online.
+> Rabbit Testnet v1 uses Chain ID 9280 with public P2P discovery, HTTPS RPC, WebSocket RPC and an official Blockscout explorer. Rabbit Core packages are released for Windows AMD64 and Linux AMD64.
 
 ## Official links
 
@@ -20,7 +20,7 @@ Only links published on the website or this repository should be treated as offi
 | --- | --- |
 | Chain ID | `9280` (`0x2440`) |
 | Network ID | `9280` |
-| Native coin | `RAB` (testnet value only) |
+| Native coin | `tRAB` (testnet only) |
 | Block target | 10 seconds |
 | Consensus | LCQ + Rabbit Work V1 |
 | Execution | EVM-compatible |
@@ -28,35 +28,40 @@ Only links published on the website or this repository should be treated as offi
 
 The authoritative network parameters are defined in [`networks/rabbit-testnet/genesis.json`](networks/rabbit-testnet/genesis.json).
 
-## Native preview downloads
+## Rabbit Core Testnet v1
 
-The first validated preview is [Rabbit Core Testnet Preview v1](https://github.com/rabbitmainnet/rabbit-geth/releases/tag/rabbit-testnet-preview-v1), available for:
+Official release:
 
-- Linux AMD64
+`https://github.com/rabbitmainnet/rabbit-geth/releases/tag/rabbit-core-testnet-v1`
+
+Supported packages:
+
 - Windows AMD64
-- macOS Intel/AMD64
-- macOS Apple Silicon/ARM64
+- Linux AMD64
 
-Preview packages deliberately contain an empty `bootnodes.txt`. Rabbit Core validates the package with `--check`, but refuses to start an isolated network. A public activation release will be published after the official bootnodes, DNS/TLS endpoints, and final launch gate are validated.
+macOS is not included because it has not been tested for Testnet v1.
 
-## Reserved public testnet endpoints
+Every package contains Rabbit Core, the full node, Rabbit Work V1 miner,
+official genesis, two discovery bootnodes, build metadata, documentation and
+internal SHA-256 checksums.
 
-These canonical addresses will become operational when the public testnet is activated:
+## Public Testnet endpoints
 
-- HTTPS RPC: `https://rpc.testnet.rabbitchain.org`
-- WebSocket RPC: `wss://ws.testnet.rabbitchain.org`
-- Explorer: `https://explorer.testnet.rabbitchain.org`
-- Faucet: `https://faucet.testnet.rabbitchain.org`
-- Network status: `https://status.testnet.rabbitchain.org`
+- HTTPS RPC: `https://rpc-testnet.rabbitchain.org`
+- WebSocket RPC: `wss://rpc-testnet.rabbitchain.org/ws`
+- Explorer: `https://explorer-testnet.rabbitchain.org`
+- Website status: `https://rabbitchain.org/status`
+- Faucet: planned, no official endpoint published
 
-Until the official activation announcement, these services may remain offline.
+Bootnodes provide peer discovery only and have no consensus or administrative
+authority.
 
 ## Verify a download
 
 Download the archive and its checksum from the same GitHub release. On Linux:
 
 ```bash
-sha256sum -c rabbit-core-testnet-linux-amd64-preview.tar.gz.sha256
+sha256sum -c rabbit-core-testnet-v1-linux-amd64.tar.gz.sha256
 ```
 
 After extracting the package:
@@ -69,7 +74,7 @@ This check verifies the official genesis and package structure without starting 
 
 ## How Rabbit Core works
 
-Rabbit Core is the user-facing launcher included with every native package. At public testnet activation it will:
+Rabbit Core is the user-facing launcher included with every native package. On first run it will:
 
 1. verify the official genesis;
 2. load the official bootnodes;
@@ -99,7 +104,7 @@ Wallet passwords and private keys remain local. The miner submits only signed Wo
 
 Official native releases use Go `1.25.13`, a native C/C++ toolchain, CMake, NASM, and RandomX pinned to commit `7c761cf007c758056dcb6eb438a32f780f81bdbd` with the Rabbit 1 GiB profile.
 
-The reproducible multi-platform workflow is located at [`.github/workflows/rabbit-core-native-preview.yml`](.github/workflows/rabbit-core-native-preview.yml). Building from source does not replace verification of the official genesis, release commit, and checksums.
+The reproducible multi-platform workflow is located at [`.github/workflows/rabbit-core-testnet-release.yml`](.github/workflows/rabbit-core-testnet-release.yml). Building from source does not replace verification of the official genesis, release commit, and checksums.
 
 ## Security
 

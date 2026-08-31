@@ -26,7 +26,7 @@ rate limits, request-body limits, batch limits, timeouts, connection limits,
 upstream health checks, metrics, and abuse logging that avoids collecting
 secrets.
 
-The canonical reserved address is `https://rpc.testnet.rabbitchain.org`.
+The official live address is `https://rpc-testnet.rabbitchain.org`.
 Community RPC endpoints are equally valid as access providers but must publish
 their own policy and operator identity.
 
@@ -36,7 +36,7 @@ WebSocket access requires separate connection, subscription, message-size, and
 idle-time limits. It should use its own proxy policy and capacity budget rather
 than inheriting HTTP defaults accidentally.
 
-The canonical reserved address is `wss://ws.testnet.rabbitchain.org`.
+The official live address is `wss://rpc-testnet.rabbitchain.org/ws`.
 
 ## Explorer
 
@@ -49,8 +49,8 @@ Wallet connection and “Add Rabbit Testnet” are convenience features. They mu
 request Chain ID 9280 and the canonical testnet RPC, show the exact network to
 the user, and never request a seed phrase or raw private key.
 
-The canonical reserved address is
-`https://explorer.testnet.rabbitchain.org`.
+The official live address is
+`https://explorer-testnet.rabbitchain.org`.
 
 ## Faucet and status page
 
@@ -63,10 +63,10 @@ possible. It should report RPC, WS, explorer, bootnode reachability, indexing
 lag, peer counts, chain head, and incidents without claiming that service
 health determines consensus health.
 
-Reserved addresses:
+Current availability:
 
-- `https://faucet.testnet.rabbitchain.org`
-- `https://status.testnet.rabbitchain.org`
+- Faucet: planned, no official endpoint published
+- Website status: `https://rabbitchain.org/status`
 
 ## Launch evidence
 

@@ -2,26 +2,24 @@
 
 ## Current status
 
-The native preview binaries are published for external verification. The public testnet is not active until an official activation release contains validated bootnodes.
-
-Do not manually add an unofficial enode or start an isolated chain using the official genesis.
+Rabbit Core Testnet v1 contains the validated genesis and two official discovery bootnodes. Use only packages and checksums published in the official Rabbit GitHub release.
 
 ## 1. Download
 
 Open the official [Rabbit Core releases page](https://github.com/rabbitmainnet/rabbit-geth/releases) and select the package matching your operating system and architecture.
 
-Current preview platforms:
+Supported Testnet v1 platforms:
 
-- Linux AMD64
 - Windows AMD64
-- macOS Intel/AMD64
-- macOS Apple Silicon/ARM64
+- Linux AMD64
+
+macOS is not included because it has not been tested for Testnet v1.
 
 ## 2. Verify
 
 Verify the archive checksum using `SHA256SUMS.txt` or its individual `.sha256` file. After extraction, run:
 
-Linux and macOS:
+Linux:
 
 ```bash
 ./rabbit-core --check
@@ -39,27 +37,22 @@ Expected identity:
 - Genesis SHA-256: `8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7`
 - The check must say that no node or miner was started.
 
-## 3. Wait for activation
+## 3. Public network identity
 
-The preview package intentionally has an empty `bootnodes.txt`, so Rabbit Core refuses to start an isolated network. This is a safety feature.
+Official services:
 
-At public activation, a new release will include the validated bootnode configuration. Download and verify that release instead of editing the preview package manually.
+- HTTPS RPC: `https://rpc-testnet.rabbitchain.org`
+- WebSocket RPC: `wss://rpc-testnet.rabbitchain.org/ws`
+- Explorer: `https://explorer-testnet.rabbitchain.org`
+- Website status: `https://rabbitchain.org/status`
+- Faucet: planned, no official endpoint published
 
-Reserved services:
+Rabbit Core runs its own full node and does not depend on the public RPC for
+consensus or mining.
 
-- `https://rpc.testnet.rabbitchain.org`
-- `wss://ws.testnet.rabbitchain.org`
-- `https://explorer.testnet.rabbitchain.org`
-- `https://faucet.testnet.rabbitchain.org`
-- `https://status.testnet.rabbitchain.org`
+## 4. First run
 
-They may remain offline until public activation.
-
-## 4. First public-testnet run
-
-After the activation release is published:
-
-1. open `Start-Rabbit-Core.cmd` on Windows or `start-rabbit-core.command` on Linux/macOS;
+1. open `Start-Rabbit-Core.cmd` on Windows or `start-rabbit-core.command` on Linux;
 2. choose a strong mining-wallet password;
 3. back up the encrypted keystore created in the Rabbit Testnet data directory;
 4. allow the node to synchronize;
@@ -70,7 +63,6 @@ Rabbit Core uses a dedicated Rabbit Testnet data directory and a local JSON-RPC 
 
 ## Troubleshooting
 
-- `official bootnodes are not configured yet`: you are using the preview before activation.
 - `wrong genesis SHA-256`: delete the package and download it again from the official release.
 - `wrong chain ID`: stop immediately; the node is connected to the wrong network or data directory.
 - node startup problems: inspect `logs/rabbit-node.log` inside the Rabbit Testnet data directory.

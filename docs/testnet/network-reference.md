@@ -46,14 +46,19 @@ The committee sizing percentage and committee reward percentage are different
 rules. See [LCQ protocol overview](../consensus/lcq-protocol.md) and
 [Rewards and emission](../economics/rewards-and-emission.md).
 
-## Reserved public endpoints
+## Public endpoints
 
 | Service | Canonical address | Status |
 | --- | --- | --- |
-| HTTPS RPC | `https://rpc.testnet.rabbitchain.org` | Activates with the public testnet |
-| WebSocket RPC | `wss://ws.testnet.rabbitchain.org` | Activates with the public testnet |
-| Explorer | `https://explorer.testnet.rabbitchain.org` | Activates with the public testnet |
-| Faucet | `https://faucet.testnet.rabbitchain.org` | Activates with the public testnet |
-| Network status | `https://status.testnet.rabbitchain.org` | Activates with the public testnet |
+| HTTPS RPC | `https://rpc-testnet.rabbitchain.org` | Live |
+| WebSocket RPC | `wss://rpc-testnet.rabbitchain.org/ws` | Live |
+| Explorer | `https://explorer-testnet.rabbitchain.org` | Live |
+| Faucet | Not published | Planned |
+| Website status | `https://rabbitchain.org/status` | Live |
 
-Bootnode enodes will be added after persistent nodekeys and external P2P connectivity are validated.
+## Official bootnodes
+
+- `enode://867431475238a2da10b62aeb2197d00baa4880f66b14ca97ec99ef51d13143791cf89893a8f41e1fcf1bd0e0f1ef86081d0c28b268953f723e6dd3c18efc8a39@137.184.105.140:30303`
+- `enode://b345298a2e97c249e2e7987f7a7b9289d7f0f6bc02b06bba8d7b6c478ae62a293952c8187fb67c30d2ecf60332080b79a8ab3584d4d87d34bf549e6122208b07@162.243.49.184:30303`
+
+Bootnodes provide peer discovery only. Community bootnodes are supported.
