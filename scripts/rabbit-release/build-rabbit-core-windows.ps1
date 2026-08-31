@@ -70,7 +70,7 @@ $env:CGO_ENABLED = "1"
 $RandomXForGcc = $RandomX.Replace("\", "/")
 if (-not $RandomXForGcc) { throw "could not prepare RandomX path for GCC" }
 $env:CGO_CFLAGS = "-O2 -D__BLST_PORTABLE__ -I$RandomXForGcc/src"
-$env:CGO_LDFLAGS = "-L$RandomXForGcc/build -lrandomx"
+$env:CGO_LDFLAGS = "-L$RandomXForGcc/build -lrandomx -static-libgcc -static-libstdc++"
 Write-Host "RABBIT_RANDOMX_GCC_PATH=$RandomXForGcc"
 Write-Host "RABBIT_CGO_CFLAGS=$env:CGO_CFLAGS"
 Write-Host "RABBIT_CGO_LDFLAGS=$env:CGO_LDFLAGS"
@@ -86,6 +86,33 @@ if ($LASTEXITCODE -ne 0) { throw "Rabbit miner Windows build failed" }
 
 go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-core.exe" ./cmd/rabbit-core
 if ($LASTEXITCODE -ne 0) { throw "Rabbit Core Windows build failed" }
+
+$Objdump = "C:\msys64\mingw64\bin\objdump.exe"
+if (-not (Test-Path $Objdump)) {
+    throw "MinGW objdump is not available"
+}
+
+foreach ($Binary in @(
+    "rabbit-node.exe",
+    "rabbit-miner.exe",
+    "rabbit-core.exe"
+)) {
+    $Executable = Join-Path $Stage $Binary
+    $Imports = & $Objdump -p $Executable
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not inspect Windows imports for $Binary"
+    }
+
+    $Forbidden = $Imports |
+        Select-String -Pattern "libstdc\+\+|libgcc|libwinpthread"
+
+    if ($Forbidden) {
+        throw "non-system MinGW runtime dependency in ${Binary}: $Forbidden"
+    }
+
+    Write-Host "WINDOWS_RUNTIME_SELF_CONTAINED=$Binary"
+}
 
 Copy-Item networks/rabbit-testnet/genesis.json "$Stage\genesis.json"
 Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
@@ -103,6 +130,7 @@ Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
     "RANDOMX_COMMIT=$RandomXCommit"
     "RANDOMX_DATASET_BASE_SIZE=1073741824"
     "BUILD_TAGS=rabbit_workv1 rabbit_randomx"
+    "WINDOWS_CXX_RUNTIME=STATIC"
 ) | Set-Content -Encoding ASCII "$Stage\BUILD-METADATA.txt"
 Set-Content -Encoding ASCII -NoNewline -Path "$Stage\bootnodes.txt" -Value "enode://867431475238a2da10b62aeb2197d00baa4880f66b14ca97ec99ef51d13143791cf89893a8f41e1fcf1bd0e0f1ef86081d0c28b268953f723e6dd3c18efc8a39@137.184.105.140:30303,enode://b345298a2e97c249e2e7987f7a7b9289d7f0f6bc02b06bba8d7b6c478ae62a293952c8187fb67c30d2ecf60332080b79a8ab3584d4d87d34bf549e6122208b07@162.243.49.184:30303`n"
 
