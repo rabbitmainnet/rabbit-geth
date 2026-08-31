@@ -70,7 +70,7 @@ $env:CGO_ENABLED = "1"
 $RandomXForGcc = $RandomX.Replace("\", "/")
 if (-not $RandomXForGcc) { throw "could not prepare RandomX path for GCC" }
 $env:CGO_CFLAGS = "-O2 -D__BLST_PORTABLE__ -I$RandomXForGcc/src"
-$env:CGO_LDFLAGS = "-L$RandomXForGcc/build -lrandomx -Wl,-Bstatic -lstdc++ -lgcc -Wl,-Bdynamic"
+$env:CGO_LDFLAGS = "-L$RandomXForGcc/build -lrandomx -Wl,-Bstatic -lstdc++ -lgcc -lwinpthread -Wl,-Bdynamic"
 Write-Host "RABBIT_RANDOMX_GCC_PATH=$RandomXForGcc"
 Write-Host "RABBIT_CGO_CFLAGS=$env:CGO_CFLAGS"
 Write-Host "RABBIT_CGO_LDFLAGS=$env:CGO_LDFLAGS"
