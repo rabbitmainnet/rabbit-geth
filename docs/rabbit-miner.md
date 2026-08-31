@@ -30,9 +30,9 @@ automatically resumes when a valid context becomes available.
 
 ## Components of Rabbit Core
 
-The final Rabbit Core package will contain:
+The Rabbit Core Testnet v1 package contains:
 
-- the Rabbit node (`rabbit-core`);
+- the Rabbit node (`rabbit-node`);
 - the Work V1 miner (`rabbit-miner`);
 - the frozen official `genesis.json`;
 - a launcher for the operating system;

@@ -29,7 +29,7 @@ rabbit-core --check
 
 - Chain ID: `9280`
 - Network ID: `9280`
-- Native coin: `RAB`
+- Native coin: `tRAB` (Testnet only)
 - Genesis SHA-256: `8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7`
 
 Rabbit Core refuses a different genesis or chain ID.
