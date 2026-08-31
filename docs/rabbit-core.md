@@ -8,7 +8,8 @@ genesis initialization.
 
 1. Open Rabbit Core.
 2. If no mining wallet exists, choose a strong local password twice.
-3. Back up the encrypted wallet when instructed by the release UI.
+3. Rabbit Core displays the wallet address and the exact encrypted wallet file
+   that must be copied to a safe backup location.
 4. Rabbit Core verifies the official genesis, initializes the data directory,
    connects to the official bootnodes and starts synchronization.
 5. Mining starts automatically and stops safely with Rabbit Core.
@@ -36,5 +37,7 @@ Rabbit Core refuses a different genesis or chain ID.
 ## Release safety
 
 The release package must contain `rabbit-core`, `rabbit-node`, `rabbit-miner`,
-`genesis.json`, `bootnodes.txt`, documentation and `SHA256SUMS.txt`. The final
-`bootnodes.txt` is created only after public P2P nodes are deployed.
+`genesis.json`, `bootnodes.txt`, `BUILD-METADATA.txt`, documentation and `SHA256SUMS.txt`. The release includes both official public discovery nodes in
+`bootnodes.txt`. Additional community bootnodes may be supplied through `--bootnodes`
+or `RABBIT_BOOTNODES`. Bootnodes provide peer discovery only and have no
+consensus or administrative authority.

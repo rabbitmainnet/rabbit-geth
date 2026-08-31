@@ -229,6 +229,13 @@ func createWallet(ctx context.Context, opts options, passwordFile string) (strin
 	return files[0], address, err
 }
 
+func walletBackupMessage(keyFile string, address common.Address) string {
+	return fmt.Sprintf(
+		"Mining wallet created: %s\nEncrypted wallet backup file: %s\nIMPORTANT: copy this encrypted wallet file to a safe backup location before mining.",
+		address.Hex(), keyFile,
+	)
+}
+
 func prepareWallet(ctx context.Context, opts options) (string, common.Address, string, func(), error) {
 	files, err := keyFiles(opts.dataDir)
 	if err != nil {
@@ -256,6 +263,7 @@ func prepareWallet(ctx context.Context, opts options) (string, common.Address, s
 			cleanup()
 			return "", common.Address{}, "", nil, err
 		}
+		fmt.Println(walletBackupMessage(keyFile, address))
 		return keyFile, address, passwordFile, cleanup, nil
 	}
 	address, err := keyAddress(files[0])

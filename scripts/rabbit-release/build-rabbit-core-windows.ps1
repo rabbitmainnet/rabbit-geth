@@ -4,6 +4,19 @@ $RandomXRepository = if ($env:RANDOMX_REPOSITORY) { $env:RANDOMX_REPOSITORY } el
 $RandomXCommit = if ($env:RANDOMX_COMMIT) { $env:RANDOMX_COMMIT } else { "7c761cf007c758056dcb6eb438a32f780f81bdbd" }
 $ExpectedGenesis = if ($env:TESTNET_GENESIS_SHA256) { $env:TESTNET_GENESIS_SHA256 } else { "8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7" }
 $Target = $env:RABBIT_TARGET
+$SourceCommit = (git rev-parse HEAD).Trim()
+
+if ($LASTEXITCODE -ne 0 -or -not $SourceCommit) {
+    throw "could not resolve source commit"
+}
+
+$TrackedStatus = git status --short --untracked-files=no
+if ($LASTEXITCODE -ne 0) {
+    throw "could not inspect tracked source state"
+}
+if ($null -ne $TrackedStatus) {
+    throw "tracked source tree is not clean"
+}
 
 if ($Target -ne "windows-amd64") { throw "unsupported Windows target: $Target" }
 if ((go version) -notmatch "go1\.25\.13 windows/amd64") { throw "Go 1.25.13 windows/amd64 is required" }
@@ -11,7 +24,7 @@ if ((Get-FileHash networks/rabbit-testnet/genesis.json -Algorithm SHA256).Hash.T
 
 $Work = Join-Path $env:RUNNER_TEMP "rabbit-native-$([guid]::NewGuid())"
 $RandomX = Join-Path $Work "RandomX"
-$Package = "rabbit-core-testnet-$Target-preview"
+$Package = "rabbit-core-testnet-v1-$Target"
 $Stage = Join-Path $Work $Package
 $Dist = Join-Path $PWD "dist"
 
@@ -76,8 +89,22 @@ if ($LASTEXITCODE -ne 0) { throw "Rabbit Core Windows build failed" }
 
 Copy-Item networks/rabbit-testnet/genesis.json "$Stage\genesis.json"
 Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
-Copy-Item scripts/rabbit-release/NOTICE-PREVIEW.txt "$Stage\NOTICE-PREVIEW.txt"
-New-Item -ItemType File -Force -Path "$Stage\bootnodes.txt" | Out-Null
+Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
+
+@(
+    "RABBIT_RELEASE=rabbit-core-testnet-v1"
+    "SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth"
+    "SOURCE_COMMIT=$SourceCommit"
+    "TARGET=$Target"
+    "CHAIN_ID=9280"
+    "NETWORK_ID=9280"
+    "GENESIS_SHA256=$ExpectedGenesis"
+    "GO_VERSION=go1.25.13"
+    "RANDOMX_COMMIT=$RandomXCommit"
+    "RANDOMX_DATASET_BASE_SIZE=1073741824"
+    "BUILD_TAGS=rabbit_workv1 rabbit_randomx"
+) | Set-Content -Encoding ASCII "$Stage\BUILD-METADATA.txt"
+Set-Content -Encoding ASCII -NoNewline -Path "$Stage\bootnodes.txt" -Value "enode://867431475238a2da10b62aeb2197d00baa4880f66b14ca97ec99ef51d13143791cf89893a8f41e1fcf1bd0e0f1ef86081d0c28b268953f723e6dd3c18efc8a39@137.184.105.140:30303,enode://b345298a2e97c249e2e7987f7a7b9289d7f0f6bc02b06bba8d7b6c478ae62a293952c8187fb67c30d2ecf60332080b79a8ab3584d4d87d34bf549e6122208b07@162.243.49.184:30303`n"
 
 @'
 @echo off

@@ -8,13 +8,17 @@ TARGET="${RABBIT_TARGET:?RABBIT_TARGET is required}"
 
 case "$TARGET" in
   linux-amd64) expected_os=linux; expected_arch=x86_64 ;;
-  macos-amd64) expected_os=darwin; expected_arch=x86_64 ;;
-  macos-arm64) expected_os=darwin; expected_arch=arm64 ;;
   *) echo "unsupported Unix target: $TARGET" >&2; exit 1 ;;
 esac
 
 actual_os="$(go env GOOS)"
 actual_arch="$(uname -m)"
+source_commit="$(git rev-parse HEAD)"
+
+if [[ -n "$(git status --short --untracked-files=no)" ]]; then
+  echo "tracked source tree is not clean" >&2
+  exit 1
+fi
 
 hash_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -65,7 +69,7 @@ export CGO_LDFLAGS="-L$work/RandomX/build -lrandomx"
 
 go test -tags 'rabbit_workv1 rabbit_randomx' ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
 
-package="rabbit-core-testnet-$TARGET-preview"
+package="rabbit-core-testnet-v1-$TARGET"
 stage="$work/$package"
 mkdir -p "$stage" dist
 
@@ -84,8 +88,24 @@ fi
 
 cp networks/rabbit-testnet/genesis.json "$stage/genesis.json"
 cp docs/rabbit-core.md docs/rabbit-miner.md "$stage/"
-cp scripts/rabbit-release/NOTICE-PREVIEW.txt "$stage/NOTICE-PREVIEW.txt"
-: > "$stage/bootnodes.txt"
+cp scripts/rabbit-release/NOTICE-TESTNET.txt "$stage/NOTICE-TESTNET.txt"
+
+cat > "$stage/BUILD-METADATA.txt" <<EOF
+RABBIT_RELEASE=rabbit-core-testnet-v1
+SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth
+SOURCE_COMMIT=$source_commit
+TARGET=$TARGET
+CHAIN_ID=9280
+NETWORK_ID=9280
+GENESIS_SHA256=$EXPECTED_GENESIS
+GO_VERSION=$(go version | awk '{print $3}')
+RANDOMX_COMMIT=$RANDOMX_COMMIT
+RANDOMX_DATASET_BASE_SIZE=1073741824
+BUILD_TAGS=rabbit_workv1 rabbit_randomx
+EOF
+printf '%s\n' \
+  'enode://867431475238a2da10b62aeb2197d00baa4880f66b14ca97ec99ef51d13143791cf89893a8f41e1fcf1bd0e0f1ef86081d0c28b268953f723e6dd3c18efc8a39@137.184.105.140:30303,enode://b345298a2e97c249e2e7987f7a7b9289d7f0f6bc02b06bba8d7b6c478ae62a293952c8187fb67c30d2ecf60332080b79a8ab3584d4d87d34bf549e6122208b07@162.243.49.184:30303' \
+  > "$stage/bootnodes.txt"
 
 cat > "$stage/start-rabbit-core.command" <<'LAUNCHER'
 #!/usr/bin/env bash

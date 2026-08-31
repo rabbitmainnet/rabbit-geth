@@ -1,0 +1,31 @@
+RABBIT CORE — PUBLIC TESTNET V1
+
+This is the official Rabbit Chain public testnet mining package.
+
+Network:
+- Name: Rabbit Chain Testnet
+- Chain ID: 9280
+- Network ID: 9280
+- Currency symbol: tRAB
+- Public RPC: https://rpc-testnet.rabbitchain.org
+- Explorer: https://explorer-testnet.rabbitchain.org
+- Website: https://rabbitchain.org
+- Discord: https://discord.com/invite/TBWspuEZss
+
+Security and operation:
+- Rabbit Core creates an encrypted mining wallet locally.
+- The password and private key never leave the user's computer.
+- Back up the keystore and remember the password.
+- Never share a private key, password or seed phrase.
+- Rabbit Core runs a local full node and validates the chain independently.
+- Official bootnodes provide peer discovery only.
+- Bootnodes and the public RPC have no consensus or administrative authority.
+- Community bootnodes may be supplied by the user.
+- Testnet tokens do not represent mainnet tokens or guaranteed monetary value.
+
+Build identity:
+- Genesis SHA-256: 8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7
+- RandomX base commit: 7c761cf007c758056dcb6eb438a32f780f81bdbd
+- Rabbit RandomX dataset base size: 1073741824 bytes (1 GiB)
+
+Always verify SHA256SUMS.txt before running downloaded files.

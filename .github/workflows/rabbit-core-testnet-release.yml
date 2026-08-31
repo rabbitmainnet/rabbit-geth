@@ -1,4 +1,4 @@
-name: Rabbit Core Testnet Native Preview
+name: Rabbit Core Testnet Release
 
 on:
   workflow_dispatch:
@@ -24,12 +24,6 @@ jobs:
           - target: windows-amd64
             runner: windows-2022
             archive: zip
-          - target: macos-amd64
-            runner: macos-15-intel
-            archive: tar.gz
-          - target: macos-arm64
-            runner: macos-15
-            archive: tar.gz
 
     runs-on: ${{ matrix.runner }}
 
@@ -53,13 +47,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake nasm
 
-      - name: Install macOS native dependencies
-        if: runner.os == 'macOS'
-        shell: bash
-        run: brew install cmake nasm
-
       - name: Build Unix package
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         shell: bash
         env:
           RABBIT_TARGET: ${{ matrix.target }}
@@ -72,42 +61,42 @@ jobs:
           RABBIT_TARGET: ${{ matrix.target }}
         run: scripts/rabbit-release/build-rabbit-core-windows.ps1
 
-      - name: Upload native preview
+      - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-${{ matrix.target }}-preview
+          name: rabbit-core-testnet-v1-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
   manifest:
-    name: Preview manifest
+    name: Release manifest
     needs: native
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
-      - name: Download previews
+      - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-*-preview
-          path: previews
+          pattern: rabbit-core-testnet-v1-*
+          path: releases
           merge-multiple: true
 
       - name: Create aggregate checksums
         shell: bash
         run: |
           set -Eeuo pipefail
-          cd previews
+          cd releases
           find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' \
             | LC_ALL=C sort \
             | while IFS= read -r file; do sha256sum "$file"; done \
             > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Upload preview bundle
+      - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-native-preview-bundle
-          path: previews/*
+          name: rabbit-core-testnet-v1-release-bundle
+          path: releases/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30

@@ -3,7 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func TestKeyAddress(t *testing.T) {
@@ -41,5 +44,36 @@ func TestConfiguredBootnodesPrefersFlag(t *testing.T) {
 	got := configuredBootnodes(options{bootnodes: "enode://flag"})
 	if got != "enode://flag" {
 		t.Fatalf("bootnodes=%q", got)
+	}
+}
+
+func TestWalletBackupMessage(t *testing.T) {
+	address := common.HexToAddress(
+		"0xdA5bf4A009e63D6dB4EfFaF5a2D6910f4D5BD2a0",
+	)
+	keyFile := filepath.Join(
+		t.TempDir(),
+		"keystore",
+		"UTC--rabbit-wallet",
+	)
+
+	message := walletBackupMessage(keyFile, address)
+
+	for _, expected := range []string{
+		address.Hex(),
+		keyFile,
+		"encrypted wallet",
+		"safe backup location",
+	} {
+		if !strings.Contains(
+			strings.ToLower(message),
+			strings.ToLower(expected),
+		) {
+			t.Fatalf(
+				"backup message %q does not contain %q",
+				message,
+				expected,
+			)
+		}
 	}
 }
