@@ -399,32 +399,24 @@ func TestWorkV1EngineLabVerifyHeadersUsesBatchParentRuntime(
 	}
 	buildChain := canonicalRegistryTestChain(config, genesis)
 	builder := New(config, rawdb.NewMemoryDatabase())
-	header1 := prepareCanonicalTestHeader(
-		t,
-		builder,
-		buildChain,
-		genesis,
-	)
-	if err := builder.VerifyHeader(buildChain, header1); err != nil {
-		t.Fatal(err)
+	headers := make([]*types.Header, 0, WorkProtocolEpochLengthV1+1)
+	parent := genesis
+	for number := uint64(1); number <= WorkProtocolEpochLengthV1+1; number++ {
+		header := prepareCanonicalTestHeader(t, builder, buildChain, parent)
+		if err := builder.VerifyHeader(buildChain, header); err != nil {
+			t.Fatalf("build header %d: %v", number, err)
+		}
+		buildChain.headers[header.Hash()] = header
+		buildChain.current = header
+		headers = append(headers, header)
+		parent = header
 	}
-	buildChain.headers[header1.Hash()] = header1
-	buildChain.current = header1
-	header2 := prepareCanonicalTestHeader(
-		t,
-		builder,
-		buildChain,
-		header1,
-	)
 
 	baseChain := canonicalRegistryTestChain(config, genesis)
 	verifier := New(config, rawdb.NewMemoryDatabase())
-	abort, results := verifier.VerifyHeaders(
-		baseChain,
-		[]*types.Header{header1, header2},
-	)
+	abort, results := verifier.VerifyHeaders(baseChain, headers)
 	defer close(abort)
-	for index := 1; index <= 2; index++ {
+	for index := 1; index <= len(headers); index++ {
 		if err := <-results; err != nil {
 			t.Fatalf("Work V1 batch header %d rejected: %v", index, err)
 		}

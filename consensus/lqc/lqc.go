@@ -42,6 +42,53 @@ type LQC struct {
 	registryPool  *RegistryOperationPool
 }
 
+// verifiedHeaderChain exposes headers which have already passed verification in
+// the current batch. Header-chain sync validates a batch before inserting it,
+// so stateful LQC checks must be able to walk those verified ancestors without
+// treating unverified headers as canonical.
+type verifiedHeaderChain struct {
+	consensus.ChainHeaderReader
+	byHash   map[common.Hash]*types.Header
+	byNumber map[uint64]*types.Header
+}
+
+func newVerifiedHeaderChain(chain consensus.ChainHeaderReader, capacity int) *verifiedHeaderChain {
+	return &verifiedHeaderChain{
+		ChainHeaderReader: chain,
+		byHash:            make(map[common.Hash]*types.Header, capacity),
+		byNumber:          make(map[uint64]*types.Header, capacity),
+	}
+}
+
+func (c *verifiedHeaderChain) remember(header *types.Header) {
+	if header == nil || header.Number == nil || !header.Number.IsUint64() {
+		return
+	}
+	c.byHash[header.Hash()] = header
+	c.byNumber[header.Number.Uint64()] = header
+}
+
+func (c *verifiedHeaderChain) GetHeader(hash common.Hash, number uint64) *types.Header {
+	if header := c.byHash[hash]; header != nil && header.Number.Uint64() == number {
+		return header
+	}
+	return c.ChainHeaderReader.GetHeader(hash, number)
+}
+
+func (c *verifiedHeaderChain) GetHeaderByHash(hash common.Hash) *types.Header {
+	if header := c.byHash[hash]; header != nil {
+		return header
+	}
+	return c.ChainHeaderReader.GetHeaderByHash(hash)
+}
+
+func (c *verifiedHeaderChain) GetHeaderByNumber(number uint64) *types.Header {
+	if header := c.byNumber[number]; header != nil {
+		return header
+	}
+	return c.ChainHeaderReader.GetHeaderByNumber(number)
+}
+
 // SetChainID binds the generic Engine.SealHash method to the configured chain.
 // Header verification always uses the ChainHeaderReader configuration instead.
 func (l *LQC) SetChainID(chainID *big.Int) {
@@ -419,13 +466,14 @@ func (l *LQC) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.
 
 	go func() {
 		defer close(results)
+		batchChain := newVerifiedHeaderChain(chain, len(headers))
 		verified := make(map[common.Hash]*types.Header, len(headers))
 		for _, header := range headers {
 			var parent *types.Header
 			if header != nil {
 				parent = verified[header.ParentHash]
 			}
-			err := l.verifyHeaderAt(chain, header, parent, unixNow)
+			err := l.verifyHeaderAt(batchChain, header, parent, unixNow)
 			select {
 			case <-quit:
 				return
@@ -433,6 +481,7 @@ func (l *LQC) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.
 			}
 			if err == nil && header != nil {
 				verified[header.Hash()] = header
+				batchChain.remember(header)
 			}
 		}
 	}()
