@@ -65,7 +65,7 @@ func parseOptions() options {
 	flag.StringVar(&opts.passwordFile, "password-file", "", "file containing the keystore password")
 	flag.Uint64Var(&opts.startNonce, "start-nonce", uint64(time.Now().UnixNano()), "first nonce to try")
 	flag.Uint64Var(&opts.ticketsPerEpoch, "tickets-per-epoch", 1, "successful tickets to submit per epoch (0 means unlimited)")
-	flag.Uint64Var(&opts.statusEvery, "status-every", 10000, "print progress after this many attempts (0 disables)")
+	flag.Uint64Var(&opts.statusEvery, "status-every", 1000, "print progress after this many attempts (0 disables)")
 	flag.BoolVar(&opts.once, "once", false, "stop after the first accepted ticket")
 	flag.Parse()
 	return opts
@@ -209,9 +209,9 @@ func run(ctx context.Context, opts options) error {
 		return fmt.Errorf("validate network: %w", err)
 	}
 
-	hasher, err := rabbitx.NewLightHasher()
+	hasher, err := rabbitx.NewFullHasher()
 	if err != nil {
-		return fmt.Errorf("start RandomX: %w", err)
+		return fmt.Errorf("start RandomX full-memory miner: %w", err)
 	}
 	defer hasher.Close()
 
@@ -220,29 +220,46 @@ func run(ctx context.Context, opts options) error {
 	var activeEpoch uint64
 	var acceptedInEpoch uint64
 	var attempts uint64
+	var lastWaitingMessage time.Time
+	var waitingReason string
+	var statusStarted = time.Now()
+	var statusAttempts uint64
 
 	fmt.Printf("Rabbit Miner Work V1\nparticipant=%s chainId=%s rpc=%s\n", participant, chainID, opts.rpcURL)
 
 	for ctx.Err() == nil {
 		work, err := fetchWorkContext(ctx, client)
 		if err != nil {
-			fmt.Printf("waiting_for_work_context error=%q\n", err)
+			reason := err.Error()
+			if reason != waitingReason || time.Since(lastWaitingMessage) >= time.Minute {
+				fmt.Printf("Waiting for the next LCQ work window. Mining will resume automatically. Details: %s\n", reason)
+				waitingReason = reason
+				lastWaitingMessage = time.Now()
+			}
 			if !wait(ctx, pollInterval) {
 				break
 			}
 			continue
 		}
+		waitingReason = ""
 
 		epoch := uint64(work.Epoch)
 		if epoch != activeEpoch {
 			activeEpoch = epoch
 			acceptedInEpoch = 0
 			attempts = 0
+			statusAttempts = 0
+			statusStarted = time.Now()
 			fmt.Printf("epoch=%d difficulty=%s dataset=%s challenge=%s\n",
 				epoch, (*big.Int)(work.Difficulty), work.DatasetAnchor, work.ChallengeAnchor)
+			fmt.Println("Preparing the Rabbit RandomX 1 GiB dataset. This happens once per epoch; mining starts automatically when ready.")
 		}
 
 		if opts.ticketsPerEpoch != 0 && acceptedInEpoch >= opts.ticketsPerEpoch {
+			if time.Since(lastWaitingMessage) >= time.Minute {
+				fmt.Printf("Ticket already accepted for epoch %d. Waiting for LCQ selection or the next epoch.\n", epoch)
+				lastWaitingMessage = time.Now()
+			}
 			if !wait(ctx, pollInterval) {
 				break
 			}
@@ -265,11 +282,15 @@ func run(ctx context.Context, opts options) error {
 		if err != nil {
 			return err
 		}
+		firstAttempt := attempts == 0
 		proofHash, err := hasher.Hash(epochKey, input)
 		if err != nil {
-			return fmt.Errorf("RandomX: %w", err)
+			return fmt.Errorf("RandomX full-memory mining: %w", err)
 		}
 		attempts++
+		if firstAttempt {
+			fmt.Println("Rabbit RandomX dataset ready. Searching for this wallet's one Work V1 ticket.")
+		}
 
 		meets, err := lqc.RandomXWorkHashMeetsTargetV1(proofHash, (*big.Int)(work.Difficulty))
 		if err != nil {
@@ -277,7 +298,13 @@ func run(ctx context.Context, opts options) error {
 		}
 		if !meets {
 			if opts.statusEvery != 0 && attempts%opts.statusEvery == 0 {
-				fmt.Printf("participant=%s epoch=%d attempts=%d nonce=%d\n", participant, epoch, attempts, ticket.Nonce)
+				now := time.Now()
+				seconds := now.Sub(statusStarted).Seconds()
+				rate := float64(attempts-statusAttempts) / seconds
+				fmt.Printf("Mining Work V1: wallet=%s epoch=%d attempts=%d rate=%.1f H/s\n",
+					participant, epoch, attempts, rate)
+				statusStarted = now
+				statusAttempts = attempts
 			}
 			continue
 		}

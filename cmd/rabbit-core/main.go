@@ -236,6 +236,14 @@ func walletBackupMessage(keyFile string, address common.Address) string {
 	)
 }
 
+func showWalletInfo(opts options, keyFile string, address common.Address) {
+	fmt.Printf("Wallet address: %s\n", address.Hex())
+	fmt.Printf("Encrypted wallet file: %s\n", keyFile)
+	fmt.Printf("Rabbit data directory: %s\n", opts.dataDir)
+	fmt.Printf("Node log: %s\n", filepath.Join(opts.dataDir, "logs", "rabbit-node.log"))
+	fmt.Println("Keep the encrypted wallet file and its password in separate safe locations.")
+}
+
 func prepareWallet(ctx context.Context, opts options) (string, common.Address, string, func(), error) {
 	files, err := keyFiles(opts.dataDir)
 	if err != nil {
@@ -271,6 +279,7 @@ func prepareWallet(ctx context.Context, opts options) (string, common.Address, s
 		cleanup()
 		return "", common.Address{}, "", nil, err
 	}
+	fmt.Println("Existing mining wallet found. Rabbit Core will reuse it.")
 	return files[0], address, passwordFile, cleanup, nil
 }
 
@@ -320,10 +329,12 @@ func rpcCall(port uint, method string) (string, error) {
 	return decoded.Result, nil
 }
 
-func waitForNode(ctx context.Context, port uint, command *exec.Cmd) error {
+func waitForNode(ctx context.Context, port uint, nodeDone <-chan error) error {
 	for attempt := 0; attempt < 120; attempt++ {
-		if command.ProcessState != nil && command.ProcessState.Exited() {
-			return errors.New("Rabbit node exited during startup")
+		select {
+		case err := <-nodeDone:
+			return fmt.Errorf("Rabbit node exited during startup: %w", err)
+		default:
 		}
 		chainID, err := rpcCall(port, "eth_chainId")
 		if err == nil {
@@ -339,6 +350,19 @@ func waitForNode(ctx context.Context, port uint, command *exec.Cmd) error {
 		}
 	}
 	return errors.New("Rabbit node did not become ready")
+}
+
+func waitForProcess(name string, command *exec.Cmd, done <-chan error) {
+	select {
+	case <-done:
+		fmt.Printf("%s stopped safely.\n", name)
+	case <-time.After(20 * time.Second):
+		fmt.Printf("%s did not stop in time; forcing shutdown.\n", name)
+		if command.Process != nil {
+			_ = command.Process.Kill()
+		}
+		<-done
+	}
 }
 
 func start(ctx context.Context, opts options, keyFile string, address common.Address, passwordFile, bootnodes string) error {
@@ -371,24 +395,25 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 		"--password", passwordFile,
 		"--cache", "1024",
 	}
-	node := exec.CommandContext(ctx, opts.node, nodeArgs...)
+	// Do not use CommandContext here. On Ctrl+C it kills the database process
+	// immediately, racing the node's own graceful shutdown and risking damage.
+	node := exec.Command(opts.node, nodeArgs...)
 	node.Stdout, node.Stderr = nodeLog, nodeLog
 	node.Env = append(os.Environ(), "RABBIT_LQC_COINBASE="+address.Hex())
 	if err := node.Start(); err != nil {
 		return fmt.Errorf("start Rabbit node: %w", err)
 	}
-	defer func() {
+	nodeDone := make(chan error, 1)
+	go func() { nodeDone <- node.Wait() }()
+	if err := waitForNode(ctx, opts.rpcPort, nodeDone); err != nil {
 		if node.Process != nil {
 			_ = node.Process.Kill()
 		}
-		_ = node.Wait()
-	}()
-	if err := waitForNode(ctx, opts.rpcPort, node); err != nil {
 		return err
 	}
 
 	fmt.Printf("Rabbit node ready. Wallet: %s\n", address)
-	miner := exec.CommandContext(ctx, opts.miner,
+	miner := exec.Command(opts.miner,
 		"--rpc", fmt.Sprintf("http://127.0.0.1:%d", opts.rpcPort),
 		"--keystore", keyFile,
 		"--password-file", passwordFile,
@@ -396,18 +421,33 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 	)
 	miner.Stdout, miner.Stderr = os.Stdout, os.Stderr
 	if err := miner.Start(); err != nil {
+		if node.Process != nil {
+			_ = node.Process.Kill()
+		}
 		return fmt.Errorf("start Rabbit miner: %w", err)
 	}
-	defer func() {
+	minerDone := make(chan error, 1)
+	go func() { minerDone <- miner.Wait() }()
+
+	fmt.Println("Rabbit Core is running. Press Ctrl+C to stop safely.")
+	select {
+	case <-ctx.Done():
+		fmt.Println("Stopping Rabbit Miner and Rabbit Node safely. Please wait...")
+		waitForProcess("Rabbit Miner", miner, minerDone)
+		waitForProcess("Rabbit Node", node, nodeDone)
+		fmt.Println("Rabbit Core stopped. Your wallet remains safely stored.")
+		return nil
+	case err := <-minerDone:
+		if node.Process != nil {
+			_ = node.Process.Kill()
+		}
+		return fmt.Errorf("Rabbit Miner stopped unexpectedly: %w", err)
+	case err := <-nodeDone:
 		if miner.Process != nil {
 			_ = miner.Process.Kill()
 		}
-		_ = miner.Wait()
-	}()
-
-	fmt.Println("Rabbit Core is running. Press Ctrl+C to stop safely.")
-	<-ctx.Done()
-	return nil
+		return fmt.Errorf("Rabbit Node stopped unexpectedly: %w", err)
+	}
 }
 
 func run(ctx context.Context, opts options) error {
@@ -429,6 +469,7 @@ func run(ctx context.Context, opts options) error {
 		return err
 	}
 	defer cleanup()
+	showWalletInfo(opts, keyFile, address)
 	if err := initialize(ctx, opts); err != nil {
 		return err
 	}

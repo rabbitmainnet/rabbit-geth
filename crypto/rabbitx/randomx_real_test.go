@@ -39,3 +39,34 @@ func TestRandomXLightHasherMatchesIndependentCVector(t *testing.T) {
 		t.Fatal("same key/input produced different RandomX hash")
 	}
 }
+
+func TestRandomXFullHasherMatchesLightHasher(t *testing.T) {
+	var key common.Hash
+	for i := range key {
+		key[i] = byte(i)
+	}
+	input := []byte("rabbit-full-memory-equivalence-v1")
+
+	light, err := NewLightHasher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer light.Close()
+	want, err := light.Hash(key, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	full, err := NewFullHasher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer full.Close()
+	got, err := full.Hash(key, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("full-memory hash=%x light hash=%x", got, want)
+	}
+}

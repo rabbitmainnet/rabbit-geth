@@ -13,8 +13,13 @@ var ErrUnavailable = errors.New(
 )
 
 type LightHasher struct{}
+type FullHasher struct{}
 
 func NewLightHasher() (*LightHasher, error) {
+	return nil, ErrUnavailable
+}
+
+func NewFullHasher() (*FullHasher, error) {
 	return nil, ErrUnavailable
 }
 
@@ -23,3 +28,9 @@ func (*LightHasher) Hash(common.Hash, []byte) (common.Hash, error) {
 }
 
 func (*LightHasher) Close() {}
+
+func (*FullHasher) Hash(common.Hash, []byte) (common.Hash, error) {
+	return common.Hash{}, ErrUnavailable
+}
+
+func (*FullHasher) Close() {}
