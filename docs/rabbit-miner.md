@@ -63,6 +63,35 @@ If every producer goes offline, the chain pauses at its last valid canonical blo
 
 Recovery does not erase blocks, balances, transactions, or existing persistent seats. RPCs, bootnodes, explorers, and project operators have no authority to assign recovery seats or rewrite consensus.
 
+## Exact wallet and data locations
+
+Rabbit Core derives its directory from the operating system user configuration
+folder and appends `RabbitChain/TestnetV2`.
+
+### Windows
+
+- Main directory: `%APPDATA%\RabbitChain\TestnetV2`
+- Typical full path: `C:\Users\<USER>\AppData\Roaming\RabbitChain\TestnetV2`
+- Encrypted wallet: `%APPDATA%\RabbitChain\TestnetV2\keystore\UTC--...`
+- Blockchain data: `%APPDATA%\RabbitChain\TestnetV2\rabbit\chaindata`
+- Node log: `%APPDATA%\RabbitChain\TestnetV2\logs\rabbit-node.log`
+
+### Linux
+
+- Main directory: `${XDG_CONFIG_HOME:-$HOME/.config}/RabbitChain/TestnetV2`
+- Encrypted wallet: `${XDG_CONFIG_HOME:-$HOME/.config}/RabbitChain/TestnetV2/keystore/UTC--...`
+- Blockchain data: `${XDG_CONFIG_HOME:-$HOME/.config}/RabbitChain/TestnetV2/rabbit/chaindata`
+- Node log: `${XDG_CONFIG_HOME:-$HOME/.config}/RabbitChain/TestnetV2/logs/rabbit-node.log`
+
+Rabbit Core prints the resolved paths at startup. The hidden
+`.rabbit-session-password-*` file is temporary, permission-restricted, and
+removed automatically when the session ends. It is not a wallet backup.
+
+To move to another computer, stop Rabbit Core cleanly and copy the encrypted
+`UTC--...` keystore file. Keep its password separately. Never upload or send
+either item to support. Preserve the complete data directory when possible to
+avoid downloading and validating the chain again.
+
 ## Safe start, stop, restart, and update
 
 - Start the supplied Rabbit Core launcher.
