@@ -1,36 +1,42 @@
 RABBIT CORE — PUBLIC TESTNET V2
 
-This is the official Rabbit Chain public testnet mining package.
+Official Rabbit Chain public testnet package.
 
 Network:
-- Name: Rabbit Chain Testnet
-- Chain ID: 9280
-- Network ID: 9280
-- Currency symbol: tRAB
-- Public RPC: https://rpc-testnet.rabbitchain.org
+- Chain ID and Network ID: 9280
+- Currency: tRAB (testnet only)
+- RPC: https://rpc-testnet.rabbitchain.org
+- WebSocket: wss://rpc-testnet.rabbitchain.org/ws
 - Explorer: https://explorer-testnet.rabbitchain.org
 - Website: https://rabbitchain.org
-- Discord: https://discord.com/invite/TBWspuEZss
+- Source: https://github.com/rabbitmainnet/rabbit-geth
 
-Security and operation:
-- Rabbit Core creates an encrypted mining wallet locally.
-- The password and private key never leave the user's computer.
-- Back up the keystore and remember the password.
-- Never share a private key, password or seed phrase.
-- Rabbit Core runs a local full node and validates the chain independently.
-- RandomX is used only to earn one persistent admission seat.
-- A wallet with an active seat stops admission mining automatically.
-- Every active wallet has exactly one consensus seat, independent of CPU speed.
-- A second wallet requires its own valid RandomX admission proof.
-- Recovery admission reopens after a two-minute chain halt.
-- Official bootnodes provide peer discovery only.
-- Bootnodes and the public RPC have no consensus or administrative authority.
-- Community bootnodes may be supplied by the user.
-- Testnet tokens do not represent mainnet tokens or guaranteed monetary value.
+Work V2:
+- Blocks 1-127 bootstrap a fresh canonical network.
+- First admission opens at block 128.
+- First canonical admissions activate at block 256.
+- At the 10-second target these heights are about 21 and 43 minutes.
+- Block height, not a PC timer, controls activation.
+- ADMISSION_PENDING means wait without duplicate mining.
+- ACTIVE_SEAT means RandomX is complete; keep the node online for LCQ.
+- Each wallet has at most one persistent equal seat regardless of CPU speed.
+- Rewards use the canonical 70% producer / 30% committee split.
+- After a two-minute total chain halt, permissionless recovery opens.
+- Recovery resumes from the last canonical block without erasing state.
+
+Safety:
+- Back up the encrypted keystore and password separately.
+- Never share wallet secrets.
+- Stop with Ctrl+C once and wait for clean shutdown.
+- Restart with the same wallet and data directory.
+- Verify peers and synchronization before diagnosing admission.
+- Compare local, public RPC, and explorer heights.
+- Bootnodes, RPC, and explorer have no consensus authority.
+- Testnet tokens have no guaranteed monetary value.
 
 Build identity:
 - Genesis SHA-256: e2e5494542e37689cb6e385456d6df239e478c1d12e9c3a1cc270e69c6b51686
 - RandomX base commit: 7c761cf007c758056dcb6eb438a32f780f81bdbd
-- Rabbit RandomX dataset base size: 1073741824 bytes (1 GiB)
+- Rabbit RandomX dataset: 1073741824 bytes (1 GiB)
 
-Always verify SHA256SUMS.txt before running downloaded files.
+Verify the published archive checksum and internal SHA256SUMS.txt. Read rabbit-core.md and rabbit-miner.md completely before participation.
