@@ -3,7 +3,6 @@
 package lqc
 
 import (
-	"errors"
 	"math/big"
 	"testing"
 
@@ -13,7 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-func TestWorkV1EngineLabHistoricalEligibilityIsRegistryBound(
+func TestWorkV2EngineLabAdmissionIsPermissionlessAndRejectsZero(
 	t *testing.T,
 ) {
 	a := common.HexToAddress(
@@ -22,35 +21,15 @@ func TestWorkV1EngineLabHistoricalEligibilityIsRegistryBound(
 	b := common.HexToAddress(
 		"0x00000000000000000000000000000000000000b2",
 	)
-	snapshot, err := NewBootstrapRegistrySnapshot(
-		1,
-		crypto.Keccak256Hash([]byte("challenge-block")),
-		[]common.Address{a},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry, err := snapshot.Registry()
-	if err != nil {
-		t.Fatal(err)
-	}
-	check := workV1EngineLabHistoricalEligibilityFromRegistry(
-		registry,
-		1,
-		RegistrySnapshotRules{
-			ActivationDelay: 64,
-			HeartbeatWindow: 128,
-			HeartbeatGrace:  16,
-		},
-	)
+	check := workV2EngineLabAdmissionEligibility()
 	if err := check(a); err != nil {
-		t.Fatalf("historically eligible bootstrap rejected: %v", err)
+		t.Fatalf("existing registry participant rejected: %v", err)
 	}
-	if err := check(b); !errors.Is(
-		err,
-		ErrWorkV1EngineLabHistoricalIneligible,
-	) {
-		t.Fatalf("outsider error=%v", err)
+	if err := check(b); err != nil {
+		t.Fatalf("permissionless new participant rejected: %v", err)
+	}
+	if err := check(common.Address{}); err != ErrWorkV2AdmissionParticipantInvalid {
+		t.Fatalf("zero-address error=%v", err)
 	}
 }
 
@@ -183,6 +162,119 @@ func TestWorkV1EngineLabZeroSeatsUsesRegistryFallbackOnly(
 	}
 	if active || len(selection.Ordered) != 0 {
 		t.Fatal("zero seats incorrectly activated WorkSeat selection")
+	}
+}
+
+func TestWorkV2RecoveryLeaseEndsOnlyAfterAnchorOwnsSeat(t *testing.T) {
+	old := common.HexToAddress(
+		"0x00000000000000000000000000000000000000a1",
+	)
+	recovery := common.HexToAddress(
+		"0x00000000000000000000000000000000000000b2",
+	)
+	snapshot, err := NewBootstrapRegistrySnapshot(
+		384,
+		crypto.Keccak256Hash([]byte("recovery-registry")),
+		[]common.Address{recovery},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := &types.Header{
+		Number:     big.NewInt(385),
+		ParentHash: snapshot.Hash,
+	}
+	oldSeat := WorkSeatV1{
+		TicketHash:  crypto.Keccak256Hash([]byte("old-seat")),
+		Participant: old,
+	}
+	lease, err := workV2EngineLabActivationLease(
+		snapshot,
+		header,
+		[]WorkSeatV1{oldSeat},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Producer == nil || lease.Producer.Address != recovery {
+		t.Fatalf("recovery lease=%+v", lease)
+	}
+
+	recoverySeat := WorkSeatV1{
+		TicketHash:  crypto.Keccak256Hash([]byte("recovery-seat")),
+		Participant: recovery,
+	}
+	lease, err = workV2EngineLabActivationLease(
+		snapshot,
+		header,
+		[]WorkSeatV1{oldSeat, recoverySeat},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Producer != nil || len(lease.Ordered) != 0 {
+		t.Fatalf("lease continued after canonical admission: %+v", lease)
+	}
+}
+
+func TestWorkV2PersistentSeatsSurviveRecoveryRegistryReset(t *testing.T) {
+	old := common.HexToAddress(
+		"0x00000000000000000000000000000000000000a1",
+	)
+	recovery := common.HexToAddress(
+		"0x00000000000000000000000000000000000000b2",
+	)
+	snapshot, err := NewBootstrapRegistrySnapshot(
+		384,
+		crypto.Keccak256Hash([]byte("reset-registry")),
+		[]common.Address{recovery},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := snapshot.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seats := []WorkSeatV1{
+		{
+			TicketHash:  crypto.Keccak256Hash([]byte("old-seat")),
+			Participant: old,
+		},
+		{
+			TicketHash:  crypto.Keccak256Hash([]byte("recovery-seat")),
+			Participant: recovery,
+		},
+	}
+	engine := &LQC{config: canonicalRegistryEngineConfig(
+		[]common.Address{recovery},
+		1,
+	)}
+	selection, active, err := engine.workV1EngineLabBuildSeatSelection(
+		big.NewInt(928),
+		2,
+		crypto.Keccak256Hash([]byte("persistent-root")),
+		seats,
+		crypto.Keccak256Hash([]byte("dataset-key")),
+		385,
+		registry,
+		engine.registryRules(),
+		func(key common.Hash, input []byte) (common.Hash, error) {
+			return crypto.Keccak256Hash(key.Bytes(), input), nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !active || len(selection.Ordered) != 2 {
+		t.Fatalf("active=%v seats=%d", active, len(selection.Ordered))
+	}
+	seen := map[common.Address]bool{}
+	for _, participant := range selection.Ordered {
+		seen[participant.Address] = true
+	}
+	if !seen[old] || !seen[recovery] {
+		t.Fatalf("persistent seats lost after recovery: %+v", seen)
 	}
 }
 

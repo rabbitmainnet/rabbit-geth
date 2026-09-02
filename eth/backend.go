@@ -101,7 +101,7 @@ type Config = ethconfig.Config
 
 const (
 	frozenRabbitMainnetGenesisMarker = "RABBIT_MAINNET_GENESIS_V1"
-	frozenRabbitTestnetGenesisMarker = "RABBIT_TESTNET_GENESIS_V1"
+	frozenRabbitTestnetGenesisMarker = "RABBIT_TESTNET_GENESIS_V2"
 )
 
 func isFrozenRabbitMainnet(
@@ -184,7 +184,7 @@ func lqcWorkV1TransportActivation(
 	}
 	if !lqc.WorkV1ProductionEnabled() {
 		return false, false, errors.New(
-			"frozen Rabbit public network requires a production Work V1 build",
+			"frozen Rabbit public network requires a production Work V2 build",
 		)
 	}
 	return true, true, nil
@@ -436,7 +436,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if workV1Enabled {
 		lqcEngine, ok := eth.engine.(*lqc.LQC)
 		if !ok || lqcEngine == nil {
-			return nil, errors.New("LQC Work V1 transport requires LQC engine")
+			return nil, errors.New("LQC Work V2 transport requires LQC engine")
 		}
 		transport, err := newLQCWorkV1BackendTransport(
 			eth.blockchain,
@@ -457,7 +457,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return nil, err
 		}
 		log.Info(
-			"LQC Work V1 RandomX transport enabled",
+			"LQC Work V2 admission transport enabled",
 			"protocol", lqcWorkV1ProtocolName,
 			"production", workV1Production,
 			"network", networkID,

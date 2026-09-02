@@ -34,8 +34,11 @@ func TestRabbitTestnetGenesisFrozenInvariants(t *testing.T) {
 	if err := c.CheckConfigForkOrder(); err != nil {
 		t.Fatalf("invalid fork order/config: %v", err)
 	}
-	if c.LQC == nil || !rabbitMainnetLQCImmutabilityFixture().registryProtocolRulesEqual(c.LQC) {
-		t.Fatalf("testnet must exercise exact mainnet LQC rules: %+v", c.LQC)
+	wantLQC := rabbitMainnetLQCImmutabilityFixture()
+	wantLQC.ProofDifficulty = 10000
+	wantLQC.RecoveryTimeoutMs = 120000
+	if c.LQC == nil || !wantLQC.registryProtocolRulesEqual(c.LQC) {
+		t.Fatalf("testnet must exercise frozen Work V2 LQC rules: %+v", c.LQC)
 	}
 	if len(c.LQC.BootstrapParticipants) != 0 {
 		t.Fatalf("bootstrapParticipants = %v, want permissionless empty genesis", c.LQC.BootstrapParticipants)
@@ -51,7 +54,7 @@ func TestRabbitTestnetGenesisFrozenInvariants(t *testing.T) {
 	}
 	if g.Nonce != "0x0" ||
 		g.Timestamp != "0x0" ||
-		g.ExtraData != "0x5241424249545f544553544e45545f47454e455349535f5631" ||
+		g.ExtraData != "0x5241424249545f544553544e45545f47454e455349535f5632" ||
 		g.GasLimit != "0x1c9c380" ||
 		g.Difficulty != "0x1" ||
 		g.MixHash != "0x0000000000000000000000000000000000000000000000000000000000000000" ||

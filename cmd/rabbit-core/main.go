@@ -1,5 +1,5 @@
 // Copyright 2026 The Rabbit Chain Authors
-// Rabbit Core is the user-facing launcher for the Rabbit node and Work V1 miner.
+// Rabbit Core is the user-facing launcher for the Rabbit node and Work V2 miner.
 package main
 
 import (
@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	officialGenesisSHA256 = "8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7"
+	officialGenesisSHA256 = "e2e5494542e37689cb6e385456d6df239e478c1d12e9c3a1cc270e69c6b51686"
 	officialChainID       = "0x2440"
 	officialNetworkID     = "9280"
 )
@@ -69,7 +69,7 @@ func defaultDataDir() string {
 	if err != nil {
 		root, _ = os.UserHomeDir()
 	}
-	return filepath.Join(root, "RabbitChain", "Testnet")
+	return filepath.Join(root, "RabbitChain", "TestnetV2")
 }
 
 func parseOptions() options {
@@ -77,7 +77,7 @@ func parseOptions() options {
 	flag.BoolVar(&opts.checkOnly, "check", false, "validate the package without starting a node or miner")
 	flag.StringVar(&opts.dataDir, "data-dir", defaultDataDir(), "Rabbit Core data directory")
 	flag.StringVar(&opts.node, "node", adjacent("rabbit-node"), "Rabbit node executable")
-	flag.StringVar(&opts.miner, "miner", adjacent("rabbit-miner"), "Rabbit Work V1 miner executable")
+	flag.StringVar(&opts.miner, "miner", adjacent("rabbit-miner"), "Rabbit Work V2 miner executable")
 	flag.StringVar(&opts.genesis, "genesis", adjacent("genesis.json"), "official Rabbit Testnet genesis")
 	flag.StringVar(&opts.bootnodes, "bootnodes", "", "comma-separated official bootnode enode URLs")
 	flag.UintVar(&opts.rpcPort, "rpc-port", 8545, "local private JSON-RPC port")

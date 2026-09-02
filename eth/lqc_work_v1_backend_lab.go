@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/crypto/rabbitx"
@@ -84,6 +85,24 @@ func newLQCWorkV1BackendTransport(
 			Eligibility:     eligibility,
 		}, nil
 	}
+	seatStatus := func(participant common.Address) (
+		uint64,
+		uint64,
+		bool,
+		bool,
+		error,
+	) {
+		head := blockchain.CurrentHeader()
+		if head == nil || head.Number == nil || !head.Number.IsUint64() {
+			return 0, 0, false, false, errLQCWorkV1Context
+		}
+		return engine.WorkV2ParticipantSeatStatus(
+			blockchain,
+			head.Number.Uint64(),
+			head.Hash(),
+			participant,
+		)
+	}
 
 	transport, err := newLQCWorkV1Transport(
 		lqcWorkV1TransportConfig{
@@ -94,6 +113,7 @@ func newLQCWorkV1BackendTransport(
 			Context:         context,
 			Hasher:          hasher.Hash,
 			PoolPersistence: journal,
+			SeatStatus:      seatStatus,
 		},
 	)
 	if err != nil {

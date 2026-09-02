@@ -1,13 +1,15 @@
 // Copyright 2026 The Rabbit Chain Authors
 // This file is part of the Rabbit Chain library.
 
-// rabbit-miner performs Rabbit Work V1 locally and submits only successful,
-// signed RandomX tickets to a Rabbit node. The private key never leaves this
-// process and is never sent to the JSON-RPC endpoint.
+// rabbit-miner performs one-time Rabbit Work V2 admission locally. Once the
+// wallet owns a persistent seat, mining stops and the node participates with
+// exactly the same consensus weight as every other seated wallet. The private
+// key never leaves this process and is never sent to the JSON-RPC endpoint.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -46,6 +48,28 @@ type candidateArgs struct {
 	Nonce       hexutil.Uint64 `json:"nonce"`
 	ProofHash   common.Hash    `json:"proofHash"`
 	Signature   hexutil.Bytes  `json:"signature"`
+}
+
+type participantStatus struct {
+	Participant    common.Address `json:"participant"`
+	SelectionEpoch hexutil.Uint64 `json:"selectionEpoch"`
+	SeatCount      hexutil.Uint64 `json:"seatCount"`
+	ActiveSeat     bool           `json:"activeSeat"`
+	Committed      bool           `json:"committed"`
+	LocalPool      bool           `json:"localPool"`
+}
+
+type observedBlock struct {
+	Number hexutil.Uint64 `json:"number"`
+	Miner  common.Address `json:"miner"`
+}
+
+type networkTelemetry struct {
+	Height         uint64
+	Peers          uint64
+	Synced         bool
+	Balance        *big.Int
+	LatestProducer common.Address
 }
 
 type options struct {
@@ -180,6 +204,26 @@ func submitCandidate(ctx context.Context, client *rpc.Client, args candidateArgs
 	return accepted, nil
 }
 
+func fetchParticipantStatus(
+	ctx context.Context,
+	client *rpc.Client,
+	participant common.Address,
+) (participantStatus, error) {
+	var result participantStatus
+	if err := client.CallContext(
+		ctx,
+		&result,
+		"lqc_workV2ParticipantStatus",
+		participant,
+	); err != nil {
+		return participantStatus{}, err
+	}
+	if result.Participant != participant {
+		return participantStatus{}, errors.New("node returned status for another participant")
+	}
+	return result, nil
+}
+
 func wait(ctx context.Context, duration time.Duration) bool {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
@@ -188,6 +232,128 @@ func wait(ctx context.Context, duration time.Duration) bool {
 		return false
 	case <-timer.C:
 		return true
+	}
+}
+
+func fetchNetworkTelemetry(
+	ctx context.Context,
+	client *rpc.Client,
+	participant common.Address,
+) (networkTelemetry, error) {
+	var height hexutil.Uint64
+	if err := client.CallContext(ctx, &height, "eth_blockNumber"); err != nil {
+		return networkTelemetry{}, err
+	}
+	var peers hexutil.Uint64
+	if err := client.CallContext(ctx, &peers, "net_peerCount"); err != nil {
+		return networkTelemetry{}, err
+	}
+	var syncing json.RawMessage
+	if err := client.CallContext(ctx, &syncing, "eth_syncing"); err != nil {
+		return networkTelemetry{}, err
+	}
+	var balance hexutil.Big
+	if err := client.CallContext(
+		ctx,
+		&balance,
+		"eth_getBalance",
+		participant,
+		"latest",
+	); err != nil {
+		return networkTelemetry{}, err
+	}
+	var latest observedBlock
+	if err := client.CallContext(
+		ctx,
+		&latest,
+		"eth_getBlockByNumber",
+		"latest",
+		false,
+	); err != nil {
+		return networkTelemetry{}, err
+	}
+	return networkTelemetry{
+		Height:         uint64(height),
+		Peers:          uint64(peers),
+		Synced:         string(syncing) == "false",
+		Balance:        new(big.Int).Set((*big.Int)(&balance)),
+		LatestProducer: latest.Miner,
+	}, nil
+}
+
+func fetchObservedBlock(
+	ctx context.Context,
+	client *rpc.Client,
+	number uint64,
+) (observedBlock, error) {
+	var block observedBlock
+	err := client.CallContext(
+		ctx,
+		&block,
+		"eth_getBlockByNumber",
+		hexutil.EncodeUint64(number),
+		false,
+	)
+	return block, err
+}
+
+func formatRAB(wei *big.Int) string {
+	if wei == nil {
+		return "0"
+	}
+	base := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+	whole, fraction := new(big.Int), new(big.Int)
+	whole.QuoRem(new(big.Int).Set(wei), base, fraction)
+	if fraction.Sign() == 0 {
+		return whole.String()
+	}
+	digits := fraction.String()
+	digits = strings.Repeat("0", 18-len(digits)) + digits
+	digits = strings.TrimRight(digits, "0")
+	return whole.String() + "." + digits
+}
+
+func monitorNetwork(
+	ctx context.Context,
+	client *rpc.Client,
+	participant common.Address,
+) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	var lastHeight uint64
+	var produced uint64
+	for {
+		telemetry, err := fetchNetworkTelemetry(ctx, client, participant)
+		if err != nil {
+			fmt.Printf("NETWORK_STATUS unavailable error=%q\n", err)
+		} else {
+			if lastHeight != 0 && telemetry.Height > lastHeight {
+				start := lastHeight + 1
+				if telemetry.Height-start > 255 {
+					start = telemetry.Height - 255
+				}
+				for number := start; number <= telemetry.Height; number++ {
+					block, blockErr := fetchObservedBlock(ctx, client, number)
+					if blockErr == nil && block.Miner == participant {
+						produced++
+					}
+				}
+			}
+			lastHeight = telemetry.Height
+			fmt.Printf("NETWORK_STATUS height=%d peers=%d synced=%t balance=%s_RAB latest_producer=%s blocks_produced_session=%d\n",
+				telemetry.Height,
+				telemetry.Peers,
+				telemetry.Synced,
+				formatRAB(telemetry.Balance),
+				telemetry.LatestProducer,
+				produced,
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -209,13 +375,15 @@ func run(ctx context.Context, opts options) error {
 		return fmt.Errorf("validate network: %w", err)
 	}
 
-	hasher, err := rabbitx.NewFullHasher()
-	if err != nil {
-		return fmt.Errorf("start RandomX full-memory miner: %w", err)
-	}
-	defer hasher.Close()
-
 	participant := key.Address
+	go monitorNetwork(ctx, client, participant)
+
+	var hasher *rabbitx.FullHasher
+	defer func() {
+		if hasher != nil {
+			hasher.Close()
+		}
+	}()
 	nonce := opts.startNonce
 	var activeEpoch uint64
 	var acceptedInEpoch uint64
@@ -225,9 +393,55 @@ func run(ctx context.Context, opts options) error {
 	var statusStarted = time.Now()
 	var statusAttempts uint64
 
-	fmt.Printf("Rabbit Miner Work V1\nparticipant=%s chainId=%s rpc=%s\n", participant, chainID, opts.rpcURL)
+	fmt.Printf("Rabbit Miner Work V2\nparticipant=%s chainId=%s rpc=%s\n", participant, chainID, opts.rpcURL)
 
 	for ctx.Err() == nil {
+		status, statusErr := fetchParticipantStatus(
+			ctx,
+			client,
+			participant,
+		)
+		if statusErr != nil {
+			reason := statusErr.Error()
+			if reason != waitingReason || time.Since(lastWaitingMessage) >= time.Minute {
+				fmt.Printf("Waiting for canonical Work V2 status. Details: %s\n", reason)
+				waitingReason = reason
+				lastWaitingMessage = time.Now()
+			}
+			if !wait(ctx, pollInterval) {
+				break
+			}
+			continue
+		}
+		if status.ActiveSeat {
+			if waitingReason != "active-seat" || time.Since(lastWaitingMessage) >= time.Minute {
+				fmt.Printf("ACTIVE_SEAT wallet=%s selection_epoch=%d total_seats=%d. RandomX mining is no longer needed; this wallet now has one equal consensus seat.\n",
+					participant, status.SelectionEpoch, status.SeatCount)
+				waitingReason = "active-seat"
+				lastWaitingMessage = time.Now()
+			}
+			if !wait(ctx, pollInterval) {
+				break
+			}
+			continue
+		}
+		if status.Committed || status.LocalPool {
+			state := "accepted_by_local_relay"
+			if status.Committed {
+				state = "canonical_waiting_for_activation"
+			}
+			if state != waitingReason || time.Since(lastWaitingMessage) >= time.Minute {
+				fmt.Printf("ADMISSION_PENDING wallet=%s state=%s selection_epoch=%d total_seats=%d. No duplicate mining is needed.\n",
+					participant, state, status.SelectionEpoch, status.SeatCount)
+				waitingReason = state
+				lastWaitingMessage = time.Now()
+			}
+			if !wait(ctx, pollInterval) {
+				break
+			}
+			continue
+		}
+
 		work, err := fetchWorkContext(ctx, client)
 		if err != nil {
 			reason := err.Error()
@@ -242,6 +456,12 @@ func run(ctx context.Context, opts options) error {
 			continue
 		}
 		waitingReason = ""
+		if hasher == nil {
+			hasher, err = rabbitx.NewFullHasher()
+			if err != nil {
+				return fmt.Errorf("start RandomX full-memory miner: %w", err)
+			}
+		}
 
 		epoch := uint64(work.Epoch)
 		if epoch != activeEpoch {
@@ -289,7 +509,7 @@ func run(ctx context.Context, opts options) error {
 		}
 		attempts++
 		if firstAttempt {
-			fmt.Println("Rabbit RandomX dataset ready. Searching for this wallet's one Work V1 ticket.")
+			fmt.Println("Rabbit RandomX dataset ready. Searching for this wallet's one-time Work V2 admission proof.")
 		}
 
 		meets, err := lqc.RandomXWorkHashMeetsTargetV1(proofHash, (*big.Int)(work.Difficulty))
@@ -301,7 +521,7 @@ func run(ctx context.Context, opts options) error {
 				now := time.Now()
 				seconds := now.Sub(statusStarted).Seconds()
 				rate := float64(attempts-statusAttempts) / seconds
-				fmt.Printf("Mining Work V1: wallet=%s epoch=%d attempts=%d rate=%.1f H/s\n",
+				fmt.Printf("Mining Work V2 admission: wallet=%s epoch=%d attempts=%d rate=%.1f H/s\n",
 					participant, epoch, attempts, rate)
 				statusStarted = now
 				statusAttempts = attempts
@@ -335,8 +555,8 @@ func run(ctx context.Context, opts options) error {
 		}
 
 		acceptedInEpoch++
-		fmt.Printf("ticket_accepted epoch=%d nonce=%d proof=%s candidate=%s tickets_in_epoch=%d\n",
-			epoch, ticket.Nonce, proofHash, accepted, acceptedInEpoch)
+		fmt.Printf("ADMISSION_ACCEPTED_LOCAL epoch=%d nonce=%d proof=%s candidate=%s. Waiting for propagation and canonical activation.\n",
+			epoch, ticket.Nonce, proofHash, accepted)
 		if opts.once {
 			return nil
 		}

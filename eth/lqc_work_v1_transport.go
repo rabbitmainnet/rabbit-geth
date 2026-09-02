@@ -16,7 +16,7 @@ const (
 	// New capability name. Deliberately NOT "lqct": old Argon2 peers must never
 	// negotiate this RandomX/Work V1 payload by accident.
 	lqcWorkV1ProtocolName    = "lqcw"
-	lqcWorkV1ProtocolVersion = uint(1)
+	lqcWorkV1ProtocolVersion = uint(2)
 	lqcWorkV1ProtocolLength  = uint64(2)
 
 	lqcWorkV1StatusMsg     = uint64(0)
@@ -71,6 +71,10 @@ type lqcWorkV1CanonicalIncludedCheck func(
 	commitEpoch uint64,
 ) bool
 
+type lqcWorkV2SeatStatusProvider func(
+	participant common.Address,
+) (selectionEpoch uint64, seatCount uint64, active bool, committed bool, err error)
+
 type lqcWorkV1TransportConfig struct {
 	Enabled   bool
 	ChainID   *big.Int
@@ -80,6 +84,7 @@ type lqcWorkV1TransportConfig struct {
 	Context         lqcWorkV1ContextProvider
 	Hasher          lqc.WorkRelayHasherV1
 	PoolPersistence lqc.WorkCommitPoolPersistenceV1
+	SeatStatus      lqcWorkV2SeatStatusProvider
 }
 
 type lqcWorkV1Transport struct {
@@ -94,6 +99,7 @@ type lqcWorkV1Transport struct {
 	pool         *lqc.WorkCommitPoolV1
 	limiter      *lqc.WorkRelayVerificationLimiterV1
 	fairVerifier *lqcWorkV1FairVerifier
+	seatStatus   lqcWorkV2SeatStatusProvider
 
 	mu     sync.RWMutex
 	peers  map[string]*lqcWorkV1Peer
@@ -150,8 +156,9 @@ func newLQCWorkV1Transport(
 			0,
 			config.PoolPersistence,
 		),
-		limiter: limiter,
-		peers:   make(map[string]*lqcWorkV1Peer),
+		limiter:    limiter,
+		seatStatus: config.SeatStatus,
+		peers:      make(map[string]*lqcWorkV1Peer),
 	}
 	transport.fairVerifier = newLQCWorkV1FairVerifier()
 	return transport, nil

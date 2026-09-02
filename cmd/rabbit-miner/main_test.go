@@ -1,10 +1,32 @@
 package main
 
 import (
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestFormatRAB(t *testing.T) {
+	tests := []struct {
+		wei  string
+		want string
+	}{
+		{"0", "0"},
+		{"1", "0.000000000000000001"},
+		{"1000000000000000000", "1"},
+		{"1250000000000000000", "1.25"},
+	}
+	for _, test := range tests {
+		wei, ok := new(big.Int).SetString(test.wei, 10)
+		if !ok {
+			t.Fatal("invalid test value")
+		}
+		if got := formatRAB(wei); got != test.want {
+			t.Fatalf("formatRAB(%s)=%s want=%s", test.wei, got, test.want)
+		}
+	}
+}
 
 func TestReadPasswordTrimsOnlyLineEndings(t *testing.T) {
 	dir := t.TempDir()

@@ -146,7 +146,7 @@ func TestCanonicalWorkRuntimeV1NPlus2DifficultySchedule(t *testing.T) {
 			number,
 			challenge2,
 			[]VerifiedRandomXWorkTicketV1{
-				runtimeVerifiedV1(2, index),
+				runtimeVerifiedV1(2, WorkTicketCommitCapacityPerEpochV1+index),
 			},
 		)
 	}

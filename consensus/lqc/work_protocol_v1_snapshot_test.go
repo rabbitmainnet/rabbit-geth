@@ -131,6 +131,124 @@ func TestWorkChainSnapshotV1ClosesEpochForNPlus2Selection(t *testing.T) {
 	}
 }
 
+func TestWorkChainSnapshotV1KeepsPersistentSeatsAcrossEpochs(t *testing.T) {
+	chainID := big.NewInt(928)
+	genesisHash := workSnapshotHashV1("persistent-genesis", 0)
+	snapshot, err := NewWorkChainSnapshotV1(chainID, 0, genesisHash, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot = advanceEmptyWorkBlocksV1(t, chainID, snapshot, 128)
+
+	participantA := common.HexToAddress(
+		"0x00000000000000000000000000000000000000a1",
+	)
+	participantB := common.HexToAddress(
+		"0x00000000000000000000000000000000000000b1",
+	)
+	difficulty := big.NewInt(8)
+
+	for number := uint64(129); number <= 256; number++ {
+		var verified []VerifiedRandomXWorkTicketV1
+		if number == 129 {
+			verified = []VerifiedRandomXWorkTicketV1{
+				verifiedWorkV1(1, participantA, 1, 1),
+			}
+		}
+		next, applyErr := snapshot.ApplyVerifiedBlockV1(
+			chainID, number,
+			workSnapshotHashV1("persistent", number),
+			snapshot.Hash, genesisHash, difficulty, verified,
+		)
+		if applyErr != nil {
+			t.Fatalf("block %d: %v", number, applyErr)
+		}
+		snapshot = next
+	}
+
+	anchorEpoch2 := workSnapshotHashV1("persistent-anchor", 2)
+	for number := uint64(257); number <= 384; number++ {
+		var verified []VerifiedRandomXWorkTicketV1
+		if number == 257 {
+			verified = []VerifiedRandomXWorkTicketV1{
+				verifiedWorkV1(2, participantB, 2, 2),
+			}
+		}
+		next, applyErr := snapshot.ApplyVerifiedBlockV1(
+			chainID, number,
+			workSnapshotHashV1("persistent", number),
+			snapshot.Hash, anchorEpoch2, difficulty, verified,
+		)
+		if applyErr != nil {
+			t.Fatalf("block %d: %v", number, applyErr)
+		}
+		snapshot = next
+	}
+
+	if snapshot.SelectionEpoch != 2 {
+		t.Fatalf("selection epoch = %d, want 2", snapshot.SelectionEpoch)
+	}
+	if len(snapshot.SelectionSeats) != 2 {
+		t.Fatalf("persistent seats = %d, want 2", len(snapshot.SelectionSeats))
+	}
+	seen := make(map[common.Address]bool)
+	for _, seat := range snapshot.SelectionSeats {
+		seen[seat.Participant] = true
+	}
+	if !seen[participantA] || !seen[participantB] {
+		t.Fatalf("persistent seats lost: %+v", snapshot.SelectionSeats)
+	}
+}
+
+func TestWorkChainSnapshotV1RejectsAlreadySeatedParticipant(t *testing.T) {
+	chainID := big.NewInt(928)
+	genesisHash := workSnapshotHashV1("already-seated-genesis", 0)
+	snapshot, err := NewWorkChainSnapshotV1(chainID, 0, genesisHash, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot = advanceEmptyWorkBlocksV1(t, chainID, snapshot, 128)
+	participant := common.HexToAddress(
+		"0x00000000000000000000000000000000000000a1",
+	)
+	difficulty := big.NewInt(8)
+	for number := uint64(129); number <= 256; number++ {
+		var verified []VerifiedRandomXWorkTicketV1
+		if number == 129 {
+			verified = []VerifiedRandomXWorkTicketV1{
+				verifiedWorkV1(1, participant, 1, 1),
+			}
+		}
+		next, applyErr := snapshot.ApplyVerifiedBlockV1(
+			chainID, number,
+			workSnapshotHashV1("already-seated", number),
+			snapshot.Hash, genesisHash, difficulty, verified,
+		)
+		if applyErr != nil {
+			t.Fatalf("block %d: %v", number, applyErr)
+		}
+		snapshot = next
+	}
+
+	_, err = snapshot.ApplyVerifiedBlockV1(
+		chainID, 257,
+		workSnapshotHashV1("already-seated", 257),
+		snapshot.Hash,
+		workSnapshotHashV1("already-seated-anchor", 2),
+		difficulty,
+		[]VerifiedRandomXWorkTicketV1{
+			verifiedWorkV1(2, participant, 2, 2),
+		},
+	)
+	if err != ErrWorkParticipantAlreadySeatedV1 {
+		t.Fatalf(
+			"error = %v, want %v",
+			err,
+			ErrWorkParticipantAlreadySeatedV1,
+		)
+	}
+}
+
 func TestWorkChainSnapshotV1RejectsDuplicateAcrossBlocks(t *testing.T) {
 	chainID := big.NewInt(928)
 	genesisHash := workSnapshotHashV1("genesis", 0)

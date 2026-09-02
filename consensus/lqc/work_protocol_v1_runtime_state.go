@@ -396,12 +396,28 @@ func (s *CanonicalWorkRuntimeStateV1) ApplyVerifiedBlockV1(
 	// epoch. Retarget the same parity immediately for N+2.
 	if nextWork.SelectionEpoch != 0 &&
 		nextWork.SelectionEpoch != s.Work.SelectionEpoch {
-		closed := &WorkEpochSnapshotV1{
-			Epoch:      nextWork.SelectionEpoch,
-			Anchor:     nextWork.SelectionAnchor,
-			Difficulty: cloneBigIntV1(nextWork.SelectionDifficulty),
-			Root:       nextWork.SelectionRoot,
-			Seats:      cloneWorkSeatsV1(nextWork.SelectionSeats),
+		previousParticipants := make(
+			map[common.Address]struct{},
+			len(s.Work.SelectionSeats),
+		)
+		for _, seat := range s.Work.SelectionSeats {
+			previousParticipants[seat.Participant] = struct{}{}
+		}
+		admissions := make([]WorkSeatV1, 0, len(nextWork.SelectionSeats))
+		for _, seat := range nextWork.SelectionSeats {
+			if _, exists := previousParticipants[seat.Participant]; !exists {
+				admissions = append(admissions, seat)
+			}
+		}
+		closed, err := NewWorkEpochSnapshotV1(
+			chainID,
+			nextWork.SelectionEpoch,
+			nextWork.SelectionAnchor,
+			nextWork.SelectionDifficulty,
+			admissions,
+		)
+		if err != nil {
+			return nil, err
 		}
 		nextDifficulty, err = nextDifficulty.AdvanceClosedEpochV1(
 			chainID,

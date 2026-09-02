@@ -1,4 +1,4 @@
-RABBIT CORE — PUBLIC TESTNET V1
+RABBIT CORE — PUBLIC TESTNET V2
 
 This is the official Rabbit Chain public testnet mining package.
 
@@ -18,13 +18,18 @@ Security and operation:
 - Back up the keystore and remember the password.
 - Never share a private key, password or seed phrase.
 - Rabbit Core runs a local full node and validates the chain independently.
+- RandomX is used only to earn one persistent admission seat.
+- A wallet with an active seat stops admission mining automatically.
+- Every active wallet has exactly one consensus seat, independent of CPU speed.
+- A second wallet requires its own valid RandomX admission proof.
+- Recovery admission reopens after a two-minute chain halt.
 - Official bootnodes provide peer discovery only.
 - Bootnodes and the public RPC have no consensus or administrative authority.
 - Community bootnodes may be supplied by the user.
 - Testnet tokens do not represent mainnet tokens or guaranteed monetary value.
 
 Build identity:
-- Genesis SHA-256: 8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7
+- Genesis SHA-256: e2e5494542e37689cb6e385456d6df239e478c1d12e9c3a1cc270e69c6b51686
 - RandomX base commit: 7c761cf007c758056dcb6eb438a32f780f81bdbd
 - Rabbit RandomX dataset base size: 1073741824 bytes (1 GiB)
 

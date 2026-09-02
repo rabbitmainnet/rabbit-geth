@@ -86,6 +86,51 @@ func TestWorkSelectionV1ParticipantDoesNotAffectSeatOrder(t *testing.T) {
 	}
 }
 
+func TestWorkSelectionV2FiveThousandPersistentSeatsHaveOneWeightEach(
+	t *testing.T,
+) {
+	const seatCount = 5000
+	seats := make([]WorkSeatV1, 0, seatCount)
+	for index := 0; index < seatCount; index++ {
+		seats = append(seats, WorkSeatV1{
+			TicketHash: selectionV1TicketHash(index + 1),
+			Participant: common.BigToAddress(
+				big.NewInt(int64(index + 1)),
+			),
+		})
+	}
+
+	selection, err := BuildWorkSelectionV1(
+		seats,
+		selectionV1SeedForTest(9280),
+		5,
+		128,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selection.Ordered) != seatCount {
+		t.Fatalf(
+			"ordered seats = %d, want %d",
+			len(selection.Ordered),
+			seatCount,
+		)
+	}
+	seen := make(map[common.Address]struct{}, seatCount)
+	for _, seat := range selection.Ordered {
+		if _, exists := seen[seat.Participant]; exists {
+			t.Fatalf("participant received multiple weights: %s", seat.Participant)
+		}
+		seen[seat.Participant] = struct{}{}
+	}
+	if len(seen) != seatCount {
+		t.Fatalf("unique participant weights = %d, want %d", len(seen), seatCount)
+	}
+	if selection.Producer == nil {
+		t.Fatal("five-thousand-seat selection has no producer")
+	}
+}
+
 func TestWorkSelectionV1UniqueWalletWeightsAreStableAcrossSeeds(t *testing.T) {
 	// 80 honest seats + 20 attacker seats. The exact same 20 ticket hashes
 	// represent the attacker's fixed work in both scenarios.

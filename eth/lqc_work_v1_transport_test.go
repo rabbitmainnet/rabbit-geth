@@ -126,7 +126,7 @@ func TestLQCWorkV1TransportUsesDistinctBoundedProtocol(t *testing.T) {
 
 	protocol := transport.Protocol()
 	if protocol.Name != "lqcw" ||
-		protocol.Version != 1 ||
+		protocol.Version != 2 ||
 		protocol.Length != 2 {
 		t.Fatalf("protocol = %+v", protocol)
 	}
@@ -144,6 +144,44 @@ func TestLQCWorkV1TransportUsesDistinctBoundedProtocol(t *testing.T) {
 			lqcWorkV1GlobalBudget,
 			lqcWorkV1MaxVerifyInFlight,
 		)
+	}
+}
+
+func TestLQCWorkV2ParticipantStatusReportsCanonicalSeat(t *testing.T) {
+	participant := common.HexToAddress(
+		"0x00000000000000000000000000000000000000a1",
+	)
+	config := testWorkV1TransportConfig()
+	config.SeatStatus = func(address common.Address) (
+		uint64,
+		uint64,
+		bool,
+		bool,
+		error,
+	) {
+		if address != participant {
+			return 0, 0, false, false, errors.New("unexpected participant")
+		}
+		return 7, 5000, true, false, nil
+	}
+	transport, err := newLQCWorkV1Transport(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+
+	status, err := newLQCWorkV1API(transport).
+		WorkV2ParticipantStatus(participant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Participant != participant ||
+		uint64(status.SelectionEpoch) != 7 ||
+		uint64(status.SeatCount) != 5000 ||
+		!status.ActiveSeat ||
+		status.Committed ||
+		status.LocalPool {
+		t.Fatalf("unexpected Work V2 participant status: %+v", status)
 	}
 }
 

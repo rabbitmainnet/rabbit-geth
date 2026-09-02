@@ -138,15 +138,15 @@ if [[ "$PRODUCTION_STATUS" -ne 124 ]]; then
     sed -n '1,240p' "$OUT/start-production.log" >&2
     fail "production smoke test ended unexpectedly: $PRODUCTION_STATUS"
 fi
-grep -q 'LQC Work V1 RandomX transport enabled' "$OUT/start-production.log" || fail \
-    "production Work V1 transport was not activated"
+grep -q 'LQC Work V2 admission transport enabled' "$OUT/start-production.log" || fail \
+    "production Work V2 transport was not activated"
 
 if [[ "$DEFAULT_STATUS" -eq 0 || "$DEFAULT_STATUS" -eq 124 ]]; then
     echo "===== START DEFAULT-GUARD LOG =====" >&2
     sed -n '1,240p' "$OUT/start-default.log" >&2
     fail "default binary did not reject the official genesis"
 fi
-grep -q 'requires a production Work V1 build' "$OUT/start-default.log" || fail \
+grep -q 'requires a production Work V2 build' "$OUT/start-default.log" || fail \
     "default binary rejection reason was not found"
 
 install -m 0644 "$GENESIS" "$OUT/genesis.json"

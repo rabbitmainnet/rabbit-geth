@@ -210,10 +210,10 @@ pass "genesis block is present on all nodes"
 log "WORK V1 PRODUCTION"
 
 for i in $(seq 0 $((NODES-1))); do
-    if grep -q 'LQC Work V1 RandomX transport enabled' "$LAB/node$i.log"; then
-        pass "node$i activated Work V1 production"
+    if grep -q 'LQC Work V2 admission transport enabled' "$LAB/node$i.log"; then
+        pass "node$i activated Work V2 production"
     else
-        fail "node$i did not show Work V1 activation"
+        fail "node$i did not show Work V2 activation"
     fi
 done
 

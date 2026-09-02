@@ -21,15 +21,10 @@ var (
 
 var workChainStateRootDomainV1 = []byte("RABBIT-LQC-WORK-CHAIN-STATE-V1")
 
-// WorkChainSnapshotV1 is a bounded, inactive model of Rabbit's canonical work
-// state at one block hash.
+// WorkChainSnapshotV1 is Rabbit's canonical work state at one block hash.
 //
-// It keeps only:
-//  1. the work epoch currently being committed, and
-//  2. the most recently closed epoch used by role selection.
-//
-// Older work epochs are intentionally discarded from the live snapshot. A
-// future implementation may persist historical checkpoints separately.
+// CommitSeats contains new admissions for the open commit epoch.
+// SelectionSeats contains every unique persistent seat admitted so far.
 type WorkChainSnapshotV1 struct {
 	Number      uint64
 	Hash        common.Hash
@@ -367,6 +362,20 @@ func (s *WorkChainSnapshotV1) ApplyVerifiedBlockV1(
 			return nil, err
 		}
 
+		// Work V2 is admission, not a recurring hash race. Once a wallet owns a
+		// canonical seat it must never submit another ticket to increase its
+		// selection weight. Reject it in the block where it appears instead of
+		// waiting for the epoch boundary.
+		seated := make(map[common.Address]struct{}, len(next.SelectionSeats))
+		for _, seat := range next.SelectionSeats {
+			seated[seat.Participant] = struct{}{}
+		}
+		for _, seat := range newSeats {
+			if _, exists := seated[seat.Participant]; exists {
+				return nil, ErrWorkParticipantAlreadySeatedV1
+			}
+		}
+
 		combined := make(
 			[]WorkSeatV1,
 			0,
@@ -394,11 +403,36 @@ func (s *WorkChainSnapshotV1) ApplyVerifiedBlockV1(
 				return nil, err
 			}
 
-			next.SelectionEpoch = closed.Epoch
-			next.SelectionAnchor = closed.Anchor
-			next.SelectionDifficulty = cloneBigIntV1(closed.Difficulty)
-			next.SelectionRoot = closed.Root
-			next.SelectionSeats = cloneWorkSeatsV1(closed.Seats)
+			// Preserve every earlier seat and merge only new unique admissions.
+			// CanonicalWorkEpochSeatsV1 gives all nodes the same deterministic
+			// ordering independent of ticket arrival order.
+			persistentSeats := make(
+				[]WorkSeatV1,
+				0,
+				len(next.SelectionSeats)+len(closed.Seats),
+			)
+			persistentSeats = append(persistentSeats, next.SelectionSeats...)
+			persistentSeats = append(persistentSeats, closed.Seats...)
+			persistentSeats, err = canonicalWorkEpochSeatsV1(persistentSeats)
+			if err != nil {
+				return nil, err
+			}
+			selection, err := NewWorkEpochSnapshotV1(
+				chainID,
+				closed.Epoch,
+				closed.Anchor,
+				closed.Difficulty,
+				persistentSeats,
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			next.SelectionEpoch = selection.Epoch
+			next.SelectionAnchor = selection.Anchor
+			next.SelectionDifficulty = cloneBigIntV1(selection.Difficulty)
+			next.SelectionRoot = selection.Root
+			next.SelectionSeats = cloneWorkSeatsV1(selection.Seats)
 
 			next.CommitEpoch = 0
 			next.CommitAnchor = common.Hash{}

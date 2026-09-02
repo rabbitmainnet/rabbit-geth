@@ -1,4 +1,4 @@
-name: Rabbit Core Testnet Release
+name: Rabbit Core Testnet V2 Release
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ env:
   GO_VERSION: "1.25.13"
   RANDOMX_REPOSITORY: https://github.com/tevador/RandomX.git
   RANDOMX_COMMIT: 7c761cf007c758056dcb6eb438a32f780f81bdbd
-  TESTNET_GENESIS_SHA256: 8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7
+  TESTNET_GENESIS_SHA256: e2e5494542e37689cb6e385456d6df239e478c1d12e9c3a1cc270e69c6b51686
 
 jobs:
   native:
@@ -64,7 +64,7 @@ jobs:
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v1-${{ matrix.target }}
+          name: rabbit-core-testnet-v2-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -78,7 +78,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-v1-*
+          pattern: rabbit-core-testnet-v2-*
           path: releases
           merge-multiple: true
 
@@ -96,7 +96,7 @@ jobs:
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v1-release-bundle
+          name: rabbit-core-testnet-v2-release-bundle
           path: releases/*
           if-no-files-found: error
           retention-days: 30

@@ -3,7 +3,6 @@
 package lqc
 
 import (
-	"errors"
 	"math/big"
 	"testing"
 
@@ -122,7 +121,7 @@ func TestWorkV1EngineLabRuntimeReconstructsRequestedBranchByHash(
 	}
 }
 
-func TestWorkV1EngineLabRelayContextUsesCanonicalRuntimeAndRegistry(
+func TestWorkV2EngineLabRelayContextUsesCanonicalRuntimeAndPermissionlessAdmission(
 	t *testing.T,
 ) {
 	participant := common.HexToAddress(
@@ -191,16 +190,6 @@ func TestWorkV1EngineLabRelayContextUsesCanonicalRuntimeAndRegistry(
 	); err != nil {
 		t.Fatal(err)
 	}
-	historical, err := NewBootstrapRegistrySnapshot(
-		1,
-		challenge.Hash(),
-		[]common.Address{participant},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine.rememberRegistrySnapshot(historical)
-
 	epoch,
 		datasetAnchor,
 		challengeAnchor,
@@ -232,13 +221,10 @@ func TestWorkV1EngineLabRelayContextUsesCanonicalRuntimeAndRegistry(
 		t.Fatalf("difficulty=%v want=17", difficulty)
 	}
 	if err := eligibility(participant); err != nil {
-		t.Fatalf("historical participant rejected: %v", err)
+		t.Fatalf("existing participant rejected: %v", err)
 	}
-	if err := eligibility(outsider); !errors.Is(
-		err,
-		ErrWorkV1EngineLabHistoricalIneligible,
-	) {
-		t.Fatalf("outsider error=%v", err)
+	if err := eligibility(outsider); err != nil {
+		t.Fatalf("permissionless new participant rejected: %v", err)
 	}
 }
 

@@ -10,14 +10,20 @@ import (
 	"github.com/holiman/uint256"
 )
 
-const RandomXWorkProtocolVersion uint8 = 1
+// RandomXWorkProtocolVersion 2 changes a work proof from an epoch-local lottery
+// ticket into a one-time admission proof for one persistent consensus seat.
+// A participant can own at most one seat, regardless of hash rate.
+const RandomXWorkProtocolVersion uint8 = 2
 
 var (
-	ErrInvalidRandomXWorkTicket   = errors.New("invalid lqc randomx work ticket")
-	ErrDuplicateRandomXWorkHash   = errors.New("duplicate lqc randomx work hash")
-	ErrDuplicateWorkParticipantV1 = errors.New("duplicate lqc work participant v1")
-	ErrInvalidWorkSeat            = errors.New("invalid lqc work seat")
-	ErrInvalidWorkSeatReward      = errors.New("invalid lqc work seat reward")
+	ErrInvalidRandomXWorkTicket       = errors.New("invalid lqc randomx work ticket")
+	ErrDuplicateRandomXWorkHash       = errors.New("duplicate lqc randomx work hash")
+	ErrDuplicateWorkParticipantV1     = errors.New("duplicate lqc work participant v1")
+	ErrWorkParticipantAlreadySeatedV1 = errors.New(
+		"lqc work participant already owns a persistent seat",
+	)
+	ErrInvalidWorkSeat       = errors.New("invalid lqc work seat")
+	ErrInvalidWorkSeatReward = errors.New("invalid lqc work seat reward")
 )
 
 // RandomXWorkTicketV1 is the minimal wire identity of one future RandomX proof.
@@ -39,8 +45,9 @@ type VerifiedRandomXWorkTicketV1 struct {
 	Hash   common.Hash
 }
 
-// WorkSeatV1 is one unit of consensus eligibility. A canonical work epoch may
-// contain at most one seat for each participant.
+// WorkSeatV1 is one persistent unit of consensus eligibility. A participant
+// may own at most one seat for the lifetime of the network. RandomX controls
+// admission only; it never gives a faster machine additional selection weight.
 type WorkSeatV1 struct {
 	TicketHash  common.Hash
 	Participant common.Address

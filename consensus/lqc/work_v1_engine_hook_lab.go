@@ -145,11 +145,68 @@ func (l *LQC) WorkV1EngineLabRelayContext(
 		return 0, common.Hash{}, common.Hash{}, nil, nil,
 			ErrWorkV1EngineLabUnavailable
 	}
+	seated := make(map[common.Address]struct{}, len(parent.Work.SelectionSeats))
+	for _, seat := range parent.Work.SelectionSeats {
+		seated[seat.Participant] = struct{}{}
+	}
+	baseEligibility := ctx.Eligibility
+	admissionEligibility := func(participant common.Address) error {
+		if _, exists := seated[participant]; exists {
+			return ErrWorkParticipantAlreadySeatedV1
+		}
+		return baseEligibility(participant)
+	}
 	return epoch,
 		ctx.DatasetAnchor,
 		ctx.ChallengeAnchor,
 		new(big.Int).Set(difficulty),
-		ctx.Eligibility,
+		admissionEligibility,
+		nil
+}
+
+// WorkV2ParticipantSeatStatus returns the canonical admission state at a
+// specific head. It is intentionally read-only and branch-aware so user-facing
+// software never mistakes a local relay acceptance for a consensus seat.
+func (l *LQC) WorkV2ParticipantSeatStatus(
+	chain consensus.ChainHeaderReader,
+	parentNumber uint64,
+	parentHash common.Hash,
+	participant common.Address,
+) (
+	selectionEpoch uint64,
+	seatCount uint64,
+	active bool,
+	committed bool,
+	err error,
+) {
+	if chain == nil || participant == (common.Address{}) ||
+		parentHash == (common.Hash{}) {
+		return 0, 0, false, false, ErrWorkV1EngineLabUnavailable
+	}
+	runtime, err := l.workV1EngineLabRuntimeAt(
+		chain,
+		parentNumber,
+		parentHash,
+	)
+	if err != nil {
+		return 0, 0, false, false, err
+	}
+	for _, seat := range runtime.Work.SelectionSeats {
+		if seat.Participant == participant {
+			active = true
+			break
+		}
+	}
+	for _, seat := range runtime.Work.CommitSeats {
+		if seat.Participant == participant {
+			committed = true
+			break
+		}
+	}
+	return runtime.Work.SelectionEpoch,
+		uint64(len(runtime.Work.SelectionSeats)),
+		active,
+		committed,
 		nil
 }
 
@@ -229,23 +286,7 @@ func (l *LQC) workV1EngineLabContext(
 	ctx.DatasetAnchor = dataset.Hash()
 	ctx.ChallengeAnchor = challenge.Hash()
 
-	historicalSnapshot, err := l.registrySnapshotAt(
-		chain,
-		challengeNumber,
-		challenge.Hash(),
-	)
-	if err != nil {
-		return LQCHeaderWorkRuntimeContextV1{}, err
-	}
-	historicalRegistry, err := historicalSnapshot.Registry()
-	if err != nil {
-		return LQCHeaderWorkRuntimeContextV1{}, err
-	}
-	ctx.Eligibility = workV1EngineLabHistoricalEligibilityFromRegistry(
-		historicalRegistry,
-		challengeNumber,
-		l.registryRules(),
-	)
+	ctx.Eligibility = workV2EngineLabAdmissionEligibility()
 	return ctx, nil
 }
 

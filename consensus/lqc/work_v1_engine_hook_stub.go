@@ -32,6 +32,15 @@ func (l *LQC) WorkV1EngineLabRelayContext(
 		ErrWorkV1EngineLabUnavailable
 }
 
+func (l *LQC) WorkV2ParticipantSeatStatus(
+	chain consensus.ChainHeaderReader,
+	parentNumber uint64,
+	parentHash common.Hash,
+	participant common.Address,
+) (uint64, uint64, bool, bool, error) {
+	return 0, 0, false, false, ErrWorkV1EngineLabUnavailable
+}
+
 func (l *LQC) prepareWorkV1EngineLabHook(
 	chain consensus.ChainHeaderReader,
 	header *types.Header,

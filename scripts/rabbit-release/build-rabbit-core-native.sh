@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 RANDOMX_REPOSITORY="${RANDOMX_REPOSITORY:-https://github.com/tevador/RandomX.git}"
 RANDOMX_COMMIT="${RANDOMX_COMMIT:-7c761cf007c758056dcb6eb438a32f780f81bdbd}"
-EXPECTED_GENESIS="${TESTNET_GENESIS_SHA256:-8562725483c8e139083d2858ff1c10cec0e1d09bc399439d5022d4cad9e5a4a7}"
+EXPECTED_GENESIS="${TESTNET_GENESIS_SHA256:-e2e5494542e37689cb6e385456d6df239e478c1d12e9c3a1cc270e69c6b51686}"
 TARGET="${RABBIT_TARGET:?RABBIT_TARGET is required}"
 
 case "$TARGET" in
@@ -69,7 +69,7 @@ export CGO_LDFLAGS="-L$work/RandomX/build -lrandomx"
 
 go test -tags 'rabbit_workv1 rabbit_randomx' ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
 
-package="rabbit-core-testnet-v1-$TARGET"
+package="rabbit-core-testnet-v2-$TARGET"
 stage="$work/$package"
 mkdir -p "$stage" dist
 
@@ -91,7 +91,7 @@ cp docs/rabbit-core.md docs/rabbit-miner.md "$stage/"
 cp scripts/rabbit-release/NOTICE-TESTNET.txt "$stage/NOTICE-TESTNET.txt"
 
 cat > "$stage/BUILD-METADATA.txt" <<EOF
-RABBIT_RELEASE=rabbit-core-testnet-v1
+RABBIT_RELEASE=rabbit-core-testnet-v2
 SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth
 SOURCE_COMMIT=$source_commit
 TARGET=$TARGET

@@ -13,30 +13,23 @@ import (
 )
 
 var (
-	ErrWorkV1EngineLabHistoricalIneligible = errors.New(
-		"lqc Work V1 ticket participant was not historically eligible",
+	ErrWorkV2AdmissionParticipantInvalid = errors.New(
+		"lqc Work V2 admission participant is invalid",
 	)
 	ErrWorkV1EngineLabSelectionUnavailable = errors.New(
 		"lqc Work V1 seat selection unavailable",
 	)
 )
 
-func workV1EngineLabHistoricalEligibilityFromRegistry(
-	registry *CanonicalRegistry,
-	blockNumber uint64,
-	rules RegistrySnapshotRules,
-) WorkRelayEligibilityCheckV1 {
+// workV2EngineLabAdmissionEligibility keeps Work V2 admission permissionless.
+// Ownership is proven by the signed ticket and admission cost by RandomX. A
+// participant that already owns a persistent seat is rejected separately by
+// the canonical runtime, so registry membership must not be a prerequisite
+// for obtaining the first seat.
+func workV2EngineLabAdmissionEligibility() WorkRelayEligibilityCheckV1 {
 	return func(address common.Address) error {
-		if registry == nil ||
-			address == (common.Address{}) ||
-			!registry.IsEligibleParticipant(
-				address,
-				blockNumber,
-				rules.ActivationDelay,
-				rules.HeartbeatWindow,
-				rules.HeartbeatGrace,
-			) {
-			return ErrWorkV1EngineLabHistoricalIneligible
+		if address == (common.Address{}) {
+			return ErrWorkV2AdmissionParticipantInvalid
 		}
 		return nil
 	}
@@ -176,6 +169,9 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		return HybridSelection{}, false, nil
 	}
 
+	// A canonical Work V2 seat is persistent consensus eligibility. Registry
+	// membership is required when the admission proof is accepted, but a later
+	// permissionless recovery must not silently strand an already-owned seat.
 	eligibleSeats := make([]WorkSeatV1, 0, len(seats))
 	for _, seat := range seats {
 		if seat.TicketHash == (common.Hash{}) ||
@@ -183,15 +179,7 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 			return HybridSelection{}, false,
 				ErrInvalidWorkSelectionV1
 		}
-		if registry.IsEligibleParticipant(
-			seat.Participant,
-			blockNumber,
-			rules.ActivationDelay,
-			rules.HeartbeatWindow,
-			rules.HeartbeatGrace,
-		) {
-			eligibleSeats = append(eligibleSeats, seat)
-		}
+		eligibleSeats = append(eligibleSeats, seat)
 	}
 	if len(eligibleSeats) == 0 {
 		return HybridSelection{}, false, nil
@@ -274,6 +262,22 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 			ErrWorkV1EngineLabSelectionUnavailable
 	}
 
+	// Block 1 and post-timeout recovery install a sequence-zero activation
+	// anchor. Keep that anchor's temporary production lease until its own
+	// admission becomes a canonical persistent seat. Otherwise stale offline
+	// seats could stop the recovering chain before the N+2 admission delay ends.
+	lease, err := workV2EngineLabActivationLease(
+		parentRegistry,
+		header,
+		parent.Work.SelectionSeats,
+	)
+	if err != nil {
+		return HybridSelection{}, false, err
+	}
+	if lease.Producer != nil {
+		return lease, false, nil
+	}
+
 	datasetNumber, err := WorkDatasetAnchorBlockV1(
 		sourceEpoch,
 		parent.Work.EpochLength,
@@ -328,6 +332,23 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 		header,
 	)
 	return selection, false, err
+}
+
+func workV2EngineLabActivationLease(
+	parent *RegistrySnapshot,
+	header *types.Header,
+	seats []WorkSeatV1,
+) (HybridSelection, error) {
+	selection, err := workV1EngineLabActivationFallback(parent, header)
+	if err != nil || selection.Producer == nil {
+		return HybridSelection{}, err
+	}
+	for _, seat := range seats {
+		if seat.Participant == selection.Producer.Address {
+			return HybridSelection{}, nil
+		}
+	}
+	return selection, nil
 }
 
 // workV1EngineLabActivationFallback keeps bootstrap and zero-work liveness
@@ -447,22 +468,6 @@ func (l *LQC) workV1EngineLabPrepareRegistryBySeats(
 	}
 	rules := l.registryRules()
 	blockNumber := header.Number.Uint64()
-
-	if !registry.IsEligibleParticipant(
-		header.Coinbase,
-		blockNumber,
-		rules.ActivationDelay,
-		rules.HeartbeatWindow,
-		rules.HeartbeatGrace,
-	) {
-		return ErrUnauthorizedRegistryProducer
-	}
-	if err := registry.MarkProducerHeartbeat(
-		header.Coinbase,
-		blockNumber,
-	); err != nil {
-		return err
-	}
 
 	operations := make(
 		[]RegistryOperation,
@@ -631,16 +636,6 @@ func (l *LQC) workV1EngineLabApplyRegistryBySeats(
 	rules := l.registryRules()
 	blockNumber := header.Number.Uint64()
 
-	if !registry.IsEligibleParticipant(
-		header.Coinbase,
-		blockNumber,
-		rules.ActivationDelay,
-		rules.HeartbeatWindow,
-		rules.HeartbeatGrace,
-	) {
-		return nil, ErrUnauthorizedRegistryProducer
-	}
-
 	v2Extra, err := EncodeRegistryHeaderExtra(
 		envelope.BlockNumber,
 		envelope.RegistryRoot,
@@ -659,12 +654,6 @@ func (l *LQC) workV1EngineLabApplyRegistryBySeats(
 		return nil, err
 	}
 
-	if err := registry.MarkProducerHeartbeat(
-		header.Coinbase,
-		blockNumber,
-	); err != nil {
-		return nil, err
-	}
 	for _, operation := range validated.Operations {
 		if err := registry.ApplyOperation(
 			chain.Config().ChainID,
