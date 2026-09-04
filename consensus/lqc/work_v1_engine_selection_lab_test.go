@@ -380,3 +380,54 @@ func TestWorkV1EngineLabZeroWorkIgnoresRegisteredSybilIdentities(
 		t.Fatal("registered Sybil identity received a free zero-work seat")
 	}
 }
+
+func TestWorkV1SelectionBeaconCacheAvoidsRepeatedRandomX(t *testing.T) {
+	calls := 0
+	state := &workV1EngineLabRuntime{
+		hasher: func(datasetKey common.Hash, input []byte) (common.Hash, error) {
+			calls++
+			return crypto.Keccak256Hash(datasetKey.Bytes(), input), nil
+		},
+		runtimes:             make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
+		selectionBeaconCache: make(map[workV1SelectionBeaconCacheKey]common.Hash),
+	}
+	chainID := big.NewInt(9280)
+	epoch := uint64(7)
+	root := crypto.Keccak256Hash([]byte("selection-root"))
+	datasetKey := crypto.Keccak256Hash([]byte("dataset-key"))
+	input, err := WorkSelectionBeaconInputV1(chainID, epoch, root, datasetKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := state.cachedSelectionBeaconHash(datasetKey, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := state.cachedSelectionBeaconHash(datasetKey, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("cached selection entropy changed")
+	}
+	if calls != 1 {
+		t.Fatalf("RandomX calls=%d want=1 for identical selection context", calls)
+	}
+
+	otherInput, err := WorkSelectionBeaconInputV1(
+		chainID,
+		epoch,
+		crypto.Keccak256Hash([]byte("other-selection-root")),
+		datasetKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.cachedSelectionBeaconHash(datasetKey, otherInput); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("RandomX calls=%d want=2 after selection context changes", calls)
+	}
+}

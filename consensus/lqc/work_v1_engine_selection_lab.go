@@ -322,7 +322,7 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 		header.Number.Uint64(),
 		registry,
 		l.registryRules(),
-		WorkSelectionBeaconHasherV1(state.hasher),
+		WorkSelectionBeaconHasherV1(state.cachedSelectionBeaconHash),
 	)
 	if err != nil || active {
 		return selection, active, err

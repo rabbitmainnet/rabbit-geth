@@ -135,6 +135,106 @@ func (l *LQC) cachedRegistrySnapshot(number uint64, hash common.Hash) (*Registry
 	return nil, false
 }
 
+func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
+	chain consensus.ChainHeaderReader,
+	parent *RegistrySnapshot,
+	header *types.Header,
+) (*RegistrySnapshot, error) {
+	if parent == nil ||
+		header == nil ||
+		header.Number == nil ||
+		parent.Number == ^uint64(0) ||
+		header.Number.Uint64() != parent.Number+1 ||
+		header.ParentHash != parent.Hash {
+		return nil, ErrRegistrySnapshotChainMismatch
+	}
+	if envelope, err := DecodeLQCHeaderExtraV3(
+		header.Extra,
+		MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		blockNumber := header.Number.Uint64()
+		if envelope.BlockNumber != blockNumber {
+			return nil, ErrLQCHeaderBlockMismatchV3
+		}
+		chainID, err := registryChainID(chain)
+		if err != nil {
+			return nil, err
+		}
+		rules := l.registryRules()
+		v2Extra, err := EncodeRegistryHeaderExtra(
+			envelope.BlockNumber,
+			envelope.RegistryRoot,
+			envelope.RegistryOperations,
+		)
+		if err != nil {
+			return nil, err
+		}
+		validated, err := ValidateRegistryHeaderExtra(
+			chainID,
+			blockNumber,
+			rules.ProofDifficulty,
+			v2Extra,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Header V3 has two canonical registry-state modes. When Work V2
+		// seats are active, registry state changes only through committed
+		// operations. During zero-work/open-registry fallback, the legacy
+		// heartbeat/missed-turn transition is used. The committed registry
+		// root lets historical replay select the correct transition without
+		// requiring transient Work runtime caches.
+		registry, err := parent.Registry()
+		if err != nil {
+			return nil, err
+		}
+		for _, operation := range validated.Operations {
+			if err := registry.ApplyOperation(
+				chainID,
+				blockNumber,
+				rules.ProofDifficulty,
+				operation,
+			); err != nil {
+				return nil, err
+			}
+		}
+		if registry.Root() == envelope.RegistryRoot {
+			return newRegistrySnapshot(blockNumber, header.Hash(), registry), nil
+		}
+
+		synthetic := types.CopyHeader(header)
+		synthetic.Extra = v2Extra
+		legacy, err := parent.ApplyHeaderWithOpenActivation(
+			chainID,
+			rules,
+			synthetic,
+			l.openActivationForHeader(chain, header),
+		)
+		if err != nil {
+			return nil, err
+		}
+		legacyRegistry, err := legacy.Registry()
+		if err != nil {
+			return nil, err
+		}
+		if legacyRegistry.Root() != envelope.RegistryRoot {
+			return nil, ErrRegistryRootMismatch
+		}
+		return newRegistrySnapshot(blockNumber, header.Hash(), legacyRegistry), nil
+	}
+	chainID, err := registryChainID(chain)
+	if err != nil {
+		return nil, err
+	}
+	return parent.ApplyHeaderWithOpenActivation(
+		chainID,
+		l.registryRules(),
+		header,
+		l.openActivationForHeader(chain, header),
+	)
+}
+
 func (l *LQC) registrySnapshotAt(chain consensus.ChainHeaderReader, number uint64, hash common.Hash) (*RegistrySnapshot, error) {
 	if l == nil || l.config == nil || l.config.RegistryProtocolBlock == 0 || hash == (common.Hash{}) {
 		return nil, errRegistryProtocolUnavailable
@@ -177,16 +277,12 @@ func (l *LQC) registrySnapshotAt(chain consensus.ChainHeaderReader, number uint6
 		}
 		l.rememberRegistrySnapshot(base)
 	}
-	chainID, err := registryChainID(chain)
-	if err != nil && len(pending) > 0 {
-		return nil, err
-	}
+	var err error
 	for index := len(pending) - 1; index >= 0; index-- {
-		base, err = base.ApplyHeaderWithOpenActivation(
-			chainID,
-			l.registryRules(),
+		base, err = l.applyRegistrySnapshotHeaderMaybeV3(
+			chain,
+			base,
 			pending[index],
-			l.openActivationForHeader(chain, pending[index]),
 		)
 		if err != nil {
 			return nil, err

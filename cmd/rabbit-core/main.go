@@ -412,7 +412,8 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 		return err
 	}
 
-	fmt.Printf("Rabbit node ready. Wallet: %s\n", address)
+	fmt.Printf("Rabbit node RPC ready. Wallet: %s\n", address)
+	fmt.Println("Rabbit Core will verify canonical blockchain synchronization before Work V2 admission or LCQ production becomes active.")
 	miner := exec.Command(opts.miner,
 		"--rpc", fmt.Sprintf("http://127.0.0.1:%d", opts.rpcPort),
 		"--keystore", keyFile,
@@ -429,7 +430,7 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 	minerDone := make(chan error, 1)
 	go func() { minerDone <- miner.Wait() }()
 
-	fmt.Println("Rabbit Core is running. Press Ctrl+C to stop safely.")
+	fmt.Println("Rabbit Core is running. Synchronization and mining activation are automatic. Press Ctrl+C to stop safely.")
 	select {
 	case <-ctx.Done():
 		fmt.Println("Stopping Rabbit Miner and Rabbit Node safely. Please wait...")

@@ -88,11 +88,14 @@ const (
 	// performed by a disc/v4 source.
 	maxParallelENRRequests = 16
 
-	// LQC nodes produce and import blocks without the downloader completing a
-	// traditional Ethereum sync cycle. A recent non-genesis head proves that the
-	// execution state is live enough to enable inbound transaction relay.
-	lqcHeadFreshness       = 10 * time.Minute
-	lqcHeadFutureTolerance = 30 * time.Second
+	// LQC public nodes must not produce while a fresh node is catching up. A
+	// recent head with peers is accepted only after a discovery grace period,
+	// while genesis/stale-head recovery gets a longer grace so an isolated
+	// network can still resume without turning a normal fresh sync into a fork.
+	lqcHeadFreshness        = 10 * time.Minute
+	lqcHeadFutureTolerance  = 30 * time.Second
+	lqcSyncDiscoveryGrace   = 20 * time.Second
+	lqcOfflineRecoveryGrace = 60 * time.Second
 )
 
 // Config contains the configuration options of the ETH protocol.
@@ -660,6 +663,17 @@ func (s *Ethereum) Start() error {
 	// Regularly update shutdown marker
 	s.shutdownTracker.Start()
 
+	// Subscribe before networking starts so an initial downloader sync cannot
+	// race past the LQC production gate.
+	var (
+		lqcSyncCh  chan downloader.SyncEvent
+		lqcSyncSub event.Subscription
+	)
+	if s.blockchain != nil && s.blockchain.Config() != nil && s.blockchain.Config().LQC != nil && s.miner != nil {
+		lqcSyncCh = make(chan downloader.SyncEvent, 16)
+		lqcSyncSub = s.handler.downloader.SubscribeSyncEvents(lqcSyncCh)
+	}
+
 	// Start the networking layer
 	s.handler.Start(s.p2pServer.MaxPeers)
 
@@ -674,13 +688,8 @@ func (s *Ethereum) Start() error {
 	s.filterMaps.Start()
 	go s.updateFilterMapsHeads()
 
-	if s.blockchain != nil && s.blockchain.Config() != nil && s.blockchain.Config().LQC != nil && s.miner != nil {
-		go s.enableLQCTransactionRelayWhenReady()
-		if s.config != nil && s.config.Miner.Enabled {
-			s.miner.StartLQCDevnet()
-		} else {
-			log.Info("LQC producer loop disabled; node running in sync/P2P/RPC mode")
-		}
+	if lqcSyncSub != nil {
+		go s.enableLQCWhenReady(lqcSyncCh, lqcSyncSub)
 	}
 
 	return nil
@@ -694,32 +703,140 @@ func isLiveLQCHead(header *types.Header, now time.Time) bool {
 	return age >= -lqcHeadFutureTolerance && age <= lqcHeadFreshness
 }
 
-func (s *Ethereum) enableLQCTransactionRelayWhenReady() {
-	if s.blockchain == nil {
+func lqcMayRecoverWithoutSync(header *types.Header, peers int, elapsed time.Duration, now time.Time) bool {
+	// A fresh public client at genesis must never create an isolated local chain
+	// merely because peer discovery has not succeeded yet. Offline recovery is
+	// only valid for a node that already has non-genesis canonical history.
+	if header == nil || header.Number == nil || header.Number.Sign() == 0 {
+		return false
+	}
+	if elapsed >= lqcOfflineRecoveryGrace {
+		return true
+	}
+	return peers > 0 &&
+		elapsed >= lqcSyncDiscoveryGrace &&
+		isLiveLQCHead(header, now)
+}
+
+func (s *Ethereum) lqcHeadStateAvailable(header *types.Header) bool {
+	if s.blockchain == nil || header == nil {
+		return false
+	}
+	if _, err := s.blockchain.StateAt(header); err != nil {
+		log.Debug("LQC production gate waiting for canonical state", "number", header.Number, "hash", header.Hash(), "err", err)
+		return false
+	}
+	return true
+}
+
+// enableLQCWhenReady serializes initial sync and LQC production. The producer
+// is stopped whenever a downloader sync starts and is restarted only after a
+// successful sync with readable canonical state. If no sync is ever needed,
+// the bounded recovery grace preserves bootstrap and offline-network liveness.
+func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSub event.Subscription) {
+	if s.blockchain == nil || s.miner == nil || syncSub == nil {
 		return
 	}
-	headCh := make(chan core.ChainHeadEvent, 16)
-	sub := s.blockchain.SubscribeChainHeadEvent(headCh)
-	defer sub.Unsubscribe()
+	defer syncSub.Unsubscribe()
+
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	for {
-		if s.Synced() {
+	startedAt := time.Now()
+	syncRequired := false
+	producerRunning := false
+	producerEnabled := s.config != nil && s.config.Miner.Enabled
+
+	startProducer := func(reason string) {
+		if !producerEnabled || producerRunning {
 			return
 		}
+		s.miner.StartLQCDevnet()
+		producerRunning = true
+		log.Info("LQC producer enabled after sync gate", "reason", reason)
+	}
+	stopProducer := func(reason string) {
+		if !producerEnabled || !producerRunning {
+			return
+		}
+		s.miner.StopLQCDevnet()
+		producerRunning = false
+		log.Info("LQC producer paused for synchronization", "reason", reason)
+	}
+	markReady := func(reason string) bool {
 		head := s.blockchain.CurrentBlock()
-		if isLiveLQCHead(head, time.Now()) {
+		if head == nil || head.Number == nil || !s.lqcHeadStateAvailable(head) {
+			return false
+		}
+		if !s.Synced() {
 			s.SetSynced()
-			log.Info("LQC transaction relay enabled", "head", head.Number)
-			return
+			log.Info("LQC post-sync features enabled", "head", head.Number, "hash", head.Hash(), "reason", reason)
 		}
+		startProducer(reason)
+		return true
+	}
+
+	if !producerEnabled {
+		log.Info("LQC producer loop disabled; node running in sync/P2P/RPC mode")
+	}
+
+	for {
 		select {
+		case ev, ok := <-syncCh:
+			if !ok {
+				return
+			}
+			switch ev.Type {
+			case downloader.SyncStarted:
+				syncRequired = true
+				stopProducer("downloader sync started")
+			case downloader.SyncFailed:
+				// Keep the producer blocked. Starting from a partially imported head
+				// is exactly the fresh-sync failure this gate is designed to prevent.
+				syncRequired = true
+				stopProducer("downloader sync failed")
+				log.Warn("LQC production remains paused after failed synchronization", "err", ev.Err)
+			case downloader.SyncCompleted:
+				syncRequired = false
+				if !markReady("downloader sync completed") {
+					// A successful downloader cycle without readable head state is not
+					// safe for production. Require another successful cycle/restart.
+					syncRequired = true
+					log.Warn("LQC production remains paused; canonical head state is unavailable after sync")
+				}
+			}
 		case <-ticker.C:
-		case <-headCh:
-		case <-sub.Err():
+		case <-syncSub.Err():
 			return
 		}
+
+		if syncRequired {
+			continue
+		}
+		if producerRunning {
+			continue
+		}
+		if s.Synced() {
+			markReady("node already synchronized")
+			continue
+		}
+
+		head := s.blockchain.CurrentBlock()
+		if head == nil || head.Number == nil {
+			continue
+		}
+		now := time.Now()
+		elapsed := now.Sub(startedAt)
+		peers := s.handler.peers.len()
+		if !lqcMayRecoverWithoutSync(head, peers, elapsed, now) {
+			continue
+		}
+
+		reason := "offline/bootstrap recovery grace"
+		if isLiveLQCHead(head, now) && peers > 0 && elapsed < lqcOfflineRecoveryGrace {
+			reason = "live head confirmed after peer discovery grace"
+		}
+		markReady(reason)
 	}
 }
 

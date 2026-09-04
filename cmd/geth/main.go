@@ -22,6 +22,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
@@ -33,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"go.uber.org/automaxprocs/maxprocs"
 
 	// Force-load the tracer engines to trigger registration
@@ -340,6 +342,7 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
+	startRabbitBootstrapPeerAssist(ctx, stack)
 
 	// Register wallet event handlers to open and auto-derive wallets
 	events := make(chan accounts.WalletEvent, 16)
@@ -378,6 +381,69 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 			case accounts.WalletDropped:
 				log.Info("Old wallet dropped", "url", event.Wallet.URL())
 				event.Wallet.Close()
+			}
+		}
+	}()
+}
+
+// startRabbitBootstrapPeerAssist gives a completely fresh Rabbit node a direct
+// connection path to the configured Rabbit seeds while normal discovery warms
+// up. Seeds remain ordinary P2P peers and have no consensus authority.
+func startRabbitBootstrapPeerAssist(ctx *cli.Context, stack *node.Node) {
+	if ctx == nil || stack == nil {
+		return
+	}
+	networkID := ctx.Uint64(utils.NetworkIdFlag.Name)
+	if networkID != 928 && networkID != 9280 {
+		return
+	}
+	raw := ctx.String(utils.BootnodesFlag.Name)
+	if raw == "" {
+		return
+	}
+	server := stack.Server()
+	if server == nil {
+		return
+	}
+
+	seeds := make([]*enode.Node, 0)
+	for _, url := range utils.SplitAndTrim(raw) {
+		seed, err := enode.Parse(enode.ValidSchemes, url)
+		if err != nil {
+			log.Warn("Rabbit bootstrap peer URL ignored", "enode", url, "err", err)
+			continue
+		}
+		seeds = append(seeds, seed)
+		server.AddPeer(seed)
+	}
+	if len(seeds) == 0 {
+		return
+	}
+
+	log.Info("Rabbit bootstrap peer assist enabled", "network", networkID, "seeds", len(seeds))
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		deadline := time.NewTimer(5 * time.Minute)
+		defer deadline.Stop()
+
+		releaseAt := len(seeds) + 1
+		for {
+			select {
+			case <-ticker.C:
+				connected := server.PeerCount()
+				if connected < releaseAt {
+					continue
+				}
+				for _, seed := range seeds {
+					server.RemovePeer(seed)
+				}
+				log.Info("Rabbit bootstrap peer assist released", "network", networkID, "peers", connected)
+				return
+			case <-deadline.C:
+				log.Info("Rabbit bootstrap peer assist kept for small network", "network", networkID, "peers", server.PeerCount())
+				return
 			}
 		}
 	}()

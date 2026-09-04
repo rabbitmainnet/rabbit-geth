@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/rabbitx"
 )
 
@@ -27,12 +28,25 @@ type WorkV1EngineLabTicketProvider func(
 	commitEpoch uint64,
 ) ([]SignedRandomXWorkTicketV1, error)
 
+const workV1SelectionBeaconCacheLimit = 32
+
+type workV1SelectionBeaconCacheKey struct {
+	datasetKey common.Hash
+	inputHash  common.Hash
+}
+
 type workV1EngineLabRuntime struct {
 	mu       sync.Mutex
 	hasher   WorkRelayHasherV1
 	close    func()
 	runtimes map[common.Hash]*CanonicalWorkRuntimeStateV1
 	provider WorkV1EngineLabTicketProvider
+
+	// Selection entropy is constant for an entire closed source epoch. The
+	// block number is mixed only after RandomX, in WorkSelectionSeedV1. Cache
+	// the deterministic RandomX result so historical full sync performs one
+	// RandomX evaluation per selection context instead of one per block.
+	selectionBeaconCache map[workV1SelectionBeaconCacheKey]common.Hash
 }
 
 var workV1EngineLabRuntimes sync.Map
@@ -52,9 +66,10 @@ func workV1EngineLabRuntimeFor(
 		return nil, err
 	}
 	created := &workV1EngineLabRuntime{
-		hasher:   hasher.Hash,
-		close:    hasher.Close,
-		runtimes: make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
+		hasher:               hasher.Hash,
+		close:                hasher.Close,
+		runtimes:             make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
+		selectionBeaconCache: make(map[workV1SelectionBeaconCacheKey]common.Hash),
 	}
 	actual, loaded := workV1EngineLabRuntimes.LoadOrStore(
 		engine,
@@ -65,6 +80,45 @@ func workV1EngineLabRuntimeFor(
 		return actual.(*workV1EngineLabRuntime), nil
 	}
 	return created, nil
+}
+
+func (s *workV1EngineLabRuntime) cachedSelectionBeaconHash(
+	datasetKey common.Hash,
+	input []byte,
+) (common.Hash, error) {
+	if s == nil || s.hasher == nil || datasetKey == (common.Hash{}) || len(input) == 0 {
+		return common.Hash{}, ErrInvalidWorkSelectionBeaconV1
+	}
+	key := workV1SelectionBeaconCacheKey{
+		datasetKey: datasetKey,
+		inputHash:  crypto.Keccak256Hash(input),
+	}
+
+	s.mu.Lock()
+	if cached, ok := s.selectionBeaconCache[key]; ok {
+		s.mu.Unlock()
+		return cached, nil
+	}
+	s.mu.Unlock()
+
+	entropy, err := s.hasher(datasetKey, input)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if entropy == (common.Hash{}) {
+		return common.Hash{}, ErrInvalidWorkSelectionBeaconV1
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cached, ok := s.selectionBeaconCache[key]; ok {
+		return cached, nil
+	}
+	if len(s.selectionBeaconCache) >= workV1SelectionBeaconCacheLimit {
+		clear(s.selectionBeaconCache)
+	}
+	s.selectionBeaconCache[key] = entropy
+	return entropy, nil
 }
 
 func SetWorkV1EngineLabTicketProvider(

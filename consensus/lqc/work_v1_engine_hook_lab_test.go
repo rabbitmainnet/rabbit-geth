@@ -310,6 +310,60 @@ func TestWorkV1EngineLabRelayContextReplaysHeaderV3AfterRestart(
 	}
 }
 
+func TestWorkV1RegistrySnapshotReplaysV3PastCheckpointAfterRestart(t *testing.T) {
+	participants := testParticipants(t, 4)
+	config := canonicalRegistryEngineConfig(participants, 1)
+	config.EpochLength = WorkProtocolEpochLengthV1
+	db := rawdb.NewMemoryDatabase()
+	builder := New(config, db)
+	genesis := &types.Header{
+		Number:   big.NewInt(0),
+		Time:     100,
+		GasLimit: 30_000_000,
+	}
+	chain := canonicalRegistryTestChain(config, genesis)
+	parent := genesis
+	end := WorkProtocolEpochLengthV1 + 2
+
+	for number := uint64(1); number <= end; number++ {
+		header := prepareCanonicalTestHeader(t, builder, chain, parent)
+		if _, err := DecodeLQCHeaderExtraV3(
+			header.Extra,
+			MaxWorkTicketsPerBlockV1,
+		); err != nil {
+			t.Fatalf("block %d is not Header V3: %v", number, err)
+		}
+		if err := builder.VerifyHeader(chain, header); err != nil {
+			t.Fatalf("verify block %d: %v", number, err)
+		}
+		chain.headers[header.Hash()] = header
+		chain.current = header
+		parent = header
+	}
+
+	restarted := New(config, db)
+	snapshot, err := restarted.registrySnapshotAt(
+		chain,
+		parent.Number.Uint64(),
+		parent.Hash(),
+	)
+	if err != nil {
+		t.Fatalf("V3 registry replay past checkpoint after restart: %v", err)
+	}
+	envelope, err := DecodeLQCHeaderExtraV3(
+		parent.Extra,
+		MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Number != parent.Number.Uint64() ||
+		snapshot.Hash != parent.Hash() ||
+		snapshot.RegistryRoot != envelope.RegistryRoot {
+		t.Fatalf("rebuilt snapshot mismatch: %+v", snapshot)
+	}
+}
+
 func TestWorkV1ActiveEngineLabPrepareVerifyUsesHeaderV3(t *testing.T) {
 	participants := testParticipants(t, 4)
 	config := canonicalRegistryEngineConfig(participants, 1)
