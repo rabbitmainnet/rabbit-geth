@@ -205,6 +205,13 @@ func sessionPasswordFile(dataDir, password string) (string, func(), error) {
 	return name, cleanup, nil
 }
 
+type commandRunner func(
+	context.Context,
+	io.Writer,
+	string,
+	...string,
+) error
+
 func runCommand(ctx context.Context, output io.Writer, executable string, args ...string) error {
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdout = output
@@ -284,14 +291,31 @@ func prepareWallet(ctx context.Context, opts options) (string, common.Address, s
 }
 
 func initialize(ctx context.Context, opts options) error {
+	return initializeWithRunner(ctx, opts, runCommand)
+}
+
+func initializeWithRunner(
+	ctx context.Context,
+	opts options,
+	runner commandRunner,
+) error {
 	chainData := filepath.Join(opts.dataDir, "rabbit", "chaindata")
 	if _, err := os.Stat(chainData); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+		fmt.Println("Applying the official Rabbit Testnet configuration to the existing data directory...")
+	} else if errors.Is(err, os.ErrNotExist) {
+		fmt.Println("Initializing the official Rabbit Testnet genesis...")
+	} else {
 		return err
 	}
-	fmt.Println("Initializing the official Rabbit Testnet genesis...")
-	return runCommand(ctx, os.Stdout, opts.node, "--datadir", opts.dataDir, "init", opts.genesis)
+	return runner(
+		ctx,
+		os.Stdout,
+		opts.node,
+		"--datadir",
+		opts.dataDir,
+		"init",
+		opts.genesis,
+	)
 }
 
 func configuredBootnodes(opts options) string {

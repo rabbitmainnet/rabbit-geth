@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -75,5 +79,90 @@ func TestWalletBackupMessage(t *testing.T) {
 				expected,
 			)
 		}
+	}
+}
+
+func TestInitializeAppliesGenesisToNewAndExistingDataDirs(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "new"
+		if existing {
+			name = "existing"
+		}
+		t.Run(name, func(t *testing.T) {
+			opts := options{
+				dataDir: t.TempDir(),
+				node:    "rabbit-node",
+				genesis: "genesis.json",
+			}
+			if existing {
+				if err := os.MkdirAll(
+					filepath.Join(opts.dataDir, "rabbit", "chaindata"),
+					0700,
+				); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			calls := 0
+			runner := func(
+				_ context.Context,
+				_ io.Writer,
+				executable string,
+				args ...string,
+			) error {
+				calls++
+				if executable != opts.node {
+					t.Fatalf("executable = %q, want %q", executable, opts.node)
+				}
+				want := []string{
+					"--datadir",
+					opts.dataDir,
+					"init",
+					opts.genesis,
+				}
+				if !slices.Equal(args, want) {
+					t.Fatalf("args = %q, want %q", args, want)
+				}
+				return nil
+			}
+
+			if err := initializeWithRunner(
+				context.Background(),
+				opts,
+				runner,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Fatalf("init calls = %d, want 1", calls)
+			}
+		})
+	}
+}
+
+func TestInitializePropagatesGenesisInitFailure(t *testing.T) {
+	opts := options{
+		dataDir: t.TempDir(),
+		node:    "rabbit-node",
+		genesis: "genesis.json",
+	}
+	wantErr := errors.New("genesis configuration rejected")
+
+	runner := func(
+		_ context.Context,
+		_ io.Writer,
+		_ string,
+		_ ...string,
+	) error {
+		return wantErr
+	}
+
+	err := initializeWithRunner(
+		context.Background(),
+		opts,
+		runner,
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("initialize error = %v, want %v", err, wantErr)
 	}
 }
