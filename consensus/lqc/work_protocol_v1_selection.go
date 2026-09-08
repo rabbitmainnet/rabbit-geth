@@ -115,27 +115,42 @@ func BuildWorkSelectionV1(
 	if err != nil {
 		return WorkSelectionV1{}, err
 	}
+	return buildWorkSelectionFromOrderedSeatsV1(
+		ordered,
+		fallbackCount,
+		committeeSize,
+	), nil
+}
 
-	selection := WorkSelectionV1{Ordered: ordered}
-	if len(ordered) == 0 {
-		return selection, nil
+// buildWorkSelectionFromOrderedSeatsV1 assigns every role from one canonical
+// final queue. The caller is responsible for deterministic seat ordering.
+func buildWorkSelectionFromOrderedSeatsV1(
+	ordered []WorkSeatV1,
+	fallbackCount uint64,
+	committeeSize uint64,
+) WorkSelectionV1 {
+	selection := WorkSelectionV1{
+		Ordered: append([]WorkSeatV1(nil), ordered...),
+	}
+	if len(selection.Ordered) == 0 {
+		return selection
 	}
 
 	selection.Producer = &selection.Ordered[0]
 
-	fallbackEnd := len(ordered)
-	availableAfterProducer := uint64(len(ordered) - 1)
+	fallbackEnd := len(selection.Ordered)
+	availableAfterProducer := uint64(len(selection.Ordered) - 1)
 	if fallbackCount < availableAfterProducer {
 		fallbackEnd = 1 + int(fallbackCount)
 	}
 	if fallbackEnd > 1 {
 		selection.Fallbacks = append(
 			selection.Fallbacks,
-			ordered[1:fallbackEnd]...,
+			selection.Ordered[1:fallbackEnd]...,
 		)
 	}
 
-	committeeAvailable := len(ordered) - fallbackEnd
+	committeeAvailable := len(selection.Ordered) - fallbackEnd
 	committeeTake := committeeSize
 	if committeeTake > uint64(committeeAvailable) {
 		committeeTake = uint64(committeeAvailable)
@@ -144,9 +159,8 @@ func BuildWorkSelectionV1(
 	if committeeEnd > fallbackEnd {
 		selection.Committee = append(
 			selection.Committee,
-			ordered[fallbackEnd:committeeEnd]...,
+			selection.Ordered[fallbackEnd:committeeEnd]...,
 		)
 	}
-
-	return selection, nil
+	return selection
 }

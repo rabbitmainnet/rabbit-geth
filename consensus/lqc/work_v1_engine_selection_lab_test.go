@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 func TestWorkV2EngineLabAdmissionIsPermissionlessAndRejectsZero(
@@ -429,5 +430,182 @@ func TestWorkV1SelectionBeaconCacheAvoidsRepeatedRandomX(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("RandomX calls=%d want=2 after selection context changes", calls)
+	}
+}
+
+func TestWorkSeatLivenessV2OrdersPenalizedSeatsLast(t *testing.T) {
+	a := common.HexToAddress("0x00000000000000000000000000000000000000a1")
+	b := common.HexToAddress("0x00000000000000000000000000000000000000b2")
+	c := common.HexToAddress("0x00000000000000000000000000000000000000c3")
+
+	seats := []WorkSeatV1{
+		{TicketHash: crypto.Keccak256Hash([]byte("seat-a")), Participant: a},
+		{TicketHash: crypto.Keccak256Hash([]byte("seat-b")), Participant: b},
+		{TicketHash: crypto.Keccak256Hash([]byte("seat-c")), Participant: c},
+	}
+
+	registry := NewCanonicalRegistry()
+	registry.entries[a] = CanonicalParticipant{Address: a, Active: true}
+	registry.entries[b] = CanonicalParticipant{
+		Address: b, Active: false, JailedUntil: 60_000,
+	}
+	registry.entries[c] = CanonicalParticipant{Address: c, Active: true}
+
+	engine := New(&params.LQCConfig{ConsensusHardeningBlock: 50_000}, nil)
+
+	check := func(block uint64, want []common.Address) {
+		t.Helper()
+		got, err := engine.workV1EngineLabOrderSeatsByLiveness(
+			registry, seats, block,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(seats) {
+			t.Fatalf("block %d lost WorkSeats: got %d want %d",
+				block, len(got), len(seats))
+		}
+		for index := range want {
+			if got[index].Participant != want[index] {
+				t.Fatalf("block %d position %d = %s, want %s",
+					block, index, got[index].Participant, want[index])
+			}
+		}
+	}
+
+	check(49_999, []common.Address{a, b, c})
+	check(50_000, []common.Address{a, b, c})
+	check(50_001, []common.Address{a, c, b})
+	check(60_000, []common.Address{a, b, c})
+
+	ordered, err := engine.workV1EngineLabOrderSeatsByLiveness(
+		registry, seats, 50_001,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection := buildWorkSelectionFromOrderedSeatsV1(ordered, 1, 1)
+	allowed, queuePos := IsAuthorAllowed(
+		workV1EngineLabHybridSelection(selection), b,
+	)
+	if !allowed || queuePos != 2 {
+		t.Fatalf("penalized WorkSeat lost emergency fallback: allowed=%v pos=%d",
+			allowed, queuePos)
+	}
+}
+
+func TestWorkSeatLivenessV2PrepareVerifyRegistryRootTransition(t *testing.T) {
+	participants := testParticipants(t, 3)
+	a, b, c := participants[0], participants[1], participants[2]
+
+	config := canonicalRegistryEngineConfig(participants, 1)
+	config.ConsensusHardeningBlock = 50_000
+	config.MaxMissedTurns = 3
+	config.JailBlocks = 256
+
+	registry := NewCanonicalRegistry()
+	registry.entries[a] = CanonicalParticipant{
+		Address: a, Active: false, MissedTurns: 2, JailedUntil: 60_000,
+	}
+	registry.entries[b] = CanonicalParticipant{
+		Address: b, Active: true, MissedTurns: 1, JailedUntil: 55_000,
+	}
+	registry.entries[c] = CanonicalParticipant{
+		Address: c, Active: true,
+	}
+
+	parentHeader := &types.Header{
+		Number: big.NewInt(49_999),
+		Time:   499_990,
+	}
+	parent := newRegistrySnapshot(
+		49_999,
+		parentHeader.Hash(),
+		registry,
+	)
+	chain := canonicalRegistryTestChain(config, parentHeader)
+	builder := New(config, rawdb.NewMemoryDatabase())
+	verifier := New(config, rawdb.NewMemoryDatabase())
+
+	selection := HybridSelection{
+		Ordered: []HybridParticipant{
+			{Address: a},
+			{Address: b},
+			{Address: c},
+		},
+	}
+
+	for block := uint64(50_000); block <= 50_003; block++ {
+		header := &types.Header{
+			ParentHash: parent.Hash,
+			Number:     new(big.Int).SetUint64(block),
+			Coinbase:   c,
+			Time:       block * 10,
+		}
+
+		if err := builder.workV1EngineLabPrepareRegistryBySeats(
+			chain, parent, header, selection,
+		); err != nil {
+			t.Fatalf("prepare block %d: %v", block, err)
+		}
+
+		encoded, err := DecodeRegistryHeaderExtra(header.Extra)
+		if err != nil {
+			t.Fatalf("decode block %d: %v", block, err)
+		}
+
+		envelope := LQCHeaderEnvelopeV3{
+			Version:            LQCHeaderEnvelopeVersionV3,
+			BlockNumber:        encoded.BlockNumber,
+			RegistryRoot:       encoded.RegistryRoot,
+			RegistryOperations: encoded.Operations,
+		}
+
+		verified, err := verifier.workV1EngineLabApplyRegistryBySeats(
+			chain, parent, header, envelope, selection,
+		)
+		if err != nil {
+			t.Fatalf("verify block %d: %v", block, err)
+		}
+		if verified.RegistryRoot != encoded.RegistryRoot {
+			t.Fatalf("block %d Prepare/Verify root mismatch", block)
+		}
+
+		state, err := verified.Registry()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if block == 50_000 {
+			for _, address := range participants {
+				participant, _ := state.Participant(address)
+				if participant.MissedTurns != 0 ||
+					participant.JailedUntil != 0 {
+					t.Fatalf("fork carried retroactive penalty for %s: %+v",
+						address, participant)
+				}
+			}
+		}
+
+		parent = verified
+	}
+
+	final, err := parent.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []common.Address{a, b} {
+		participant, _ := final.Participant(address)
+		if participant.MissedTurns != 0 ||
+			participant.JailedUntil != 50_259 {
+			t.Fatalf("three misses did not jail %s correctly: %+v",
+				address, participant)
+		}
+	}
+	producer, _ := final.Participant(c)
+	if producer.LastHeartbeat != 50_003 ||
+		producer.MissedTurns != 0 ||
+		producer.JailedUntil != 0 {
+		t.Fatalf("producer heartbeat state incorrect: %+v", producer)
 	}
 }

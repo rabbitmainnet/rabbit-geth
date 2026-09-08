@@ -29,10 +29,10 @@ var errUnclesNotAllowed = errors.New("uncles are not allowed in lqc")
 var errInvalidExtra = errors.New("invalid lqc extra data")
 var errBlockTimeOverflow = errors.New("lqc block time overflow")
 
-// allowedFutureBlockTimeSeconds is deliberately small: LQC producers already
-// have deterministic time slots, so accepting a header far in the future can
-// stall the canonical chain until wall-clock time catches up.
-const allowedFutureBlockTimeSeconds = uint64(30)
+const (
+	legacyAllowedFutureBlockTimeSeconds   = uint64(30)
+	hardenedAllowedFutureBlockTimeSeconds = uint64(1)
+)
 
 type LQC struct {
 	config        *params.LQCConfig
@@ -244,6 +244,20 @@ func (l *LQC) verifyExtra(header *types.Header) error {
 	return nil
 }
 
+// futureBlockTimeTolerance preserves historical validation before the hard
+// fork and applies Time Fairness V2 beginning at the activation block.
+func (l *LQC) futureBlockTimeTolerance(number *big.Int) uint64 {
+	if l != nil &&
+		l.config != nil &&
+		l.config.ConsensusHardeningBlock != 0 &&
+		number != nil &&
+		number.IsUint64() &&
+		number.Uint64() >= l.config.ConsensusHardeningBlock {
+		return hardenedAllowedFutureBlockTimeSeconds
+	}
+	return legacyAllowedFutureBlockTimeSeconds
+}
+
 func (l *LQC) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
 	return l.verifyHeader(chain, header, nil)
 }
@@ -286,7 +300,7 @@ func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchPar
 	if header.Number.Uint64() != parent.Number.Uint64()+1 {
 		return errInvalidBlockNumber
 	}
-	latestTime, ok := checkedRegistryBlockAdd(unixNow, allowedFutureBlockTimeSeconds)
+	latestTime, ok := checkedRegistryBlockAdd(unixNow, l.futureBlockTimeTolerance(header.Number))
 	if !ok {
 		latestTime = ^uint64(0)
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -79,6 +80,69 @@ func TestLQCHeaderSecurityFutureTimestampBoundary(t *testing.T) {
 	beyondBoundary.Time = 131
 	if err := engine.verifyHeaderAt(chain, beyondBoundary, nil, 100); !errors.Is(err, consensus.ErrFutureBlock) {
 		t.Fatalf("future timestamp error = %v, want %v", err, consensus.ErrFutureBlock)
+	}
+}
+
+func TestLQCFutureTimestampToleranceForkBoundary(t *testing.T) {
+	engine := New(&params.LQCConfig{ConsensusHardeningBlock: 50_000}, nil)
+
+	if got := engine.futureBlockTimeTolerance(big.NewInt(49_999)); got != 30 {
+		t.Fatalf("pre-fork tolerance = %d, want 30", got)
+	}
+	if got := engine.futureBlockTimeTolerance(big.NewInt(50_000)); got != 1 {
+		t.Fatalf("fork-block tolerance = %d, want 1", got)
+	}
+	if got := engine.futureBlockTimeTolerance(big.NewInt(50_001)); got != 1 {
+		t.Fatalf("post-fork tolerance = %d, want 1", got)
+	}
+}
+
+func TestLQCHeaderSecurityHardenedFutureTimestampBoundary(t *testing.T) {
+	engine, chain, _, header := londonHeaderSecurityFixture(t)
+	engine.config.ConsensusHardeningBlock = 1
+
+	atBoundary := types.CopyHeader(header)
+	atBoundary.Time = 115
+	signTestHeader(t, chain.Config().ChainID, atBoundary)
+	if err := engine.verifyHeaderAt(chain, atBoundary, nil, 114); err != nil {
+		t.Fatalf("post-fork header at +1s rejected: %v", err)
+	}
+
+	for _, offset := range []uint64{2, 3, 15, 17, 30} {
+		candidate := types.CopyHeader(header)
+		candidate.Time = 114 + offset
+
+		err := engine.verifyHeaderAt(chain, candidate, nil, 114)
+		if !errors.Is(err, consensus.ErrFutureBlock) {
+			t.Fatalf("post-fork +%ds error = %v, want %v",
+				offset, err, consensus.ErrFutureBlock)
+		}
+	}
+}
+
+func TestLQCVerifyHeadersTimeFairnessForkCompatibility(t *testing.T) {
+	engine, chain, _, historical := londonHeaderSecurityFixture(t)
+	engine.config.ConsensusHardeningBlock = 50_000
+
+	abort, results := engine.VerifyHeaders(chain, []*types.Header{historical})
+	if err := <-results; err != nil {
+		close(abort)
+		t.Fatalf("pre-fork historical header rejected during batch sync: %v", err)
+	}
+	close(abort)
+
+	engine.config.ConsensusHardeningBlock = 1
+	future := types.CopyHeader(historical)
+	future.Time = uint64(time.Now().Unix()) + 17
+	signTestHeader(t, chain.Config().ChainID, future)
+
+	abort, results = engine.VerifyHeaders(chain, []*types.Header{future})
+	err := <-results
+	close(abort)
+
+	if !errors.Is(err, consensus.ErrFutureBlock) {
+		t.Fatalf("post-fork batch +17s error = %v, want %v",
+			err, consensus.ErrFutureBlock)
 	}
 }
 

@@ -25,6 +25,7 @@
       "epochLength": 128,
       "registryMode": "native",
       "registryProtocolBlock": 1,
+      "consensusHardeningBlock": 50000,
       "bootstrapOnlyUntil": 0,
       "minBond": 25,
       "activationDelay": 2,

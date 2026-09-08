@@ -151,6 +151,59 @@ func TestRabbitRegistryProtocolConfigCompatibility(t *testing.T) {
 	}
 }
 
+func TestRabbitConsensusHardeningConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{LQC: &LQCConfig{ConsensusHardeningBlock: activation}}
+	}
+
+	fork := config(50_000)
+	if fork.IsConsensusHardening(big.NewInt(49_999)) {
+		t.Fatal("consensus hardening active before block 50000")
+	}
+	if !fork.IsConsensusHardening(big.NewInt(50_000)) {
+		t.Fatal("consensus hardening inactive at block 50000")
+	}
+
+	storedLiveTestnet := &ChainConfig{LQC: &LQCConfig{
+		RegistryProtocolBlock: 1,
+		ProofDifficulty:       1,
+	}}
+	upgradedLiveTestnet := &ChainConfig{LQC: &LQCConfig{
+		RegistryProtocolBlock:   1,
+		ProofDifficulty:         1,
+		ConsensusHardeningBlock: 50_000,
+	}}
+	if err := storedLiveTestnet.CheckCompatible(
+		upgradedLiveTestnet, 49_999, 0,
+	); err != nil {
+		t.Fatalf("live Testnet rejected upgrade before hard fork: %v", err)
+	}
+
+	err := storedLiveTestnet.CheckCompatible(
+		upgradedLiveTestnet, 50_000, 0,
+	)
+	if err == nil ||
+		err.What != "LQC consensus hardening fork block" ||
+		err.RewindToBlock != 49_999 {
+		t.Fatalf("unexpected old/new client fork boundary: %+v", err)
+	}
+
+	if err := config(50_000).CheckCompatible(config(60_000), 49_999, 0); err != nil {
+		t.Fatalf("future hardening change rejected before activation: %v", err)
+	}
+
+	err = config(50_000).CheckCompatible(config(60_000), 50_000, 0)
+	if err == nil ||
+		err.What != "LQC consensus hardening fork block" ||
+		err.RewindToBlock != 49_999 {
+		t.Fatalf("unexpected hardening compatibility error: %+v", err)
+	}
+
+	if err := config(0).CheckCompatible(config(0), 100_000, 0); err != nil {
+		t.Fatalf("disabled hardening fork incompatible with itself: %v", err)
+	}
+}
+
 func TestCheckCompatible(t *testing.T) {
 	type test struct {
 		stored, new   *ChainConfig

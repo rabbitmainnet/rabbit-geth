@@ -461,6 +461,80 @@ func (r *CanonicalRegistry) ApplyOperation(chainID *big.Int, blockNumber, proofD
 	return nil
 }
 
+// ResetWorkSeatLiveness starts WorkSeat Liveness V2 without carrying any
+// pre-fork missed-turn or jail state into the hard fork.
+func (r *CanonicalRegistry) ResetWorkSeatLiveness(addresses []common.Address) error {
+	if r == nil {
+		return ErrParticipantNotActive
+	}
+	for _, address := range addresses {
+		if address == (common.Address{}) {
+			return ErrInvalidRegistryAddress
+		}
+		if _, exists := r.entries[address]; !exists {
+			return ErrParticipantNotActive
+		}
+	}
+	for _, address := range addresses {
+		participant := r.entries[address]
+		participant.MissedTurns = 0
+		participant.JailedUntil = 0
+		r.entries[address] = participant
+	}
+	return nil
+}
+
+// MarkWorkSeatProducerHeartbeat updates liveness without making registry.Active
+// a condition for persistent WorkSeat ownership.
+func (r *CanonicalRegistry) MarkWorkSeatProducerHeartbeat(address common.Address, blockNumber uint64) error {
+	if r == nil {
+		return ErrParticipantNotActive
+	}
+	participant, exists := r.entries[address]
+	if !exists {
+		return ErrParticipantNotActive
+	}
+	participant.LastHeartbeat = blockNumber
+	participant.MissedTurns = 0
+	participant.JailedUntil = 0
+	r.entries[address] = participant
+	return nil
+}
+
+// ApplyWorkSeatMissedTurn records a missed assigned WorkSeat opportunity.
+// An existing penalty is never extended while the seat is an emergency fallback.
+func (r *CanonicalRegistry) ApplyWorkSeatMissedTurn(address common.Address, blockNumber, maxMissedTurns, jailBlocks uint64) error {
+	if r == nil {
+		return ErrParticipantNotActive
+	}
+	participant, exists := r.entries[address]
+	if !exists {
+		return ErrParticipantNotActive
+	}
+	if participant.JailedUntil > blockNumber {
+		return nil
+	}
+	if maxMissedTurns == 0 {
+		maxMissedTurns = 3
+	}
+	if jailBlocks == 0 {
+		jailBlocks = 256
+	}
+	if participant.MissedTurns != ^uint64(0) {
+		participant.MissedTurns++
+	}
+	if participant.MissedTurns >= maxMissedTurns {
+		participant.MissedTurns = 0
+		until, ok := checkedRegistryBlockAdd(blockNumber, jailBlocks)
+		if !ok {
+			until = ^uint64(0)
+		}
+		participant.JailedUntil = until
+	}
+	r.entries[address] = participant
+	return nil
+}
+
 func (r *CanonicalRegistry) MarkProducerHeartbeat(address common.Address, blockNumber uint64) error {
 	if r == nil {
 		return ErrParticipantNotActive

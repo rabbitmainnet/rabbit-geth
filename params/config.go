@@ -610,20 +610,21 @@ func (c CliqueConfig) String() string {
 
 // LQCConfig is the consensus engine config for Rabbit Queue Consensus.
 type LQCConfig struct {
-	CommitteeMin          uint64           `json:"committeeMin"`
-	CommitteeMax          uint64           `json:"committeeMax"`
-	CommitteeRatioBps     uint64           `json:"committeeRatioBps"`
-	FallbackSlots         uint64           `json:"fallbackSlots"`
-	FallbackWindowMs      uint64           `json:"fallbackWindowMs"`
-	TargetBlockTimeMs     uint64           `json:"targetBlockTimeMs"`
-	EraLength             uint64           `json:"eraLength"`
-	ProofType             string           `json:"proofType"`
-	ProofDifficulty       uint64           `json:"proofDifficulty"`
-	ActivityWindow        uint64           `json:"activityWindow"`
-	EpochLength           uint64           `json:"epochLength"`
-	RegistryMode          string           `json:"registryMode"`
-	BootstrapParticipants []common.Address `json:"bootstrapParticipants,omitempty"`
-	RegistryProtocolBlock uint64           `json:"registryProtocolBlock,omitempty"`
+	CommitteeMin            uint64           `json:"committeeMin"`
+	CommitteeMax            uint64           `json:"committeeMax"`
+	CommitteeRatioBps       uint64           `json:"committeeRatioBps"`
+	FallbackSlots           uint64           `json:"fallbackSlots"`
+	FallbackWindowMs        uint64           `json:"fallbackWindowMs"`
+	TargetBlockTimeMs       uint64           `json:"targetBlockTimeMs"`
+	EraLength               uint64           `json:"eraLength"`
+	ProofType               string           `json:"proofType"`
+	ProofDifficulty         uint64           `json:"proofDifficulty"`
+	ActivityWindow          uint64           `json:"activityWindow"`
+	EpochLength             uint64           `json:"epochLength"`
+	RegistryMode            string           `json:"registryMode"`
+	BootstrapParticipants   []common.Address `json:"bootstrapParticipants,omitempty"`
+	RegistryProtocolBlock   uint64           `json:"registryProtocolBlock,omitempty"`
+	ConsensusHardeningBlock uint64           `json:"consensusHardeningBlock,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
 	BootstrapOnlyUntil uint64   `json:"bootstrapOnlyUntil,omitempty"`
@@ -648,6 +649,14 @@ func (c *LQCConfig) registryProtocolForkBlock() *big.Int {
 		return nil
 	}
 	return new(big.Int).SetUint64(c.RegistryProtocolBlock)
+}
+
+// consensusHardeningForkBlock returns the independent hard-fork block.
+func (c *LQCConfig) consensusHardeningForkBlock() *big.Int {
+	if c == nil || c.ConsensusHardeningBlock == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.ConsensusHardeningBlock)
 }
 
 func (c *LQCConfig) validateRegistryProtocol() error {
@@ -972,6 +981,11 @@ type BlobScheduleConfig struct {
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
+// IsConsensusHardening reports whether the independent LQC hard fork is active.
+func (c *ChainConfig) IsConsensusHardening(num *big.Int) bool {
+	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusHardeningForkBlock(), num)
+}
+
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	return isBlockForked(c.HomesteadBlock, num)
 }
@@ -1289,6 +1303,12 @@ func (bc *BlobConfig) validate() error {
 }
 
 func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, headTimestamp uint64) *ConfigCompatError {
+	storedHardeningFork := c.LQC.consensusHardeningForkBlock()
+	newHardeningFork := newcfg.LQC.consensusHardeningForkBlock()
+	if isForkBlockIncompatible(storedHardeningFork, newHardeningFork, headNumber) {
+		return newBlockCompatError("LQC consensus hardening fork block", storedHardeningFork, newHardeningFork)
+	}
+
 	storedRegistryFork := c.LQC.registryProtocolForkBlock()
 	newRegistryFork := newcfg.LQC.registryProtocolForkBlock()
 	if isForkBlockIncompatible(storedRegistryFork, newRegistryFork, headNumber) {

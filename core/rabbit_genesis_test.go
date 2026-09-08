@@ -41,3 +41,12 @@ func TestRabbitGenesisAllowsOnlyMainnetAndTestnetChainIDs(t *testing.T) {
 		t.Fatalf("unexpected invalid chainId result: %v", err)
 	}
 }
+
+func TestRabbitTestnetGenesisHashFrozen(t *testing.T) {
+	genesis := loadRabbitGenesisForValidation(t, "rabbit-testnet")
+
+	const want = "0x9b71d7f2922fdf8383a4a12be5594e25938625195e0d84c05c3bd71b7bcf93f7"
+	if got := genesis.ToBlock().Hash().Hex(); got != want {
+		t.Fatalf("Rabbit Testnet genesis hash = %s, want %s", got, want)
+	}
+}

@@ -140,6 +140,45 @@ func workV1EngineLabHybridSelection(
 }
 
 // Pure boundary used by tests and by the active LAB wrapper.
+// workV1EngineLabOrderSeatsByLiveness preserves the deterministic WorkSeat
+// order inside each group while moving temporarily penalized seats behind READY
+// seats. The activation block itself deliberately keeps every seat READY.
+func (l *LQC) workV1EngineLabOrderSeatsByLiveness(
+	registry *CanonicalRegistry,
+	ordered []WorkSeatV1,
+	blockNumber uint64,
+) ([]WorkSeatV1, error) {
+	if l == nil ||
+		l.config == nil ||
+		l.config.ConsensusHardeningBlock == 0 ||
+		blockNumber <= l.config.ConsensusHardeningBlock {
+		return append([]WorkSeatV1(nil), ordered...), nil
+	}
+	if registry == nil {
+		return nil, ErrParticipantNotActive
+	}
+
+	ready := make([]WorkSeatV1, 0, len(ordered))
+	penalized := make([]WorkSeatV1, 0, len(ordered))
+
+	for _, seat := range ordered {
+		participant, exists := registry.Participant(seat.Participant)
+		if !exists {
+			return nil, ErrParticipantNotActive
+		}
+		if participant.JailedUntil > blockNumber {
+			penalized = append(penalized, seat)
+		} else {
+			ready = append(ready, seat)
+		}
+	}
+
+	final := make([]WorkSeatV1, 0, len(ordered))
+	final = append(final, ready...)
+	final = append(final, penalized...)
+	return final, nil
+}
+
 func (l *LQC) workV1EngineLabBuildSeatSelection(
 	chainID *big.Int,
 	sourceEpoch uint64,
@@ -210,15 +249,26 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		committeeSize,
 	)
 
-	workSelection, err := BuildWorkSelectionV1(
+	orderedSeats, err := DeterministicallyOrderWorkSeatsV1(
 		eligibleSeats,
 		selectionSeed,
-		fallbackCount,
-		committeeSize,
 	)
 	if err != nil {
 		return HybridSelection{}, false, err
 	}
+	orderedSeats, err = l.workV1EngineLabOrderSeatsByLiveness(
+		registry,
+		orderedSeats,
+		blockNumber,
+	)
+	if err != nil {
+		return HybridSelection{}, false, err
+	}
+	workSelection := buildWorkSelectionFromOrderedSeatsV1(
+		orderedSeats,
+		fallbackCount,
+		committeeSize,
+	)
 	return workV1EngineLabHybridSelection(workSelection),
 		true,
 		nil
@@ -441,6 +491,51 @@ func (l *LQC) selectionForHeaderMaybeWorkV1Lab(
 // Work-seat mode deliberately does NOT apply the legacy registry
 // address-strike rule. Eligibility and role assignment come from the canonical
 // unique-wallet WorkSeat set for the source epoch.
+// workV1EngineLabApplySeatLiveness applies the deterministic WorkSeat
+// liveness transition shared by header preparation and verification.
+func (l *LQC) workV1EngineLabApplySeatLiveness(
+	registry *CanonicalRegistry,
+	blockNumber uint64,
+	selection HybridSelection,
+	producer common.Address,
+	rules RegistrySnapshotRules,
+) error {
+	if l == nil ||
+		l.config == nil ||
+		l.config.ConsensusHardeningBlock == 0 ||
+		blockNumber < l.config.ConsensusHardeningBlock {
+		return nil
+	}
+
+	allowed, queuePos := IsAuthorAllowed(selection, producer)
+	if !allowed {
+		return ErrUnauthorizedRegistryProducer
+	}
+
+	if blockNumber == l.config.ConsensusHardeningBlock {
+		addresses := make([]common.Address, 0, len(selection.Ordered))
+		for _, seat := range selection.Ordered {
+			addresses = append(addresses, seat.Address)
+		}
+		if err := registry.ResetWorkSeatLiveness(addresses); err != nil {
+			return err
+		}
+	} else {
+		for index := 0; index < queuePos; index++ {
+			if err := registry.ApplyWorkSeatMissedTurn(
+				selection.Ordered[index].Address,
+				blockNumber,
+				rules.MaxMissedTurns,
+				rules.JailBlocks,
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	return registry.MarkWorkSeatProducerHeartbeat(producer, blockNumber)
+}
+
 func (l *LQC) workV1EngineLabPrepareRegistryBySeats(
 	chain consensus.ChainHeaderReader,
 	parent *RegistrySnapshot,
@@ -468,6 +563,11 @@ func (l *LQC) workV1EngineLabPrepareRegistryBySeats(
 	}
 	rules := l.registryRules()
 	blockNumber := header.Number.Uint64()
+	if err := l.workV1EngineLabApplySeatLiveness(
+		registry, blockNumber, selection, header.Coinbase, rules,
+	); err != nil {
+		return err
+	}
 
 	operations := make(
 		[]RegistryOperation,
@@ -635,6 +735,11 @@ func (l *LQC) workV1EngineLabApplyRegistryBySeats(
 	}
 	rules := l.registryRules()
 	blockNumber := header.Number.Uint64()
+	if err := l.workV1EngineLabApplySeatLiveness(
+		registry, blockNumber, selection, header.Coinbase, rules,
+	); err != nil {
+		return nil, err
+	}
 
 	v2Extra, err := EncodeRegistryHeaderExtra(
 		envelope.BlockNumber,

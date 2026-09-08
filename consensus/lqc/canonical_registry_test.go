@@ -233,6 +233,65 @@ func TestRegistryOperationRejectsExcessiveFutureValidity(t *testing.T) {
 	}
 }
 
+func TestCanonicalRegistryWorkSeatLivenessIgnoresActiveOwnership(t *testing.T) {
+	address := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	registry := NewCanonicalRegistry()
+	registry.entries[address] = CanonicalParticipant{
+		Address:       address,
+		RegisteredAt:  10,
+		LastHeartbeat: 20,
+		MissedTurns:   2,
+		JailedUntil:   999,
+		Sequence:      7,
+		Active:        false,
+	}
+
+	if err := registry.ResetWorkSeatLiveness([]common.Address{address}); err != nil {
+		t.Fatal(err)
+	}
+	participant, _ := registry.Participant(address)
+	if participant.Active || participant.MissedTurns != 0 || participant.JailedUntil != 0 {
+		t.Fatalf("fork reset changed ownership or kept penalty: %+v", participant)
+	}
+
+	for block := uint64(50_001); block <= 50_003; block++ {
+		if err := registry.ApplyWorkSeatMissedTurn(address, block, 3, 256); err != nil {
+			t.Fatal(err)
+		}
+	}
+	participant, _ = registry.Participant(address)
+	if participant.Active || participant.MissedTurns != 0 || participant.JailedUntil != 50_259 {
+		t.Fatalf("unexpected WorkSeat jail state: %+v", participant)
+	}
+
+	if err := registry.ApplyWorkSeatMissedTurn(address, 50_100, 3, 256); err != nil {
+		t.Fatal(err)
+	}
+	participant, _ = registry.Participant(address)
+	if participant.JailedUntil != 50_259 {
+		t.Fatalf("WorkSeat jail was extended: %+v", participant)
+	}
+
+	if err := registry.ApplyWorkSeatMissedTurn(address, 50_259, 3, 256); err != nil {
+		t.Fatal(err)
+	}
+	participant, _ = registry.Participant(address)
+	if participant.MissedTurns != 1 {
+		t.Fatalf("WorkSeat did not return automatically: %+v", participant)
+	}
+
+	if err := registry.MarkWorkSeatProducerHeartbeat(address, 50_260); err != nil {
+		t.Fatal(err)
+	}
+	participant, _ = registry.Participant(address)
+	if participant.Active ||
+		participant.LastHeartbeat != 50_260 ||
+		participant.MissedTurns != 0 ||
+		participant.JailedUntil != 0 {
+		t.Fatalf("valid WorkSeat production did not clear liveness: %+v", participant)
+	}
+}
+
 func TestCanonicalRegistryZeroRootIsStable(t *testing.T) {
 	left := NewCanonicalRegistry().Root()
 	right := NewCanonicalRegistry().Root()
