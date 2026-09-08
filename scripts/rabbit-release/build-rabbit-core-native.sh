@@ -69,7 +69,7 @@ export CGO_LDFLAGS="-L$work/RandomX/build -lrandomx"
 
 go test -tags 'rabbit_workv1 rabbit_randomx' ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
 
-package="rabbit-core-testnet-v2-$TARGET"
+package="rabbit-core-testnet-v2.2-$TARGET"
 stage="$work/$package"
 mkdir -p "$stage" dist
 
@@ -91,7 +91,7 @@ cp docs/rabbit-core.md docs/rabbit-miner.md "$stage/"
 cp scripts/rabbit-release/NOTICE-TESTNET.txt "$stage/NOTICE-TESTNET.txt"
 
 cat > "$stage/BUILD-METADATA.txt" <<EOF
-RABBIT_RELEASE=rabbit-core-testnet-v2
+RABBIT_RELEASE=rabbit-core-testnet-v2.2
 SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth
 SOURCE_COMMIT=$source_commit
 TARGET=$TARGET
@@ -107,13 +107,13 @@ printf '%s\n' \
   'enode://867431475238a2da10b62aeb2197d00baa4880f66b14ca97ec99ef51d13143791cf89893a8f41e1fcf1bd0e0f1ef86081d0c28b268953f723e6dd3c18efc8a39@137.184.105.140:30303,enode://b345298a2e97c249e2e7987f7a7b9289d7f0f6bc02b06bba8d7b6c478ae62a293952c8187fb67c30d2ecf60332080b79a8ab3584d4d87d34bf549e6122208b07@162.243.49.184:30303' \
   > "$stage/bootnodes.txt"
 
-cat > "$stage/start-rabbit-core.command" <<'LAUNCHER'
+cat > "$stage/Start-Rabbit-Core.sh" <<'LAUNCHER'
 #!/usr/bin/env bash
-set -Eeuo pipefail
-cd -- "$(dirname -- "$0")"
-exec ./rabbit-core "$@"
+set -e
+cd "$(dirname "$0")"
+exec ./rabbit-core
 LAUNCHER
-chmod 755 "$stage/rabbit-core" "$stage/rabbit-node" "$stage/rabbit-miner" "$stage/start-rabbit-core.command"
+chmod 755 "$stage/rabbit-core" "$stage/rabbit-node" "$stage/rabbit-miner" "$stage/Start-Rabbit-Core.sh"
 
 (
   cd "$stage"

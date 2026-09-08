@@ -52,7 +52,7 @@ consensus or mining.
 
 ## 4. First run
 
-1. open `Start-Rabbit-Core.cmd` on Windows or `start-rabbit-core.command` on Linux;
+1. open `Start-Rabbit-Core.cmd` on Windows or `Start-Rabbit-Core.sh` on Linux;
 2. choose a strong mining-wallet password;
 3. back up the encrypted keystore created in the Rabbit Testnet data directory;
 4. allow the node to synchronize;
