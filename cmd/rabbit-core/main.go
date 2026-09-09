@@ -354,12 +354,13 @@ func rpcCall(port uint, method string) (string, error) {
 }
 
 func waitForNode(ctx context.Context, port uint, nodeDone <-chan error) error {
-	for attempt := 0; attempt < 120; attempt++ {
+	for attempt := 0; ; attempt++ {
 		select {
 		case err := <-nodeDone:
 			return fmt.Errorf("Rabbit node exited during startup: %w", err)
 		default:
 		}
+
 		chainID, err := rpcCall(port, "eth_chainId")
 		if err == nil {
 			if chainID != officialChainID {
@@ -367,13 +368,17 @@ func waitForNode(ctx context.Context, port uint, nodeDone <-chan error) error {
 			}
 			return nil
 		}
+
+		if attempt > 0 && attempt%30 == 0 {
+			fmt.Println("Rabbit node is rebuilding the canonical LCQ state. Keep Rabbit Core open...")
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(time.Second):
 		}
 	}
-	return errors.New("Rabbit node did not become ready")
 }
 
 func waitForProcess(name string, command *exec.Cmd, done <-chan error) {
