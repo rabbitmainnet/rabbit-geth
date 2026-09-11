@@ -704,13 +704,19 @@ func isLiveLQCHead(header *types.Header, now time.Time) bool {
 }
 
 func lqcMayRecoverWithoutSync(header *types.Header, peers int, elapsed time.Duration, now time.Time) bool {
-	// A fresh public client at genesis must never create an isolated local chain
-	// merely because peer discovery has not succeeded yet. Offline recovery is
-	// only valid for a node that already has non-genesis canonical history.
-	if header == nil || header.Number == nil || header.Number.Sign() == 0 {
+	if header == nil || header.Number == nil {
 		return false
 	}
+	if header.Number.Sign() == 0 {
+		// Genesis must remain permissionless without allowing an isolated client
+		// to create a private public-chain fork. Real connected peers plus the
+		// discovery grace allow any wallet to bootstrap block 1. Zero peers never
+		// unlock genesis production.
+		return peers > 0 && elapsed >= lqcSyncDiscoveryGrace
+	}
 	if elapsed >= lqcOfflineRecoveryGrace {
+		// A previously running network may always recover after the bounded
+		// offline grace, including when every earlier producer disappeared.
 		return true
 	}
 	return peers > 0 &&

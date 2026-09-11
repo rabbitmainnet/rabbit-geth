@@ -18,8 +18,9 @@ var errWorkV1EnginePoolProviderLab = errors.New(
 type workV1EnginePoolProviderLab struct {
 	mu sync.Mutex
 
-	pending    func() ([]lqc.WorkCommitCandidateV1, error)
-	includedAt func(
+	prepareEpoch func(uint64) error
+	pending      func() ([]lqc.WorkCommitCandidateV1, error)
+	includedAt   func(
 		blockNumber uint64,
 	) ([]lqc.SignedRandomXWorkTicketV1, bool)
 	removeIncluded func([]common.Hash) uint64
@@ -367,6 +368,15 @@ func (p *workV1EnginePoolProviderLab) provide(
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Engine block preparation can be the first Work V1 action after a
+	// process restart. Initialize the pool from the canonical commit epoch
+	// before reconciliation calls PendingV1.
+	if p.prepareEpoch != nil {
+		if err := p.prepareEpoch(commitEpoch); err != nil {
+			return nil, err
+		}
+	}
+
 	p.reconcileRemovedLocked(commitEpoch)
 	if err := p.reconcileCanonicalPendingLocked(
 		blockNumber,
@@ -440,7 +450,8 @@ func wireWorkV1EngineTicketProviderMaybeLab(
 	}
 
 	provider := &workV1EnginePoolProviderLab{
-		pending: transport.pendingRaw,
+		prepareEpoch: transport.pool.ResetCommitEpochV1,
+		pending:      transport.pendingRaw,
 		includedAt: func(
 			blockNumber uint64,
 		) ([]lqc.SignedRandomXWorkTicketV1, bool) {

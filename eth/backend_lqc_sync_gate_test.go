@@ -26,8 +26,11 @@ func TestLQCMayRecoverWithoutSync(t *testing.T) {
 	if lqcMayRecoverWithoutSync(stale, 2, lqcSyncDiscoveryGrace, now) {
 		t.Fatal("stale head must not use the short discovery grace")
 	}
-	if lqcMayRecoverWithoutSync(genesis, 2, lqcSyncDiscoveryGrace, now) {
-		t.Fatal("genesis bootstrap must not race normal peer discovery")
+	if lqcMayRecoverWithoutSync(genesis, 2, lqcSyncDiscoveryGrace-time.Second, now) {
+		t.Fatal("connected genesis must wait for peer discovery grace")
+	}
+	if !lqcMayRecoverWithoutSync(genesis, 2, lqcSyncDiscoveryGrace, now) {
+		t.Fatal("connected genesis must permit permissionless block-one bootstrap")
 	}
 	if !lqcMayRecoverWithoutSync(stale, 0, lqcOfflineRecoveryGrace, now) {
 		t.Fatal("offline stale chain should recover after the bounded grace")

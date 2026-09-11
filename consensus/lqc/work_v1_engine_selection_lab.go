@@ -537,20 +537,16 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 		return ErrUnauthorizedRegistryProducer
 	}
 
-	if blockNumber == l.config.ConsensusHardeningBlock {
+	if blockNumber == l.config.ConsensusHardeningBlock ||
+		l.isConsensusStabilizationBlock(blockNumber) {
 		addresses := make([]common.Address, 0, len(selection.Ordered))
 		for _, seat := range selection.Ordered {
 			addresses = append(addresses, seat.Address)
 		}
-		if err := registry.ResetWorkSeatLiveness(addresses); err != nil {
-			return err
-		}
-	} else if l.isConsensusStabilizationBlock(blockNumber) {
-		addresses := make([]common.Address, 0, len(selection.Ordered))
-		for _, seat := range selection.Ordered {
-			addresses = append(addresses, seat.Address)
-		}
-		if err := registry.RestoreWorkSeatLiveness(addresses, blockNumber); err != nil {
+		if err := registry.RestoreWorkSeatLiveness(
+			addresses,
+			blockNumber,
+		); err != nil {
 			return err
 		}
 	} else {

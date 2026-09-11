@@ -39,6 +39,41 @@ func workV1EngineProviderCandidateLab(
 	}
 }
 
+func TestWorkV1EnginePoolProviderLabInitializesEpochAfterRestart(
+	t *testing.T,
+) {
+	preparedEpoch := uint64(0)
+	pendingCalls := 0
+
+	provider := &workV1EnginePoolProviderLab{
+		prepareEpoch: func(epoch uint64) error {
+			preparedEpoch = epoch
+			return nil
+		},
+		pending: func() ([]lqc.WorkCommitCandidateV1, error) {
+			pendingCalls++
+			if preparedEpoch == 0 {
+				return nil, lqc.ErrWorkCommitPoolUninitializedV1
+			}
+			return nil, nil
+		},
+	}
+
+	got, err := provider.provide(4022, 31)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preparedEpoch != 31 {
+		t.Fatalf("prepared epoch=%d want=31", preparedEpoch)
+	}
+	if pendingCalls != 1 {
+		t.Fatalf("pending calls=%d want=1", pendingCalls)
+	}
+	if len(got) != 0 {
+		t.Fatalf("tickets=%d want=0", len(got))
+	}
+}
+
 func TestWorkV1EnginePoolProviderLabSameBlockIsIdempotent(
 	t *testing.T,
 ) {

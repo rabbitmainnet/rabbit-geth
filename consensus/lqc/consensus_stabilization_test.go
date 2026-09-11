@@ -112,6 +112,57 @@ func TestRecoveryPreservesParticipantMetadata(t *testing.T) {
 	}
 }
 
+func TestConsensusHardeningRecreatesMissingWorkSeats(t *testing.T) {
+	first := common.HexToAddress(
+		"0x4100000000000000000000000000000000000004",
+	)
+	second := common.HexToAddress(
+		"0x5100000000000000000000000000000000000005",
+	)
+
+	engine := New(&params.LQCConfig{
+		ConsensusHardeningBlock: 260,
+	}, nil)
+	registry := NewCanonicalRegistry()
+	selection := HybridSelection{
+		Ordered: []HybridParticipant{
+			{Address: first},
+			{Address: second},
+		},
+	}
+
+	if err := engine.workV1EngineLabApplySeatLiveness(
+		registry,
+		260,
+		selection,
+		first,
+		RegistrySnapshotRules{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	firstParticipant, firstExists := registry.Participant(first)
+	secondParticipant, secondExists := registry.Participant(second)
+
+	if !firstExists || !secondExists {
+		t.Fatalf(
+			"hardening failed to recreate WorkSeats: first=%v second=%v",
+			firstExists,
+			secondExists,
+		)
+	}
+	if firstParticipant.LastHeartbeat != 260 {
+		t.Fatalf(
+			"producer heartbeat=%d want=260",
+			firstParticipant.LastHeartbeat,
+		)
+	}
+	if firstParticipant.JailedUntil != 0 ||
+		secondParticipant.JailedUntil != 0 {
+		t.Fatal("hardening retained WorkSeat penalties")
+	}
+}
+
 func TestConsensusStabilizationRestoresRegistryAtBoundary(t *testing.T) {
 	first := common.HexToAddress("0x4000000000000000000000000000000000000004")
 	second := common.HexToAddress("0x5000000000000000000000000000000000000005")
