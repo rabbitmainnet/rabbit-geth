@@ -16,7 +16,7 @@ A faster CPU may find admission sooner, but it never receives extra consensus we
 - Explorer: `https://explorer-testnet.rabbitchain.org`
 - Website: `https://rabbitchain.org`
 - Source: `https://github.com/rabbitmainnet/rabbit-geth`
-- Genesis SHA-256: `dfbc8992c5d9bce8684428ed43ca98494bb1745571c966915f8fec1a44157839`
+- Genesis SHA-256: `ab66857a5b28da355ff270ced29176ac151e70e8281dbad8fc8d24a2192fc71b`
 
 ## Complete timeline on a fresh network
 

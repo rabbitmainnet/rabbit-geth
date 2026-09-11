@@ -69,8 +69,8 @@ func TestRabbitTestnetConsensusHardeningScope(t *testing.T) {
 
 	if testnet.Config.LQC == nil ||
 		testnet.Config.LQC.ConsensusHardeningBlock != 50_000 ||
-		testnet.Config.LQC.ConsensusStabilizationBlock != 0 {
-		t.Fatalf("Rabbit Testnet hardening block = %v, want 50000",
+		testnet.Config.LQC.ConsensusStabilizationBlock != 50_500 {
+		t.Fatalf("Rabbit Testnet consensus forks = %v, want hardening=50000 stabilization=50500",
 			testnet.Config.LQC)
 	}
 
