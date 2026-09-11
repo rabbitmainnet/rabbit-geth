@@ -610,21 +610,22 @@ func (c CliqueConfig) String() string {
 
 // LQCConfig is the consensus engine config for Rabbit Queue Consensus.
 type LQCConfig struct {
-	CommitteeMin            uint64           `json:"committeeMin"`
-	CommitteeMax            uint64           `json:"committeeMax"`
-	CommitteeRatioBps       uint64           `json:"committeeRatioBps"`
-	FallbackSlots           uint64           `json:"fallbackSlots"`
-	FallbackWindowMs        uint64           `json:"fallbackWindowMs"`
-	TargetBlockTimeMs       uint64           `json:"targetBlockTimeMs"`
-	EraLength               uint64           `json:"eraLength"`
-	ProofType               string           `json:"proofType"`
-	ProofDifficulty         uint64           `json:"proofDifficulty"`
-	ActivityWindow          uint64           `json:"activityWindow"`
-	EpochLength             uint64           `json:"epochLength"`
-	RegistryMode            string           `json:"registryMode"`
-	BootstrapParticipants   []common.Address `json:"bootstrapParticipants,omitempty"`
-	RegistryProtocolBlock   uint64           `json:"registryProtocolBlock,omitempty"`
-	ConsensusHardeningBlock uint64           `json:"consensusHardeningBlock,omitempty"`
+	CommitteeMin                uint64           `json:"committeeMin"`
+	CommitteeMax                uint64           `json:"committeeMax"`
+	CommitteeRatioBps           uint64           `json:"committeeRatioBps"`
+	FallbackSlots               uint64           `json:"fallbackSlots"`
+	FallbackWindowMs            uint64           `json:"fallbackWindowMs"`
+	TargetBlockTimeMs           uint64           `json:"targetBlockTimeMs"`
+	EraLength                   uint64           `json:"eraLength"`
+	ProofType                   string           `json:"proofType"`
+	ProofDifficulty             uint64           `json:"proofDifficulty"`
+	ActivityWindow              uint64           `json:"activityWindow"`
+	EpochLength                 uint64           `json:"epochLength"`
+	RegistryMode                string           `json:"registryMode"`
+	BootstrapParticipants       []common.Address `json:"bootstrapParticipants,omitempty"`
+	RegistryProtocolBlock       uint64           `json:"registryProtocolBlock,omitempty"`
+	ConsensusHardeningBlock     uint64           `json:"consensusHardeningBlock,omitempty"`
+	ConsensusStabilizationBlock uint64           `json:"consensusStabilizationBlock,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
 	BootstrapOnlyUntil uint64   `json:"bootstrapOnlyUntil,omitempty"`
@@ -657,6 +658,13 @@ func (c *LQCConfig) consensusHardeningForkBlock() *big.Int {
 		return nil
 	}
 	return new(big.Int).SetUint64(c.ConsensusHardeningBlock)
+}
+
+func (c *LQCConfig) consensusStabilizationForkBlock() *big.Int {
+	if c == nil || c.ConsensusStabilizationBlock == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.ConsensusStabilizationBlock)
 }
 
 func (c *LQCConfig) validateRegistryProtocol() error {
@@ -986,6 +994,10 @@ func (c *ChainConfig) IsConsensusHardening(num *big.Int) bool {
 	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusHardeningForkBlock(), num)
 }
 
+func (c *ChainConfig) IsConsensusStabilization(num *big.Int) bool {
+	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusStabilizationForkBlock(), num)
+}
+
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	return isBlockForked(c.HomesteadBlock, num)
 }
@@ -1307,6 +1319,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	newHardeningFork := newcfg.LQC.consensusHardeningForkBlock()
 	if isForkBlockIncompatible(storedHardeningFork, newHardeningFork, headNumber) {
 		return newBlockCompatError("LQC consensus hardening fork block", storedHardeningFork, newHardeningFork)
+	}
+
+	storedStabilizationFork := c.LQC.consensusStabilizationForkBlock()
+	newStabilizationFork := newcfg.LQC.consensusStabilizationForkBlock()
+	if isForkBlockIncompatible(storedStabilizationFork, newStabilizationFork, headNumber) {
+		return newBlockCompatError("LQC consensus stabilization fork block", storedStabilizationFork, newStabilizationFork)
 	}
 
 	storedRegistryFork := c.LQC.registryProtocolForkBlock()

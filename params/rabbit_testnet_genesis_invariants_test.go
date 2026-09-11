@@ -68,13 +68,15 @@ func TestRabbitTestnetConsensusHardeningScope(t *testing.T) {
 	testnet := loadRabbitTestnetGenesis(t)
 
 	if testnet.Config.LQC == nil ||
-		testnet.Config.LQC.ConsensusHardeningBlock != 50_000 {
+		testnet.Config.LQC.ConsensusHardeningBlock != 50_000 ||
+		testnet.Config.LQC.ConsensusStabilizationBlock != 0 {
 		t.Fatalf("Rabbit Testnet hardening block = %v, want 50000",
 			testnet.Config.LQC)
 	}
 
 	if RabbitChainConfig.LQC != nil &&
-		RabbitChainConfig.LQC.ConsensusHardeningBlock != 0 {
+		(RabbitChainConfig.LQC.ConsensusHardeningBlock != 0 ||
+			RabbitChainConfig.LQC.ConsensusStabilizationBlock != 0) {
 		t.Fatalf("Rabbit Mainnet must not inherit Testnet hard fork: %+v",
 			RabbitChainConfig.LQC)
 	}

@@ -151,7 +151,8 @@ func (l *LQC) workV1EngineLabOrderSeatsByLiveness(
 	if l == nil ||
 		l.config == nil ||
 		l.config.ConsensusHardeningBlock == 0 ||
-		blockNumber <= l.config.ConsensusHardeningBlock {
+		blockNumber <= l.config.ConsensusHardeningBlock ||
+		l.isConsensusStabilizationBlock(blockNumber) {
 		return append([]WorkSeatV1(nil), ordered...), nil
 	}
 	if registry == nil {
@@ -177,6 +178,23 @@ func (l *LQC) workV1EngineLabOrderSeatsByLiveness(
 	final = append(final, ready...)
 	final = append(final, penalized...)
 	return final, nil
+}
+
+func workV1EngineLabFilterCommitteeByLiveness(
+	selection WorkSelectionV1,
+	registry *CanonicalRegistry,
+	blockNumber uint64,
+) WorkSelectionV1 {
+	filtered := make([]WorkSeatV1, 0, len(selection.Committee))
+	for _, seat := range selection.Committee {
+		participant, exists := registry.Participant(seat.Participant)
+		if !exists || participant.JailedUntil > blockNumber {
+			continue
+		}
+		filtered = append(filtered, seat)
+	}
+	selection.Committee = filtered
+	return selection
 }
 
 func (l *LQC) workV1EngineLabBuildSeatSelection(
@@ -269,6 +287,13 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		fallbackCount,
 		committeeSize,
 	)
+	if l.consensusCommitteeLivenessActive(blockNumber) {
+		workSelection = workV1EngineLabFilterCommitteeByLiveness(
+			workSelection,
+			registry,
+			blockNumber,
+		)
+	}
 	return workV1EngineLabHybridSelection(workSelection),
 		true,
 		nil
@@ -518,6 +543,14 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 			addresses = append(addresses, seat.Address)
 		}
 		if err := registry.ResetWorkSeatLiveness(addresses); err != nil {
+			return err
+		}
+	} else if l.isConsensusStabilizationBlock(blockNumber) {
+		addresses := make([]common.Address, 0, len(selection.Ordered))
+		for _, seat := range selection.Ordered {
+			addresses = append(addresses, seat.Address)
+		}
+		if err := registry.RestoreWorkSeatLiveness(addresses, blockNumber); err != nil {
 			return err
 		}
 	} else {

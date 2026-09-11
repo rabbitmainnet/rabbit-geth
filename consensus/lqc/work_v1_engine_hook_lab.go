@@ -511,7 +511,8 @@ func (l *LQC) workV1EngineLabReplayRegistryV3(
 	}
 	synthetic := types.CopyHeader(header)
 	synthetic.Extra = v2Extra
-	snapshot, err := parent.ApplyHeaderWithOpenActivation(
+	snapshot, err := l.applyRegistryHeaderWithOpenActivation(
+		parent,
 		chain.Config().ChainID,
 		l.registryRules(),
 		synthetic,

@@ -333,3 +333,46 @@ func TestTimestampCompatError(t *testing.T) {
 	require.Equal(t, newTimestampCompatError(errWhat, newUint64(0), newUint64(1681338455)).Error(),
 		"mismatching Shanghai fork timestamp in database (have timestamp 0, want timestamp 1681338455, rewindto timestamp 0)")
 }
+
+func TestRabbitConsensusStabilizationConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{
+			LQC: &LQCConfig{
+				ConsensusStabilizationBlock: activation,
+			},
+		}
+	}
+
+	fork := config(100)
+	if fork.IsConsensusStabilization(big.NewInt(99)) {
+		t.Fatal("consensus stabilization active before block 100")
+	}
+	if !fork.IsConsensusStabilization(big.NewInt(100)) {
+		t.Fatal("consensus stabilization inactive at block 100")
+	}
+
+	stored := config(0)
+	upgraded := config(100)
+
+	if err := stored.CheckCompatible(upgraded, 99, 0); err != nil {
+		t.Fatalf("future stabilization rejected before activation: %v", err)
+	}
+
+	err := stored.CheckCompatible(upgraded, 100, 0)
+	if err == nil ||
+		err.What != "LQC consensus stabilization fork block" ||
+		err.RewindToBlock != 99 {
+		t.Fatalf("unexpected stabilization compatibility error: %+v", err)
+	}
+
+	if err := config(100).CheckCompatible(config(200), 99, 0); err != nil {
+		t.Fatalf("future stabilization change rejected: %v", err)
+	}
+
+	err = config(100).CheckCompatible(config(200), 100, 0)
+	if err == nil ||
+		err.What != "LQC consensus stabilization fork block" ||
+		err.RewindToBlock != 99 {
+		t.Fatalf("unexpected changed-fork compatibility error: %+v", err)
+	}
+}

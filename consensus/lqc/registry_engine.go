@@ -205,7 +205,7 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 
 		synthetic := types.CopyHeader(header)
 		synthetic.Extra = v2Extra
-		legacy, err := parent.ApplyHeaderWithOpenActivation(
+		legacy, err := l.applyRegistryHeaderWithOpenActivation(parent,
 			chainID,
 			rules,
 			synthetic,
@@ -227,7 +227,7 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 	if err != nil {
 		return nil, err
 	}
-	return parent.ApplyHeaderWithOpenActivation(
+	return l.applyRegistryHeaderWithOpenActivation(parent,
 		chainID,
 		l.registryRules(),
 		header,
@@ -382,9 +382,10 @@ func (l *LQC) prepareCanonicalRegistryExtra(chain consensus.ChainHeaderReader, h
 		return HybridSelection{}, errInvalidBlockNumber
 	}
 
-	// Block 1 and post-timeout recovery are open activation blocks. The
-	// producer is selected by the miner itself and seeds a fresh operational
-	// registry without changing execution state or chain history.
+	// Block 1 and post-timeout recovery are open activation blocks.
+	// Historical recovery seeds a fresh operational registry. After consensus
+	// stabilization, recovery preserves the existing registry and only
+	// reactivates the emergency producer.
 	// We still build the canonical registry envelope so the subsequent
 	// Work V1/V3 hook has a valid RegistryRoot/Operations payload to extend.
 	if l.openActivationForHeader(chain, header) {
@@ -393,11 +394,34 @@ func (l *LQC) prepareCanonicalRegistryExtra(chain consensus.ChainHeaderReader, h
 		}
 
 		registry := NewCanonicalRegistry()
-		if err := registry.ActivatePermissionlessProducer(
-			header.Coinbase,
+		if l.consensusCommitteeLivenessActive(
 			header.Number.Uint64(),
-		); err != nil {
-			return HybridSelection{}, err
+		) {
+			parent, err := l.registryParentSnapshot(chain, header)
+			if err != nil {
+				return HybridSelection{}, err
+			}
+			registry, err = parent.Registry()
+			if err != nil {
+				return HybridSelection{}, err
+			}
+		}
+		var activationErr error
+		if l.consensusCommitteeLivenessActive(
+			header.Number.Uint64(),
+		) {
+			activationErr = registry.RecoverPermissionlessProducer(
+				header.Coinbase,
+				header.Number.Uint64(),
+			)
+		} else {
+			activationErr = registry.ActivatePermissionlessProducer(
+				header.Coinbase,
+				header.Number.Uint64(),
+			)
+		}
+		if activationErr != nil {
+			return HybridSelection{}, activationErr
 		}
 
 		operations := make([]RegistryOperation, 0, MaxRegistryOperationsPerBlock)
@@ -655,6 +679,26 @@ func (l *LQC) RegistryParticipant(chain consensus.ChainHeaderReader, address com
 	}, nil
 }
 
+func (l *LQC) applyRegistryHeaderWithOpenActivation(
+	parent *RegistrySnapshot,
+	chainID *big.Int,
+	rules RegistrySnapshotRules,
+	header *types.Header,
+	openActivation bool,
+) (*RegistrySnapshot, error) {
+	preserveRegistry := header != nil &&
+		header.Number != nil &&
+		l.consensusCommitteeLivenessActive(header.Number.Uint64())
+
+	return parent.applyHeaderWithOpenActivation(
+		chainID,
+		rules,
+		header,
+		openActivation,
+		preserveRegistry,
+	)
+}
+
 func (l *LQC) verifyCanonicalRegistryHeader(chain consensus.ChainHeaderReader, header *types.Header) (HybridSelection, *RegistrySnapshot, error) {
 	selection, parent, err := l.canonicalSelectionForHeader(chain, header)
 	if err != nil {
@@ -664,7 +708,7 @@ func (l *LQC) verifyCanonicalRegistryHeader(chain consensus.ChainHeaderReader, h
 	if err != nil {
 		return HybridSelection{}, nil, err
 	}
-	child, err := parent.ApplyHeaderWithOpenActivation(
+	child, err := l.applyRegistryHeaderWithOpenActivation(parent,
 		chainID,
 		l.registryRules(),
 		header,

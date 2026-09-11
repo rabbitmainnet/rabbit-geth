@@ -133,6 +133,30 @@ func (r *CanonicalRegistry) ActivatePermissionlessProducer(address common.Addres
 	return nil
 }
 
+// RecoverPermissionlessProducer reactivates a recovery producer without
+// resetting registration or signed-operation sequence metadata.
+func (r *CanonicalRegistry) RecoverPermissionlessProducer(
+	address common.Address,
+	blockNumber uint64,
+) error {
+	if r == nil || address == (common.Address{}) {
+		return ErrInvalidRegistryAddress
+	}
+	participant, exists := r.entries[address]
+	if !exists {
+		return r.ActivatePermissionlessProducer(
+			address,
+			blockNumber,
+		)
+	}
+	participant.Active = true
+	participant.LastHeartbeat = blockNumber
+	participant.MissedTurns = 0
+	participant.JailedUntil = 0
+	r.entries[address] = participant
+	return nil
+}
+
 func (r *CanonicalRegistry) Participants() []CanonicalParticipant {
 	if r == nil {
 		return nil
@@ -486,6 +510,38 @@ func (r *CanonicalRegistry) ResetWorkSeatLiveness(addresses []common.Address) er
 
 // MarkWorkSeatProducerHeartbeat updates liveness without making registry.Active
 // a condition for persistent WorkSeat ownership.
+// RestoreWorkSeatLiveness deterministically recreates registry entries
+// removed by emergency recovery while preserving persistent WorkSeat ownership.
+func (r *CanonicalRegistry) RestoreWorkSeatLiveness(addresses []common.Address, blockNumber uint64) error {
+	if r == nil {
+		return ErrParticipantNotActive
+	}
+	seen := make(map[common.Address]struct{}, len(addresses))
+	for _, address := range addresses {
+		if address == (common.Address{}) {
+			return ErrInvalidRegistryAddress
+		}
+		if _, exists := seen[address]; exists {
+			return ErrInvalidRegistryAddress
+		}
+		seen[address] = struct{}{}
+	}
+	for _, address := range addresses {
+		participant, exists := r.entries[address]
+		if !exists {
+			participant = CanonicalParticipant{
+				Address:      address,
+				RegisteredAt: blockNumber,
+				Active:       false,
+			}
+		}
+		participant.MissedTurns = 0
+		participant.JailedUntil = 0
+		r.entries[address] = participant
+	}
+	return nil
+}
+
 func (r *CanonicalRegistry) MarkWorkSeatProducerHeartbeat(address common.Address, blockNumber uint64) error {
 	if r == nil {
 		return ErrParticipantNotActive

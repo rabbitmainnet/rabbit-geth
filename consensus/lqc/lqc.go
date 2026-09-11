@@ -111,6 +111,20 @@ func (l *LQC) Author(header *types.Header) (common.Address, error) {
 	return header.Coinbase, nil
 }
 
+func (l *LQC) isConsensusStabilizationBlock(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusStabilizationBlock != 0 &&
+		blockNumber == l.config.ConsensusStabilizationBlock
+}
+
+func (l *LQC) consensusCommitteeLivenessActive(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusStabilizationBlock != 0 &&
+		blockNumber > l.config.ConsensusStabilizationBlock
+}
+
 // ResolveLocalParticipant implements consensus.LocalParticipantResolver. The
 // miner passes the current head, so resolve the deterministic queue for the
 // next block using the current head hash as the parent seed.
@@ -146,7 +160,9 @@ func (l *LQC) ResolveLocalParticipant(
 		return consensus.LocalParticipant{QueuePos: -1}
 	}
 	now := time.Now().Unix()
-	if now >= 0 && l.recoveryOpenAt(header, uint64(now)) {
+	if now >= 0 &&
+		!l.isConsensusStabilizationBlock(blockNumber) &&
+		l.recoveryOpenAt(header, uint64(now)) {
 		for _, addr := range accounts {
 			if addr != (common.Address{}) {
 				return consensus.LocalParticipant{Address: addr, QueuePos: 0, Allowed: true}
@@ -210,6 +226,9 @@ func (l *LQC) recoveryOpenAt(parent *types.Header, candidateTime uint64) bool {
 
 func (l *LQC) openActivationForHeader(chain consensus.ChainHeaderReader, header *types.Header) bool {
 	if header == nil || header.Number == nil || header.Number.Sign() <= 0 {
+		return false
+	}
+	if l.isConsensusStabilizationBlock(header.Number.Uint64()) {
 		return false
 	}
 	if header.Number.Uint64() == 1 {
