@@ -342,7 +342,7 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
-	startRabbitBootstrapPeerAssist(ctx, stack)
+	// Rabbit bootnodes remain discovery seeds; do not promote them to static peers.
 
 	// Register wallet event handlers to open and auto-derive wallets
 	events := make(chan accounts.WalletEvent, 16)
