@@ -63,7 +63,7 @@ func (srv *Server) setupPortMapping() {
 	case nat.ExtIP:
 		// ExtIP doesn't block, set the IP right away.
 		ip, _ := srv.NAT.ExternalIP()
-		srv.localnode.SetStaticIP(ip)
+		srv.setRabbitStaticIP(ip)
 		srv.loopWG.Add(1)
 		go srv.consumePortMappingRequests()
 
@@ -133,7 +133,7 @@ func (srv *Server) portMappingLoop() {
 			}
 			// Here, we either failed to get the external IP, or it has changed.
 			lastExtIP = ip
-			srv.localnode.SetStaticIP(ip)
+			srv.setRabbitStaticIP(ip)
 			// Ensure port mappings are refreshed in case we have moved to a new network.
 			for _, m := range mappings {
 				m.nextTime = srv.clock.Now()
