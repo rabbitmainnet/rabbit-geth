@@ -537,6 +537,48 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 	}
 }
 
+func rabbitNodeLogSize(dataDir string) int64 {
+	info, err := os.Stat(filepath.Join(dataDir, "logs", "rabbit-node.log"))
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func rabbitNodeLogHasRecoverableChainDamageSince(dataDir string, offset int64) bool {
+	data, err := os.ReadFile(filepath.Join(dataDir, "logs", "rabbit-node.log"))
+	if err != nil {
+		return false
+	}
+	if offset < 0 || offset > int64(len(data)) {
+		offset = 0
+	}
+	text := strings.ToLower(string(data[offset:]))
+	for _, marker := range []string{
+		"unexpected state history",
+		"failed to recover state",
+		"corruption",
+		"corrupted",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func resetRecoverableLocalChainState(dataDir string) error {
+	// Wallets live in dataDir/keystore and are deliberately never touched.
+	// The local blockchain/state database is reproducible from the network.
+	rabbitDir := filepath.Join(dataDir, "rabbit")
+	for _, name := range []string{"chaindata", "triedb"} {
+		if err := os.RemoveAll(filepath.Join(rabbitDir, name)); err != nil {
+			return fmt.Errorf("remove damaged local %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func run(ctx context.Context, opts options) error {
 	if err := validatePackage(opts); err != nil {
 		return err
@@ -560,6 +602,29 @@ func run(ctx context.Context, opts options) error {
 	if err := initialize(ctx, opts); err != nil {
 		return err
 	}
+
+	logOffset := rabbitNodeLogSize(opts.dataDir)
+	err = start(ctx, opts, keyFile, address, passwordFile, bootnodes)
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	if !rabbitNodeLogHasRecoverableChainDamageSince(opts.dataDir, logOffset) {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("Rabbit Core detected damaged local blockchain state.")
+	fmt.Println("Your encrypted wallet is safe and will NOT be removed.")
+	fmt.Println("Rebuilding the local blockchain database automatically...")
+
+	if resetErr := resetRecoverableLocalChainState(opts.dataDir); resetErr != nil {
+		return fmt.Errorf("automatic local blockchain recovery failed after %v: %w", err, resetErr)
+	}
+	if initErr := initialize(ctx, opts); initErr != nil {
+		return fmt.Errorf("reinitialize Rabbit Testnet after local recovery: %w", initErr)
+	}
+
+	fmt.Println("Local blockchain recovery completed. Restarting Rabbit Node automatically...")
 	return start(ctx, opts, keyFile, address, passwordFile, bootnodes)
 }
 
