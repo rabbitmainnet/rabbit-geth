@@ -107,6 +107,7 @@ type options struct {
 	statusEvery     uint64
 	once            bool
 	verbose         bool
+	randomXLight    bool
 }
 
 func parseOptions() options {
@@ -119,6 +120,7 @@ func parseOptions() options {
 	flag.Uint64Var(&opts.statusEvery, "status-every", 1000, "print progress after this many attempts (0 disables)")
 	flag.BoolVar(&opts.once, "once", false, "stop after the first accepted ticket")
 	flag.BoolVar(&opts.verbose, "verbose", false, "show technical Work V2 and RPC details")
+	flag.BoolVar(&opts.randomXLight, "randomx-light", false, "use low-memory RandomX admission mode")
 	flag.Parse()
 	return opts
 }
@@ -659,6 +661,37 @@ func monitorNetwork(
 	}
 }
 
+type admissionHasher interface {
+	Hash(common.Hash, []byte) (common.Hash, error)
+	Close()
+}
+
+func newAdmissionHasher(forceLight bool) (admissionHasher, string, error) {
+	if forceLight {
+		light, err := rabbitx.NewLightHasher()
+		if err != nil {
+			return nil, "", fmt.Errorf("start RandomX low-memory miner: %w", err)
+		}
+		return light, "LIGHT", nil
+	}
+
+	full, fullErr := rabbitx.NewFullHasher()
+	if fullErr == nil {
+		return full, "FULL", nil
+	}
+
+	light, lightErr := rabbitx.NewLightHasher()
+	if lightErr != nil {
+		return nil, "", fmt.Errorf(
+			"RandomX unavailable: full-memory mode failed: %v; low-memory mode failed: %w",
+			fullErr,
+			lightErr,
+		)
+	}
+	fmt.Printf("WORK   | Full-memory RandomX unavailable (%v). Switching automatically to low-memory mode.\\n", fullErr)
+	return light, "LIGHT", nil
+}
+
 func run(ctx context.Context, opts options) error {
 	key, err := loadKey(opts.keyFile, opts.passwordFile)
 	if err != nil {
@@ -685,7 +718,8 @@ func run(ctx context.Context, opts options) error {
 	var lastReadinessCheck time.Time
 	var readinessOK bool
 
-	var hasher *rabbitx.FullHasher
+	var hasher admissionHasher
+	var hasherMode string
 	defer func() {
 		if hasher != nil {
 			hasher.Close()
@@ -828,9 +862,12 @@ func run(ctx context.Context, opts options) error {
 		}
 		waitingReason = ""
 		if hasher == nil {
-			hasher, err = rabbitx.NewFullHasher()
+			hasher, hasherMode, err = newAdmissionHasher(opts.randomXLight)
 			if err != nil {
-				return fmt.Errorf("start RandomX full-memory miner: %w", err)
+				return err
+			}
+			if hasherMode == "LIGHT" {
+				fmt.Println("WORK   | RandomX low-memory mode active. Mining remains fully compatible.")
 			}
 		}
 
@@ -841,7 +878,7 @@ func run(ctx context.Context, opts options) error {
 			attempts = 0
 			statusAttempts = 0
 			statusStarted = time.Now()
-			fmt.Printf("WORK   | Admission epoch %d opened. Preparing RandomX 1 GiB dataset...\n", epoch)
+			fmt.Printf("WORK   | Admission epoch %d opened. RandomX mode: %s. Mining starts automatically.\n", epoch, hasherMode)
 			fmt.Println("       | This preparation happens once per epoch. Mining starts automatically.")
 			if opts.verbose {
 				fmt.Printf("WORK_CONTEXT epoch=%d difficulty=%s dataset=%s challenge=%s\n",
@@ -879,11 +916,11 @@ func run(ctx context.Context, opts options) error {
 		firstAttempt := attempts == 0
 		proofHash, err := hasher.Hash(epochKey, input)
 		if err != nil {
-			return fmt.Errorf("RandomX full-memory mining: %w", err)
+			return fmt.Errorf("RandomX mining (%s mode): %w", hasherMode, err)
 		}
 		attempts++
 		if firstAttempt {
-			fmt.Println("MINE   | RandomX dataset ready. Searching for this wallet's Work V2 admission proof.")
+			fmt.Printf("MINE   | RandomX %s worker ready. Searching for this wallet's Work V2 admission proof.\n", hasherMode)
 		}
 
 		meets, err := lqc.RandomXWorkHashMeetsTargetV1(proofHash, (*big.Int)(work.Difficulty))

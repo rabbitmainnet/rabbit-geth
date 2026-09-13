@@ -441,42 +441,99 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 		return err
 	}
 
-	fmt.Printf("Rabbit node RPC ready. Wallet: %s\n", address)
+	fmt.Printf("Rabbit node RPC ready. Wallet: %s\\n", address)
 	fmt.Println("Rabbit Core will verify canonical blockchain synchronization before Work V2 admission or LCQ production becomes active.")
-	miner := exec.Command(opts.miner,
-		"--rpc", fmt.Sprintf("http://127.0.0.1:%d", opts.rpcPort),
-		"--keystore", keyFile,
-		"--password-file", passwordFile,
-		"--tickets-per-epoch", "1",
-	)
-	miner.Stdout, miner.Stderr = os.Stdout, os.Stderr
-	if err := miner.Start(); err != nil {
-		if node.Process != nil {
-			_ = node.Process.Kill()
+
+	startMiner := func(lowMemory bool) (*exec.Cmd, chan error, error) {
+		args := []string{
+			"--rpc", fmt.Sprintf("http://127.0.0.1:%d", opts.rpcPort),
+			"--keystore", keyFile,
+			"--password-file", passwordFile,
+			"--tickets-per-epoch", "1",
 		}
-		return fmt.Errorf("start Rabbit miner: %w", err)
+		if lowMemory {
+			args = append(args, "--randomx-light")
+		}
+
+		command := exec.Command(opts.miner, args...)
+		command.Stdout, command.Stderr = os.Stdout, os.Stderr
+		if err := command.Start(); err != nil {
+			return nil, nil, err
+		}
+		done := make(chan error, 1)
+		go func() { done <- command.Wait() }()
+		return command, done, nil
 	}
-	minerDone := make(chan error, 1)
-	go func() { minerDone <- miner.Wait() }()
+
+	lowMemoryMode := false
+	miner, minerDone, err := startMiner(lowMemoryMode)
+	if err != nil {
+		lowMemoryMode = true
+		fmt.Printf("Rabbit Miner could not start in normal mode: %v\\n", err)
+		fmt.Println("Retrying automatically in low-memory mode...")
+		miner, minerDone, err = startMiner(lowMemoryMode)
+		if err != nil {
+			if node.Process != nil {
+				_ = node.Process.Kill()
+			}
+			return fmt.Errorf("start Rabbit miner in low-memory mode: %w", err)
+		}
+	}
 
 	fmt.Println("Rabbit Core is running. Synchronization and mining activation are automatic. Press Ctrl+C to stop safely.")
-	select {
-	case <-ctx.Done():
-		fmt.Println("Stopping Rabbit Miner and Rabbit Node safely. Please wait...")
-		waitForProcess("Rabbit Miner", miner, minerDone)
-		waitForProcess("Rabbit Node", node, nodeDone)
-		fmt.Println("Rabbit Core stopped. Your wallet remains safely stored.")
-		return nil
-	case err := <-minerDone:
-		if node.Process != nil {
-			_ = node.Process.Kill()
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Stopping Rabbit Miner and Rabbit Node safely. Please wait...")
+			if miner != nil && minerDone != nil {
+				waitForProcess("Rabbit Miner", miner, minerDone)
+			}
+			waitForProcess("Rabbit Node", node, nodeDone)
+			fmt.Println("Rabbit Core stopped. Your wallet remains safely stored.")
+			return nil
+
+		case err := <-nodeDone:
+			if miner != nil && miner.Process != nil {
+				_ = miner.Process.Kill()
+			}
+			return fmt.Errorf("Rabbit Node stopped unexpectedly: %w", err)
+
+		case err := <-minerDone:
+			fmt.Printf("Rabbit Miner stopped unexpectedly: %v\\n", err)
+			if !lowMemoryMode {
+				lowMemoryMode = true
+				fmt.Println("Restarting Rabbit Miner automatically in low-memory mode...")
+			} else {
+				fmt.Println("Restarting Rabbit Miner automatically...")
+			}
+
+			select {
+			case <-ctx.Done():
+				fmt.Println("Stopping Rabbit Node safely. Please wait...")
+				waitForProcess("Rabbit Node", node, nodeDone)
+				return nil
+			case <-time.After(3 * time.Second):
+			}
+
+			miner, minerDone, err = startMiner(true)
+			if err != nil {
+				fmt.Printf("Rabbit Miner restart failed: %v. Retrying in 5 seconds.\\n", err)
+				select {
+				case <-ctx.Done():
+					fmt.Println("Stopping Rabbit Node safely. Please wait...")
+					waitForProcess("Rabbit Node", node, nodeDone)
+					return nil
+				case <-time.After(5 * time.Second):
+				}
+				miner, minerDone, err = startMiner(true)
+				if err != nil {
+					if node.Process != nil {
+						_ = node.Process.Kill()
+					}
+					return fmt.Errorf("Rabbit Miner low-memory restart failed: %w", err)
+				}
+			}
 		}
-		return fmt.Errorf("Rabbit Miner stopped unexpectedly: %w", err)
-	case err := <-nodeDone:
-		if miner.Process != nil {
-			_ = miner.Process.Kill()
-		}
-		return fmt.Errorf("Rabbit Node stopped unexpectedly: %w", err)
 	}
 }
 
