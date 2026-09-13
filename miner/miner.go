@@ -292,6 +292,18 @@ func insertLQCBlockIfParentCurrent(chain lqcBlockInserter, parent *types.Header,
 	return true, err
 }
 
+type lqcPeerCounter interface {
+	PeerCount() int
+}
+
+// lqcHasConnectedPeer is the final fail-closed network gate used by the
+// internal LQC producer. A backend without peer telemetry is not allowed
+// to produce public-chain blocks.
+func lqcHasConnectedPeer(backend any) bool {
+	peerCounter, ok := backend.(lqcPeerCounter)
+	return ok && peerCounter.PeerCount() > 0
+}
+
 func (miner *Miner) lqcDevnetLoop() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -301,6 +313,11 @@ func (miner *Miner) lqcDevnetLoop() {
 		case <-miner.lqcStop:
 			return
 		case <-ticker.C:
+			if !lqcHasConnectedPeer(miner.backend) {
+				log.Debug("LQC production blocked: no peers")
+				continue
+			}
+
 			coinbase := miner.lqcCoinbase()
 			if coinbase == (common.Address{}) {
 				log.Warn("LQC devnet skipped block: missing producer address")

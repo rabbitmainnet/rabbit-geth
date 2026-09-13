@@ -630,9 +630,17 @@ func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
 func (s *Ethereum) IsListening() bool                  { return true } // Always listening
 func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downloader }
 func (s *Ethereum) Synced() bool                       { return s.handler.synced.Load() }
-func (s *Ethereum) SetSynced()                         { s.handler.enableSyncedFeatures() }
-func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
-func (s *Ethereum) EngineMaxReorgDepth() uint64        { return s.config.EngineMaxReorgDepth }
+
+func (s *Ethereum) PeerCount() int {
+	if s == nil || s.handler == nil {
+		return 0
+	}
+	return s.handler.peers.len()
+}
+
+func (s *Ethereum) SetSynced()                  { s.handler.enableSyncedFeatures() }
+func (s *Ethereum) ArchiveMode() bool           { return s.config.NoPruning }
+func (s *Ethereum) EngineMaxReorgDepth() uint64 { return s.config.EngineMaxReorgDepth }
 
 // Protocols returns all the currently configured
 // network protocols to start.
@@ -707,20 +715,20 @@ func lqcMayRecoverWithoutSync(header *types.Header, peers int, elapsed time.Dura
 	if header == nil || header.Number == nil {
 		return false
 	}
+	// Public-chain production must fail closed while isolated. Recovery may
+	// relax head freshness, but zero peers must never authorize a private fork.
+	if peers <= 0 {
+		return false
+	}
 	if header.Number.Sign() == 0 {
-		// Genesis must remain permissionless without allowing an isolated client
-		// to create a private public-chain fork. Real connected peers plus the
-		// discovery grace allow any wallet to bootstrap block 1. Zero peers never
-		// unlock genesis production.
-		return peers > 0 && elapsed >= lqcSyncDiscoveryGrace
+		// Block 1 remains permissionless after real peer discovery.
+		return elapsed >= lqcSyncDiscoveryGrace
 	}
 	if elapsed >= lqcOfflineRecoveryGrace {
-		// A previously running network may always recover after the bounded
-		// offline grace, including when every earlier producer disappeared.
+		// A stale network may recover after the bounded grace only while connected.
 		return true
 	}
-	return peers > 0 &&
-		elapsed >= lqcSyncDiscoveryGrace &&
+	return elapsed >= lqcSyncDiscoveryGrace &&
 		isLiveLQCHead(header, now)
 }
 
@@ -733,6 +741,47 @@ func (s *Ethereum) lqcHeadStateAvailable(header *types.Header) bool {
 		return false
 	}
 	return true
+}
+
+// lqcPeerHeadConfirmed requires actual peer agreement before local production
+// resumes after a connectivity loss.
+func (s *Ethereum) lqcPeerHeadConfirmed(header *types.Header) bool {
+	if s == nil || s.handler == nil || header == nil || header.Number == nil {
+		return false
+	}
+
+	s.handler.lqcSyncMu.Lock()
+	syncBusy := s.handler.lqcSyncRunning ||
+		s.handler.lqcSyncCurrent != nil ||
+		s.handler.lqcSyncPending != nil
+	s.handler.lqcSyncMu.Unlock()
+	if syncBusy {
+		return false
+	}
+
+	localNumber := header.Number.Uint64()
+	localHash := header.Hash()
+	confirmed := false
+
+	for _, peer := range s.handler.peers.all() {
+		if peer == nil {
+			continue
+		}
+		r := peer.BlockRange()
+		if r == nil || r.LatestBlockHash == (common.Hash{}) {
+			continue
+		}
+		if r.LatestBlock > localNumber {
+			return false
+		}
+		if r.LatestBlock == localNumber {
+			if r.LatestBlockHash != localHash {
+				return false
+			}
+			confirmed = true
+		}
+	}
+	return confirmed
 }
 
 // enableLQCWhenReady serializes initial sync and LQC production. The producer
@@ -819,11 +868,15 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		if syncRequired {
 			continue
 		}
-		if producerRunning {
+
+		peers := s.handler.peers.len()
+		if peers <= 0 {
+			stopProducer("no peers")
+			startedAt = time.Now()
 			continue
 		}
-		if s.Synced() {
-			markReady("node already synchronized")
+
+		if producerRunning {
 			continue
 		}
 
@@ -833,12 +886,18 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		}
 		now := time.Now()
 		elapsed := now.Sub(startedAt)
-		peers := s.handler.peers.len()
+
 		if !lqcMayRecoverWithoutSync(head, peers, elapsed, now) {
 			continue
 		}
 
-		reason := "offline/bootstrap recovery grace"
+		// Synced() is sticky. After reconnect, require an actual peer
+		// BlockRange agreement with the current local height and hash.
+		if !s.lqcPeerHeadConfirmed(head) {
+			continue
+		}
+
+		reason := "connected stale-head recovery grace"
 		if isLiveLQCHead(head, now) && peers > 0 && elapsed < lqcOfflineRecoveryGrace {
 			reason = "live head confirmed after peer discovery grace"
 		}

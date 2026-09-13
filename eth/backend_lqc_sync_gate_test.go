@@ -21,7 +21,10 @@ func TestLQCMayRecoverWithoutSync(t *testing.T) {
 		t.Fatal("live head with peers should recover after discovery grace")
 	}
 	if lqcMayRecoverWithoutSync(live, 0, lqcSyncDiscoveryGrace, now) {
-		t.Fatal("isolated live head must use the longer offline grace")
+		t.Fatal("isolated live head must never recover without peers")
+	}
+	if lqcMayRecoverWithoutSync(live, 0, lqcOfflineRecoveryGrace, now) {
+		t.Fatal("isolated live head must remain blocked after offline recovery grace")
 	}
 	if lqcMayRecoverWithoutSync(stale, 2, lqcSyncDiscoveryGrace, now) {
 		t.Fatal("stale head must not use the short discovery grace")
@@ -32,8 +35,11 @@ func TestLQCMayRecoverWithoutSync(t *testing.T) {
 	if !lqcMayRecoverWithoutSync(genesis, 2, lqcSyncDiscoveryGrace, now) {
 		t.Fatal("connected genesis must permit permissionless block-one bootstrap")
 	}
-	if !lqcMayRecoverWithoutSync(stale, 0, lqcOfflineRecoveryGrace, now) {
-		t.Fatal("offline stale chain should recover after the bounded grace")
+	if lqcMayRecoverWithoutSync(stale, 0, lqcOfflineRecoveryGrace, now) {
+		t.Fatal("isolated stale chain must never produce after offline recovery grace")
+	}
+	if !lqcMayRecoverWithoutSync(stale, 2, lqcOfflineRecoveryGrace, now) {
+		t.Fatal("stale chain with peers should recover after the bounded grace")
 	}
 	if lqcMayRecoverWithoutSync(genesis, 0, lqcOfflineRecoveryGrace, now) {
 		t.Fatal("fresh genesis must never enter offline recovery and create an isolated public-chain fork")
