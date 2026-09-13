@@ -535,7 +535,17 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 	if cached, ok, err := l.workV1EngineLabCached(hash); err != nil {
 		return nil, err
 	} else if ok && cached.Work.Number == number {
-		return cached, nil
+		if l.config == nil ||
+			l.config.RegistryProtocolBlock == 0 ||
+			number < l.config.RegistryProtocolBlock-1 {
+			return cached, nil
+		}
+		if _, registryOK := l.cachedRegistrySnapshot(
+			number,
+			hash,
+		); registryOK {
+			return cached, nil
+		}
 	}
 
 	currentNumber := number
@@ -549,8 +559,19 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 			return nil, err
 		}
 		if ok && cached.Work.Number == currentNumber {
-			runtime = cached
-			break
+			if l.config == nil ||
+				l.config.RegistryProtocolBlock == 0 ||
+				currentNumber < l.config.RegistryProtocolBlock-1 {
+				runtime = cached
+				break
+			}
+			if _, registryOK := l.cachedRegistrySnapshot(
+				currentNumber,
+				currentHash,
+			); registryOK {
+				runtime = cached
+				break
+			}
 		}
 		if currentNumber == 0 {
 			genesisRuntime, genesisErr := l.workV1EngineLabGenesisRuntime(
