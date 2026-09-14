@@ -626,6 +626,7 @@ type LQCConfig struct {
 	RegistryProtocolBlock       uint64           `json:"registryProtocolBlock,omitempty"`
 	ConsensusHardeningBlock     uint64           `json:"consensusHardeningBlock,omitempty"`
 	ConsensusStabilizationBlock uint64           `json:"consensusStabilizationBlock,omitempty"`
+	ConsensusFairnessBlock      uint64           `json:"consensusFairnessBlock,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
 	BootstrapOnlyUntil uint64   `json:"bootstrapOnlyUntil,omitempty"`
@@ -665,6 +666,13 @@ func (c *LQCConfig) consensusStabilizationForkBlock() *big.Int {
 		return nil
 	}
 	return new(big.Int).SetUint64(c.ConsensusStabilizationBlock)
+}
+
+func (c *LQCConfig) consensusFairnessForkBlock() *big.Int {
+	if c == nil || c.ConsensusFairnessBlock == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.ConsensusFairnessBlock)
 }
 
 func (c *LQCConfig) validateRegistryProtocol() error {
@@ -998,6 +1006,10 @@ func (c *ChainConfig) IsConsensusStabilization(num *big.Int) bool {
 	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusStabilizationForkBlock(), num)
 }
 
+func (c *ChainConfig) IsConsensusFairness(num *big.Int) bool {
+	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusFairnessForkBlock(), num)
+}
+
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	return isBlockForked(c.HomesteadBlock, num)
 }
@@ -1325,6 +1337,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	newStabilizationFork := newcfg.LQC.consensusStabilizationForkBlock()
 	if isForkBlockIncompatible(storedStabilizationFork, newStabilizationFork, headNumber) {
 		return newBlockCompatError("LQC consensus stabilization fork block", storedStabilizationFork, newStabilizationFork)
+	}
+
+	storedFairnessFork := c.LQC.consensusFairnessForkBlock()
+	newFairnessFork := newcfg.LQC.consensusFairnessForkBlock()
+	if isForkBlockIncompatible(storedFairnessFork, newFairnessFork, headNumber) {
+		return newBlockCompatError("LQC consensus fairness fork block", storedFairnessFork, newFairnessFork)
 	}
 
 	storedRegistryFork := c.LQC.registryProtocolForkBlock()

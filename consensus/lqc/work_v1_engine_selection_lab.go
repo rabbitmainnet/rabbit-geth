@@ -152,7 +152,8 @@ func (l *LQC) workV1EngineLabOrderSeatsByLiveness(
 		l.config == nil ||
 		l.config.ConsensusHardeningBlock == 0 ||
 		blockNumber <= l.config.ConsensusHardeningBlock ||
-		l.isConsensusStabilizationBlock(blockNumber) {
+		l.isConsensusStabilizationBlock(blockNumber) ||
+		l.consensusFairnessActive(blockNumber) {
 		return append([]WorkSeatV1(nil), ordered...), nil
 	}
 	if registry == nil {
@@ -538,7 +539,8 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 	}
 
 	if blockNumber == l.config.ConsensusHardeningBlock ||
-		l.isConsensusStabilizationBlock(blockNumber) {
+		l.isConsensusStabilizationBlock(blockNumber) ||
+		l.isConsensusFairnessBlock(blockNumber) {
 		addresses := make([]common.Address, 0, len(selection.Ordered))
 		for _, seat := range selection.Ordered {
 			addresses = append(addresses, seat.Address)
@@ -549,7 +551,7 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 		); err != nil {
 			return err
 		}
-	} else {
+	} else if !l.consensusFairnessActive(blockNumber) {
 		for index := 0; index < queuePos; index++ {
 			if err := registry.ApplyWorkSeatMissedTurn(
 				selection.Ordered[index].Address,

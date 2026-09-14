@@ -254,3 +254,84 @@ func TestLQCHeaderSecurityDetectsSlotTimeOverflow(t *testing.T) {
 		t.Fatalf("saturated slot time = %d, want %d", got, ^uint64(0))
 	}
 }
+
+func TestConsensusFairnessRejectsClockAheadSlot(t *testing.T) {
+	engine, chain, parent, header := londonHeaderSecurityFixture(t)
+	engine.config.ConsensusFairnessBlock = 1
+
+	minTime, err := engine.minAllowedTimeChecked(parent.Time, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.Time != minTime {
+		t.Fatalf("fixture header time=%d want=%d", header.Time, minTime)
+	}
+
+	if err := engine.verifyHeaderAt(chain, header, nil, minTime-1); !errors.Is(err, consensus.ErrFutureBlock) {
+		t.Fatalf("clock-ahead slot error=%v want=%v", err, consensus.ErrFutureBlock)
+	}
+	if err := engine.verifyHeaderAt(chain, header, nil, minTime); err != nil {
+		t.Fatalf("slot rejected at exact time: %v", err)
+	}
+}
+
+func TestConsensusFairnessRejectsClockAheadRecovery(t *testing.T) {
+	engine, chain, _, parent := londonHeaderSecurityFixture(t)
+
+	engine.config.ConsensusHardeningBlock = 1
+	engine.config.ConsensusFairnessBlock = 1
+	engine.config.RecoveryTimeoutMs = 20_000
+
+	chain.headers[parent.Hash()] = parent
+	chain.current = parent
+
+	recoveryTime, ok := checkedRegistryBlockAdd(
+		parent.Time,
+		engine.recoveryTimeoutSeconds(),
+	)
+	if !ok {
+		t.Fatal("recovery time overflow")
+	}
+
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Coinbase:   parent.Coinbase,
+		Difficulty: big.NewInt(0),
+		Number:     big.NewInt(2),
+		GasLimit:   parent.GasLimit,
+		GasUsed:    0,
+		Time:       recoveryTime,
+		Extra:      appendEmptyProducerSeal([]byte("LQC:1:2")),
+		BaseFee:    eip1559.CalcBaseFee(chain.Config(), parent),
+	}
+	signTestHeader(t, chain.Config().ChainID, header)
+
+	if !engine.recoveryOpenAt(parent, header.Time) {
+		t.Fatal("candidate timestamp should open recovery")
+	}
+	if engine.recoveryOpenAt(parent, recoveryTime-1) {
+		t.Fatal("receiver clock opened recovery one second early")
+	}
+
+	if err := engine.verifyHeaderAt(
+		chain,
+		header,
+		nil,
+		recoveryTime-1,
+	); !errors.Is(err, consensus.ErrFutureBlock) {
+		t.Fatalf(
+			"clock-ahead recovery error=%v want=%v",
+			err,
+			consensus.ErrFutureBlock,
+		)
+	}
+
+	if err := engine.verifyHeaderAt(
+		chain,
+		header,
+		nil,
+		recoveryTime,
+	); err != nil {
+		t.Fatalf("recovery rejected at exact receiver time: %v", err)
+	}
+}

@@ -118,6 +118,20 @@ func (l *LQC) isConsensusStabilizationBlock(blockNumber uint64) bool {
 		blockNumber == l.config.ConsensusStabilizationBlock
 }
 
+func (l *LQC) isConsensusFairnessBlock(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusFairnessBlock != 0 &&
+		blockNumber == l.config.ConsensusFairnessBlock
+}
+
+func (l *LQC) consensusFairnessActive(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusFairnessBlock != 0 &&
+		blockNumber >= l.config.ConsensusFairnessBlock
+}
+
 func (l *LQC) consensusCommitteeLivenessActive(blockNumber uint64) bool {
 	return l != nil &&
 		l.config != nil &&
@@ -162,6 +176,7 @@ func (l *LQC) ResolveLocalParticipant(
 	now := time.Now().Unix()
 	if now >= 0 &&
 		!l.isConsensusStabilizationBlock(blockNumber) &&
+		!l.isConsensusFairnessBlock(blockNumber) &&
 		l.recoveryOpenAt(header, uint64(now)) {
 		for _, addr := range accounts {
 			if addr != (common.Address{}) {
@@ -228,7 +243,8 @@ func (l *LQC) openActivationForHeader(chain consensus.ChainHeaderReader, header 
 	if header == nil || header.Number == nil || header.Number.Sign() <= 0 {
 		return false
 	}
-	if l.isConsensusStabilizationBlock(header.Number.Uint64()) {
+	if l.isConsensusStabilizationBlock(header.Number.Uint64()) ||
+		l.isConsensusFairnessBlock(header.Number.Uint64()) {
 		return false
 	}
 	if header.Number.Uint64() == 1 {
@@ -329,6 +345,17 @@ func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchPar
 	if header.Time <= parent.Time {
 		return errors.New("non-increasing block time")
 	}
+
+	// Fairness: a future claimed timestamp must not open emergency recovery
+	// before the receiving node's own clock reaches the recovery threshold.
+	// Keep historical/pre-fork replay semantics unchanged.
+	if l.consensusFairnessActive(header.Number.Uint64()) &&
+		!l.isConsensusFairnessBlock(header.Number.Uint64()) &&
+		l.recoveryOpenAt(parent, header.Time) &&
+		!l.recoveryOpenAt(parent, unixNow) {
+		return consensus.ErrFutureBlock
+	}
+
 	if header.Difficulty == nil || header.Difficulty.Sign() != 0 {
 		return errors.New("lqc requires zero difficulty")
 	}
@@ -414,6 +441,11 @@ func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchPar
 		minTime, err := l.minAllowedTimeChecked(parent.Time, queuePos)
 		if err != nil {
 			return err
+		}
+		// Fairness: a claimed future timestamp cannot open a queue slot early.
+		// The receiving node clock must also have reached the deterministic slot.
+		if l.consensusFairnessActive(header.Number.Uint64()) && unixNow < minTime {
+			return consensus.ErrFutureBlock
 		}
 		if header.Time < minTime {
 			return fmt.Errorf("lqc producer %s published too early at block %d: have %d want >= %d", header.Coinbase.Hex(), header.Number.Uint64(), header.Time, minTime)

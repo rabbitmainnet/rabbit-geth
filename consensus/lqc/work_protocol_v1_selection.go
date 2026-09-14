@@ -23,7 +23,7 @@ type WorkSelectionV1 struct {
 }
 
 type scoredWorkSeatV1 struct {
-	Seat  WorkSeatV1
+	Index int
 	Score common.Hash
 }
 
@@ -49,50 +49,58 @@ func DeterministicallyOrderWorkSeatsV1(
 	seen := make(map[common.Hash]struct{}, len(input))
 	seenParticipants := make(map[common.Address]struct{}, len(input))
 
-	for index, seat := range input {
-		if seat.TicketHash == (common.Hash{}) ||
-			seat.Participant == (common.Address{}) {
+	var scoreInput [64]byte
+	copy(scoreInput[:32], selectionSeed[:])
+	hasher := crypto.NewKeccakState()
+
+	for index := range input {
+		if input[index].TicketHash == (common.Hash{}) ||
+			input[index].Participant == (common.Address{}) {
 			return nil, ErrInvalidWorkSeat
 		}
-		if _, exists := seen[seat.TicketHash]; exists {
+		if _, exists := seen[input[index].TicketHash]; exists {
 			return nil, ErrDuplicateRandomXWorkHash
 		}
-		seen[seat.TicketHash] = struct{}{}
-		if _, exists := seenParticipants[seat.Participant]; exists {
+		seen[input[index].TicketHash] = struct{}{}
+		if _, exists := seenParticipants[input[index].Participant]; exists {
 			return nil, ErrDuplicateWorkParticipantV1
 		}
-		seenParticipants[seat.Participant] = struct{}{}
+		seenParticipants[input[index].Participant] = struct{}{}
+
+		copy(scoreInput[32:], input[index].TicketHash[:])
+
+		var score common.Hash
+		hasher.Reset()
+		_, _ = hasher.Write(scoreInput[:])
+		_, _ = hasher.Read(score[:])
 
 		scored[index] = scoredWorkSeatV1{
-			Seat: seat,
-			Score: crypto.Keccak256Hash(
-				selectionSeed.Bytes(),
-				seat.TicketHash.Bytes(),
-			),
+			Index: index,
+			Score: score,
 		}
 	}
 
 	sort.Slice(scored, func(i, j int) bool {
 		if order := bytes.Compare(
-			scored[i].Score.Bytes(),
-			scored[j].Score.Bytes(),
+			scored[i].Score[:],
+			scored[j].Score[:],
 		); order != 0 {
 			return order < 0
 		}
+		left := input[scored[i].Index]
+		right := input[scored[j].Index]
 		if order := bytes.Compare(
-			scored[i].Seat.TicketHash.Bytes(),
-			scored[j].Seat.TicketHash.Bytes(),
+			left.TicketHash[:],
+			right.TicketHash[:],
 		); order != 0 {
 			return order < 0
 		}
-		return scored[i].Seat.Participant.Cmp(
-			scored[j].Seat.Participant,
-		) < 0
+		return left.Participant.Cmp(right.Participant) < 0
 	})
 
 	ordered := make([]WorkSeatV1, len(scored))
 	for index := range scored {
-		ordered[index] = scored[index].Seat
+		ordered[index] = input[scored[index].Index]
 	}
 	return ordered, nil
 }
