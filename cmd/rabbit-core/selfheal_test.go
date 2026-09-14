@@ -39,52 +39,43 @@ func TestRabbitNodeLogDamageDetectionOnlyReadsCurrentAttempt(t *testing.T) {
 	}
 }
 
-func TestResetRecoverableLocalChainStatePreservesWalletAndNodeIdentity(t *testing.T) {
+func TestRecoveryPreservesExistingBlockchainState(t *testing.T) {
 	dataDir := t.TempDir()
 
-	for _, dir := range []string{
-		filepath.Join(dataDir, "rabbit", "chaindata"),
-		filepath.Join(dataDir, "rabbit", "triedb"),
-		filepath.Join(dataDir, "keystore"),
-	} {
+	chainDir := filepath.Join(dataDir, "rabbit", "chaindata")
+	trieDir := filepath.Join(dataDir, "rabbit", "triedb")
+	keyDir := filepath.Join(dataDir, "keystore")
+
+	for _, dir := range []string{chainDir, trieDir, keyDir} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	key := filepath.Join(dataDir, "keystore", "UTC--test-wallet")
-	nodeKey := filepath.Join(dataDir, "rabbit", "nodekey")
-	if err := os.WriteFile(key, []byte("encrypted-wallet"), 0600); err != nil {
+	chainFile := filepath.Join(chainDir, "existing-chain")
+	trieFile := filepath.Join(trieDir, "existing-trie")
+	keyFile := filepath.Join(keyDir, "UTC--wallet")
+
+	if err := os.WriteFile(chainFile, []byte("chain"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(nodeKey, []byte("node-identity"), 0600); err != nil {
+	if err := os.WriteFile(trieFile, []byte("trie"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "rabbit", "chaindata", "broken"), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "rabbit", "triedb", "broken"), []byte("x"), 0600); err != nil {
+	if err := os.WriteFile(keyFile, []byte("wallet"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := resetRecoverableLocalChainState(dataDir); err != nil {
+	if err := verifyRecoverableLocalChainState(dataDir); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dataDir, "rabbit", "chaindata")); !os.IsNotExist(err) {
-		t.Fatalf("chaindata still exists: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "rabbit", "triedb")); !os.IsNotExist(err) {
-		t.Fatalf("triedb still exists: %v", err)
-	}
-	if got, err := os.ReadFile(key); err != nil || string(got) != "encrypted-wallet" {
-		t.Fatalf("wallet was not preserved: got=%q err=%v", got, err)
-	}
-	if got, err := os.ReadFile(nodeKey); err != nil || string(got) != "node-identity" {
-		t.Fatalf("node identity was not preserved: got=%q err=%v", got, err)
+	for _, file := range []string{chainFile, trieFile, keyFile} {
+		if _, err := os.Stat(file); err != nil {
+			t.Fatalf("recovery removed %s: %v", file, err)
+		}
 	}
 }
-
 func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

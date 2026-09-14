@@ -381,16 +381,27 @@ func waitForNode(ctx context.Context, port uint, nodeDone <-chan error) error {
 	}
 }
 
-func waitForProcess(name string, command *exec.Cmd, done <-chan error) {
+func waitForProcess(name string, command *exec.Cmd, done <-chan error, timeout time.Duration, force bool) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case <-done:
 		fmt.Printf("%s stopped safely.\n", name)
-	case <-time.After(20 * time.Second):
-		fmt.Printf("%s did not stop in time; forcing shutdown.\n", name)
-		if command.Process != nil {
-			_ = command.Process.Kill()
+
+	case <-timer.C:
+		if force {
+			fmt.Printf("%s did not stop in time; forcing shutdown.\n", name)
+			if command.Process != nil {
+				_ = command.Process.Kill()
+			}
+			<-done
+			return
 		}
+
+		fmt.Printf("%s is still closing the blockchain database safely. Please keep Rabbit Core open...\n", name)
 		<-done
+		fmt.Printf("%s stopped safely.\n", name)
 	}
 }
 
@@ -399,7 +410,12 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 	if err := os.MkdirAll(logs, 0700); err != nil {
 		return err
 	}
-	nodeLog, err := os.OpenFile(filepath.Join(logs, "rabbit-node.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+
+	nodeLog, err := os.OpenFile(
+		filepath.Join(logs, "rabbit-node.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0600,
+	)
 	if err != nil {
 		return err
 	}
@@ -424,24 +440,42 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 		"--password", passwordFile,
 		"--cache", "1024",
 	}
-	// Do not use CommandContext here. On Ctrl+C it kills the database process
-	// immediately, racing the node's own graceful shutdown and risking damage.
-	node := exec.Command(opts.node, nodeArgs...)
-	node.Stdout, node.Stderr = nodeLog, nodeLog
-	node.Env = append(os.Environ(), "RABBIT_LQC_COINBASE="+address.Hex())
-	if err := node.Start(); err != nil {
-		return fmt.Errorf("start Rabbit node: %w", err)
+
+	startNode := func() (*exec.Cmd, chan error, error) {
+		command := exec.Command(opts.node, nodeArgs...)
+		command.Stdout = nodeLog
+		command.Stderr = nodeLog
+		command.Env = append(os.Environ(), "RABBIT_LQC_COINBASE="+address.Hex())
+
+		if err := command.Start(); err != nil {
+			return nil, nil, fmt.Errorf("start Rabbit node: %w", err)
+		}
+
+		done := make(chan error, 1)
+		go func() {
+			done <- command.Wait()
+		}()
+
+		return command, done, nil
 	}
-	nodeDone := make(chan error, 1)
-	go func() { nodeDone <- node.Wait() }()
+
+	node, nodeDone, err := startNode()
+	if err != nil {
+		return err
+	}
+
 	if err := waitForNode(ctx, opts.rpcPort, nodeDone); err != nil {
+		if ctx.Err() != nil {
+			waitForProcess("Rabbit Node", node, nodeDone, 3*time.Minute, false)
+			return ctx.Err()
+		}
 		if node.Process != nil {
 			_ = node.Process.Kill()
 		}
 		return err
 	}
 
-	fmt.Printf("Rabbit node RPC ready. Wallet: %s\\n", address)
+	fmt.Printf("Rabbit node RPC ready. Wallet: %s\n", address)
 	fmt.Println("Rabbit Core will verify canonical blockchain synchronization before Work V2 admission or LCQ production becomes active.")
 
 	startMiner := func(lowMemory bool) (*exec.Cmd, chan error, error) {
@@ -451,17 +485,24 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 			"--password-file", passwordFile,
 			"--tickets-per-epoch", "1",
 		}
+
 		if lowMemory {
 			args = append(args, "--randomx-light")
 		}
 
 		command := exec.Command(opts.miner, args...)
-		command.Stdout, command.Stderr = os.Stdout, os.Stderr
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
+
 		if err := command.Start(); err != nil {
 			return nil, nil, err
 		}
+
 		done := make(chan error, 1)
-		go func() { done <- command.Wait() }()
+		go func() {
+			done <- command.Wait()
+		}()
+
 		return command, done, nil
 	}
 
@@ -469,9 +510,10 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 	miner, minerDone, err := startMiner(lowMemoryMode)
 	if err != nil {
 		lowMemoryMode = true
-		fmt.Printf("Rabbit Miner could not start in normal mode: %v\\n", err)
+		fmt.Printf("Rabbit Miner could not start in normal mode: %v\n", err)
 		fmt.Println("Retrying automatically in low-memory mode...")
-		miner, minerDone, err = startMiner(lowMemoryMode)
+
+		miner, minerDone, err = startMiner(true)
 		if err != nil {
 			if node.Process != nil {
 				_ = node.Process.Kill()
@@ -481,25 +523,100 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 	}
 
 	fmt.Println("Rabbit Core is running. Synchronization and mining activation are automatic. Press Ctrl+C to stop safely.")
+
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("Stopping Rabbit Miner and Rabbit Node safely. Please wait...")
+
 			if miner != nil && minerDone != nil {
-				waitForProcess("Rabbit Miner", miner, minerDone)
+				waitForProcess("Rabbit Miner", miner, minerDone, 30*time.Second, true)
 			}
-			waitForProcess("Rabbit Node", node, nodeDone)
-			fmt.Println("Rabbit Core stopped. Your wallet remains safely stored.")
+
+			waitForProcess("Rabbit Node", node, nodeDone, 3*time.Minute, false)
+
+			fmt.Println("Rabbit Core stopped. Your wallet and blockchain data remain safely stored.")
 			return nil
 
-		case err := <-nodeDone:
-			if miner != nil && miner.Process != nil {
-				_ = miner.Process.Kill()
-			}
-			return fmt.Errorf("Rabbit Node stopped unexpectedly: %w", err)
+		case nodeErr := <-nodeDone:
+			fmt.Printf("Rabbit Node stopped unexpectedly: %v\n", nodeErr)
 
-		case err := <-minerDone:
-			fmt.Printf("Rabbit Miner stopped unexpectedly: %v\\n", err)
+			if miner != nil && minerDone != nil {
+				if miner.Process != nil {
+					_ = miner.Process.Kill()
+				}
+				waitForProcess("Rabbit Miner", miner, minerDone, 30*time.Second, true)
+			}
+
+			miner = nil
+			minerDone = nil
+
+			fmt.Println("Existing blockchain data will be preserved.")
+			fmt.Println("Recovering from the last valid local blockchain state automatically...")
+
+			lastErr := nodeErr
+			recovered := false
+
+			for attempt := 1; attempt <= 5; attempt++ {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(3 * time.Second):
+				}
+
+				fmt.Printf("Restarting Rabbit Node automatically (attempt %d/5)...\n", attempt)
+
+				node, nodeDone, err = startNode()
+				if err != nil {
+					lastErr = err
+					fmt.Printf("Rabbit Node restart failed: %v\n", err)
+					continue
+				}
+
+				err = waitForNode(ctx, opts.rpcPort, nodeDone)
+				if err != nil {
+					lastErr = err
+
+					if ctx.Err() != nil {
+						return nil
+					}
+
+					fmt.Printf("Rabbit Node recovery attempt %d did not complete: %v\n", attempt, err)
+					continue
+				}
+
+				fmt.Println("Rabbit Node recovered using the existing blockchain database.")
+				fmt.Println("Resuming blockchain synchronization...")
+
+				miner, minerDone, err = startMiner(lowMemoryMode)
+				if err != nil && !lowMemoryMode {
+					lowMemoryMode = true
+					fmt.Println("Retrying Rabbit Miner automatically in low-memory mode...")
+					miner, minerDone, err = startMiner(true)
+				}
+
+				if err != nil {
+					lastErr = err
+					fmt.Printf("Rabbit Miner restart failed after node recovery: %v\n", err)
+
+					if node.Process != nil {
+						_ = node.Process.Kill()
+					}
+					continue
+				}
+
+				fmt.Println("Rabbit Miner restarted. Mining will activate automatically after canonical synchronization.")
+				recovered = true
+				break
+			}
+
+			if !recovered {
+				return fmt.Errorf("Rabbit Node automatic recovery failed after 5 attempts: %w", lastErr)
+			}
+
+		case minerErr := <-minerDone:
+			fmt.Printf("Rabbit Miner stopped unexpectedly: %v\n", minerErr)
+
 			if !lowMemoryMode {
 				lowMemoryMode = true
 				fmt.Println("Restarting Rabbit Miner automatically in low-memory mode...")
@@ -510,21 +627,23 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 			select {
 			case <-ctx.Done():
 				fmt.Println("Stopping Rabbit Node safely. Please wait...")
-				waitForProcess("Rabbit Node", node, nodeDone)
+				waitForProcess("Rabbit Node", node, nodeDone, 3*time.Minute, false)
 				return nil
 			case <-time.After(3 * time.Second):
 			}
 
 			miner, minerDone, err = startMiner(true)
 			if err != nil {
-				fmt.Printf("Rabbit Miner restart failed: %v. Retrying in 5 seconds.\\n", err)
+				fmt.Printf("Rabbit Miner restart failed: %v. Retrying in 5 seconds.\n", err)
+
 				select {
 				case <-ctx.Done():
 					fmt.Println("Stopping Rabbit Node safely. Please wait...")
-					waitForProcess("Rabbit Node", node, nodeDone)
+					waitForProcess("Rabbit Node", node, nodeDone, 3*time.Minute, false)
 					return nil
 				case <-time.After(5 * time.Second):
 				}
+
 				miner, minerDone, err = startMiner(true)
 				if err != nil {
 					if node.Process != nil {
@@ -567,18 +686,23 @@ func rabbitNodeLogHasRecoverableChainDamageSince(dataDir string, offset int64) b
 	return false
 }
 
-func resetRecoverableLocalChainState(dataDir string) error {
-	// Wallets live in dataDir/keystore and are deliberately never touched.
-	// The local blockchain/state database is reproducible from the network.
+func verifyRecoverableLocalChainState(dataDir string) error {
 	rabbitDir := filepath.Join(dataDir, "rabbit")
 	for _, name := range []string{"chaindata", "triedb"} {
-		if err := os.RemoveAll(filepath.Join(rabbitDir, name)); err != nil {
-			return fmt.Errorf("remove damaged local %s: %w", name, err)
+		path := filepath.Join(rabbitDir, name)
+		info, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect local %s: %w", name, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("local %s is not a directory", name)
 		}
 	}
 	return nil
 }
-
 func run(ctx context.Context, opts options) error {
 	if err := validatePackage(opts); err != nil {
 		return err
@@ -613,18 +737,18 @@ func run(ctx context.Context, opts options) error {
 	}
 
 	fmt.Println()
-	fmt.Println("Rabbit Core detected damaged local blockchain state.")
-	fmt.Println("Your encrypted wallet is safe and will NOT be removed.")
-	fmt.Println("Rebuilding the local blockchain database automatically...")
+	fmt.Println("Rabbit Core detected a recoverable local blockchain-state problem.")
+	fmt.Println("Preserving chaindata, WorkSeats, node identity and encrypted wallet.")
+	fmt.Println("Recovering automatically from the last valid local blockchain state...")
 
-	if resetErr := resetRecoverableLocalChainState(opts.dataDir); resetErr != nil {
-		return fmt.Errorf("automatic local blockchain recovery failed after %v: %w", err, resetErr)
+	if stateErr := verifyRecoverableLocalChainState(opts.dataDir); stateErr != nil {
+		fmt.Errorf("inspect local blockchain state after %v: %w", err, stateErr)
 	}
 	if initErr := initialize(ctx, opts); initErr != nil {
-		return fmt.Errorf("reinitialize Rabbit Testnet after local recovery: %w", initErr)
+		return fmt.Errorf("reapply Rabbit Testnet configuration during recovery: %w", initErr)
 	}
 
-	fmt.Println("Local blockchain recovery completed. Restarting Rabbit Node automatically...")
+	fmt.Println("Restarting Rabbit Node with the existing blockchain database...")
 	return start(ctx, opts, keyFile, address, passwordFile, bootnodes)
 }
 
