@@ -627,6 +627,7 @@ type LQCConfig struct {
 	ConsensusHardeningBlock     uint64           `json:"consensusHardeningBlock,omitempty"`
 	ConsensusStabilizationBlock uint64           `json:"consensusStabilizationBlock,omitempty"`
 	ConsensusFairnessBlock      uint64           `json:"consensusFairnessBlock,omitempty"`
+	ConsensusLivenessV3Block    uint64           `json:"consensusLivenessV3Block,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
 	BootstrapOnlyUntil uint64   `json:"bootstrapOnlyUntil,omitempty"`
@@ -673,6 +674,23 @@ func (c *LQCConfig) consensusFairnessForkBlock() *big.Int {
 		return nil
 	}
 	return new(big.Int).SetUint64(c.ConsensusFairnessBlock)
+}
+
+func (c *LQCConfig) consensusLivenessV3ForkBlock() *big.Int {
+	if c == nil || c.ConsensusLivenessV3Block == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.ConsensusLivenessV3Block)
+}
+
+func (c *LQCConfig) validateConsensusLivenessV3() error {
+	if c == nil || c.ConsensusLivenessV3Block == 0 || c.ConsensusFairnessBlock == 0 {
+		return nil
+	}
+	if c.ConsensusLivenessV3Block < c.ConsensusFairnessBlock {
+		return fmt.Errorf("consensusLivenessV3Block %d precedes consensusFairnessBlock %d", c.ConsensusLivenessV3Block, c.ConsensusFairnessBlock)
+	}
+	return nil
 }
 
 func (c *LQCConfig) validateRegistryProtocol() error {
@@ -1010,6 +1028,10 @@ func (c *ChainConfig) IsConsensusFairness(num *big.Int) bool {
 	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusFairnessForkBlock(), num)
 }
 
+func (c *ChainConfig) IsConsensusLivenessV3(num *big.Int) bool {
+	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusLivenessV3ForkBlock(), num)
+}
+
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	return isBlockForked(c.HomesteadBlock, num)
 }
@@ -1209,6 +1231,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if err := c.LQC.validateRegistryProtocol(); err != nil {
 		return fmt.Errorf("invalid LQC registry configuration: %v", err)
 	}
+	if err := c.LQC.validateConsensusLivenessV3(); err != nil {
+		return fmt.Errorf("invalid LQC consensus configuration: %v", err)
+	}
 	type fork struct {
 		name      string
 		block     *big.Int // forks up to - and including the merge - were defined with block numbers
@@ -1343,6 +1368,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	newFairnessFork := newcfg.LQC.consensusFairnessForkBlock()
 	if isForkBlockIncompatible(storedFairnessFork, newFairnessFork, headNumber) {
 		return newBlockCompatError("LQC consensus fairness fork block", storedFairnessFork, newFairnessFork)
+	}
+
+	storedLivenessV3Fork := c.LQC.consensusLivenessV3ForkBlock()
+	newLivenessV3Fork := newcfg.LQC.consensusLivenessV3ForkBlock()
+	if isForkBlockIncompatible(storedLivenessV3Fork, newLivenessV3Fork, headNumber) {
+		return newBlockCompatError("LQC consensus liveness V3 fork block", storedLivenessV3Fork, newLivenessV3Fork)
 	}
 
 	storedRegistryFork := c.LQC.registryProtocolForkBlock()

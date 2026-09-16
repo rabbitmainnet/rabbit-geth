@@ -191,6 +191,38 @@ func workV1EngineLabRewardCreditsForAuthor(
 	return credits, workV1EngineLabRewardTotalV1(credits).Cmp(totalReward) == 0
 }
 
+func (l *LQC) workV1EngineLabRewardCreditsForAuthorAt(
+	blockNumber uint64,
+	selection HybridSelection,
+	author common.Address,
+	totalReward *uint256.Int,
+	committeeBps uint64,
+) ([]WorkSeatRewardV1, bool) {
+	if author == (common.Address{}) ||
+		totalReward == nil ||
+		totalReward.IsZero() {
+		return nil, false
+	}
+
+	allowed, _ := l.isAuthorAllowedAt(
+		blockNumber,
+		selection,
+		author,
+	)
+	if !allowed {
+		return nil, false
+	}
+
+	credits := workV1EngineLabSeatRewardCredits(
+		totalReward,
+		author,
+		selection.Committee,
+		committeeBps,
+	)
+	return credits,
+		workV1EngineLabRewardTotalV1(credits).Cmp(totalReward) == 0
+}
+
 func (l *LQC) workV1EngineLabRewardSelection(
 	chain consensus.ChainHeaderReader,
 	header *types.Header,
@@ -252,6 +284,179 @@ func (l *LQC) workV1EngineLabRewardSelection(
 	return selection, mode
 }
 
+func workV1EngineLabProducerRewardV3(
+	totalReward *uint256.Int,
+) *uint256.Int {
+	if totalReward == nil || totalReward.IsZero() {
+		return uint256.NewInt(0)
+	}
+	reward := new(uint256.Int).Set(totalReward)
+	reward.Mul(reward, uint256.NewInt(CommitteeClaimProducerBpsV1))
+	reward.Div(reward, uint256.NewInt(10000))
+	return reward
+}
+
+func workV1EngineLabProducerRewardForSelectionV3(
+	totalReward *uint256.Int,
+	selection HybridSelection,
+) *uint256.Int {
+	if totalReward == nil || totalReward.IsZero() {
+		return uint256.NewInt(0)
+	}
+	if len(selection.Committee) == 0 {
+		return new(uint256.Int).Set(totalReward)
+	}
+	return workV1EngineLabProducerRewardV3(totalReward)
+}
+
+func (l *LQC) workV1EngineLabVerifiedClaimsForRewardV3(
+	chain consensus.ChainHeaderReader,
+	header *types.Header,
+) (
+	LQCHeaderEnvelopeV4,
+	CommitteeClaimVerificationContextResolverV1,
+	[]VerifiedCommitteeParticipationV1,
+	error,
+) {
+	if chain == nil || header == nil || header.Number == nil ||
+		header.Number.Sign() <= 0 {
+		return LQCHeaderEnvelopeV4{}, nil, nil,
+			ErrInvalidLQCHeaderRuntimeV4
+	}
+	envelope, err := ValidateLQCHeaderExtraV4(
+		header.Number.Uint64(),
+		MaxWorkTicketsPerBlockV1,
+		header.Extra,
+	)
+	if err != nil {
+		return LQCHeaderEnvelopeV4{}, nil, nil, err
+	}
+	parentRuntime, err := l.workV1EngineLabRuntimeAt(
+		chain,
+		header.Number.Uint64()-1,
+		header.ParentHash,
+	)
+	if err != nil {
+		return LQCHeaderEnvelopeV4{}, nil, nil, err
+	}
+	work, err := l.workV1EngineLabContext(
+		chain,
+		parentRuntime,
+		header.Number.Uint64(),
+		envelope.RegistryRoot,
+	)
+	if err != nil {
+		return LQCHeaderEnvelopeV4{}, nil, nil, err
+	}
+	v4ctx, err := l.workV1EngineLabV4Context(
+		chain,
+		work,
+		header.ParentHash,
+	)
+	if err != nil {
+		return LQCHeaderEnvelopeV4{}, nil, nil, err
+	}
+	_, verified, err := verifyAndApplyCommitteeClaimsV1(
+		v4ctx,
+		envelope.CommitteeParticipationClaims,
+	)
+	if err != nil {
+		return LQCHeaderEnvelopeV4{}, nil, nil, err
+	}
+	return envelope, v4ctx.ResolveClaims, verified, nil
+}
+
+func verifiedCommitteeClaimsForTargetV3(
+	verified []VerifiedCommitteeParticipationV1,
+	targetBlock uint64,
+) []VerifiedCommitteeParticipationV1 {
+	out := make([]VerifiedCommitteeParticipationV1, 0)
+	for _, item := range verified {
+		if item.TargetBlock == targetBlock {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func (l *LQC) distributeWorkV1ClaimRewardsV3(
+	chain consensus.ChainHeaderReader,
+	header *types.Header,
+	statedb vm.StateDB,
+	totalReward *uint256.Int,
+	selection HybridSelection,
+) bool {
+	if chain == nil || header == nil || header.Number == nil ||
+		statedb == nil || totalReward == nil || totalReward.IsZero() {
+		return true
+	}
+	allowed, _ := l.isAuthorAllowedAt(
+		header.Number.Uint64(),
+		selection,
+		header.Coinbase,
+	)
+	if !allowed {
+		return true
+	}
+	envelope, resolver, verified, err :=
+		l.workV1EngineLabVerifiedClaimsForRewardV3(chain, header)
+	if err != nil {
+		// Verification should make this unreachable. Fail closed economically:
+		// mint neither producer nor claim rewards for an invalid V4 transition.
+		return true
+	}
+	credits := make([]WorkSeatRewardV1, 0, 1+len(verified))
+	producerReward := workV1EngineLabProducerRewardForSelectionV3(
+		totalReward,
+		selection,
+	)
+	if !producerReward.IsZero() {
+		credits = append(credits, WorkSeatRewardV1{
+			Address: header.Coinbase,
+			Amount:  producerReward,
+		})
+	}
+	for _, group := range envelope.CommitteeParticipationClaims {
+		claimContext, err := resolver(group.TargetBlock)
+		if err != nil {
+			return true
+		}
+		targetHeader := workV1EngineLabAncestorHeader(
+			chain,
+			header.Number.Uint64()-1,
+			header.ParentHash,
+			group.TargetBlock,
+		)
+		if targetHeader == nil {
+			return true
+		}
+		targetReward := l.blockRewardFor(targetHeader)
+		result, err := CommitteeClaimRewardCreditsV1(
+			targetReward,
+			claimContext.Committee,
+			verifiedCommitteeClaimsForTargetV3(
+				verified,
+				group.TargetBlock,
+			),
+		)
+		if err != nil {
+			return true
+		}
+		credits = append(credits, result.Credits...)
+	}
+	for _, credit := range credits {
+		if credit.Amount == nil || credit.Amount.IsZero() {
+			continue
+		}
+		statedb.AddBalance(
+			credit.Address,
+			credit.Amount,
+			tracing.BalanceIncreaseRewardMineBlock,
+		)
+	}
+	return true
+}
+
 // distributeWorkV1RewardsMaybeLab returns true when the Work V1 policy has
 // fully handled the base block subsidy.
 //
@@ -288,7 +493,16 @@ func (l *LQC) distributeWorkV1RewardsMaybeLab(
 		return true
 
 	case workV1EngineLabRewardSeats:
-		credits, ok := workV1EngineLabRewardCreditsForAuthor(
+		if l.consensusLivenessV3Active(header.Number.Uint64()) {
+			return l.distributeWorkV1ClaimRewardsV3(
+				chain,
+				header,
+				statedb,
+				totalReward,
+				selection,
+			)
+		}
+		credits, ok := l.workV1EngineLabRewardCreditsForAuthorAt(header.Number.Uint64(),
 			selection,
 			header.Coinbase,
 			totalReward,

@@ -2,6 +2,7 @@ package lqc
 
 import (
 	"bytes"
+	"container/heap"
 	"errors"
 	"sort"
 
@@ -25,6 +26,131 @@ type WorkSelectionV1 struct {
 type scoredWorkSeatV1 struct {
 	Index int
 	Score common.Hash
+}
+
+type scoredWorkSeatHeapV1 struct {
+	input []WorkSeatV1
+	items []scoredWorkSeatV1
+}
+
+func (h scoredWorkSeatHeapV1) Len() int { return len(h.items) }
+
+// Less is reversed so the worst retained seat is at the heap root.
+func (h scoredWorkSeatHeapV1) Less(i, j int) bool {
+	return compareScoredWorkSeatsV1(h.items[i], h.items[j], h.input) > 0
+}
+
+func (h scoredWorkSeatHeapV1) Swap(i, j int) {
+	h.items[i], h.items[j] = h.items[j], h.items[i]
+}
+
+func (h *scoredWorkSeatHeapV1) Push(value any) {
+	h.items = append(h.items, value.(scoredWorkSeatV1))
+}
+
+func (h *scoredWorkSeatHeapV1) Pop() any {
+	last := len(h.items) - 1
+	value := h.items[last]
+	h.items = h.items[:last]
+	return value
+}
+
+func compareScoredWorkSeatsV1(left, right scoredWorkSeatV1, input []WorkSeatV1) int {
+	if order := bytes.Compare(left.Score[:], right.Score[:]); order != 0 {
+		return order
+	}
+	leftSeat := input[left.Index]
+	rightSeat := input[right.Index]
+	if order := bytes.Compare(leftSeat.TicketHash[:], rightSeat.TicketHash[:]); order != 0 {
+		return order
+	}
+	return leftSeat.Participant.Cmp(rightSeat.Participant)
+}
+
+// DeterministicallySelectWorkSeatsV1 returns the same prefix as
+// DeterministicallyOrderWorkSeatsV1 without allocating or sorting a full
+// million-seat queue. The input must be a canonical WorkChainSnapshotV1 seat
+// set, whose uniqueness and ordering have already been consensus-validated.
+func DeterministicallySelectWorkSeatsV1(
+	input []WorkSeatV1,
+	selectionSeed common.Hash,
+	limit uint64,
+) ([]WorkSeatV1, error) {
+	return deterministicallySelectWorkSeatsV1(input, selectionSeed, limit, nil)
+}
+
+// deterministicallySelectWorkSeatsV1 optionally places preferred seats before
+// non-preferred seats while preserving the canonical score order inside each
+// group. With preferred == nil it is exactly the prefix of the full order.
+func deterministicallySelectWorkSeatsV1(
+	input []WorkSeatV1,
+	selectionSeed common.Hash,
+	limit uint64,
+	preferred func(WorkSeatV1) bool,
+) ([]WorkSeatV1, error) {
+	if selectionSeed == (common.Hash{}) {
+		return nil, ErrInvalidWorkSelectionV1
+	}
+	if len(input) == 0 || limit == 0 {
+		return nil, nil
+	}
+	if limit > uint64(len(input)) {
+		limit = uint64(len(input))
+	}
+
+	primary := &scoredWorkSeatHeapV1{
+		input: input,
+		items: make([]scoredWorkSeatV1, 0, int(limit)),
+	}
+	secondary := &scoredWorkSeatHeapV1{
+		input: input,
+		items: make([]scoredWorkSeatV1, 0, int(limit)),
+	}
+	var scoreInput [64]byte
+	copy(scoreInput[:32], selectionSeed[:])
+	hasher := crypto.NewKeccakState()
+
+	for index := range input {
+		seat := input[index]
+		if seat.TicketHash == (common.Hash{}) || seat.Participant == (common.Address{}) {
+			return nil, ErrInvalidWorkSeat
+		}
+		copy(scoreInput[32:], seat.TicketHash[:])
+		var score common.Hash
+		hasher.Reset()
+		_, _ = hasher.Write(scoreInput[:])
+		_, _ = hasher.Read(score[:])
+		candidate := scoredWorkSeatV1{Index: index, Score: score}
+		target := primary
+		if preferred != nil && !preferred(seat) {
+			target = secondary
+		}
+		if uint64(target.Len()) < limit {
+			heap.Push(target, candidate)
+		} else if compareScoredWorkSeatsV1(candidate, target.items[0], input) < 0 {
+			target.items[0] = candidate
+			heap.Fix(target, 0)
+		}
+	}
+
+	order := func(items []scoredWorkSeatV1) {
+		sort.Slice(items, func(i, j int) bool {
+			return compareScoredWorkSeatsV1(items[i], items[j], input) < 0
+		})
+	}
+	order(primary.items)
+	order(secondary.items)
+	result := make([]WorkSeatV1, 0, int(limit))
+	for _, selected := range primary.items {
+		result = append(result, input[selected.Index])
+	}
+	for _, selected := range secondary.items {
+		if uint64(len(result)) == limit {
+			break
+		}
+		result = append(result, input[selected.Index])
+	}
+	return result, nil
 }
 
 // DeterministicallyOrderWorkSeatsV1 orders seats only by an already-derived
@@ -81,21 +207,7 @@ func DeterministicallyOrderWorkSeatsV1(
 	}
 
 	sort.Slice(scored, func(i, j int) bool {
-		if order := bytes.Compare(
-			scored[i].Score[:],
-			scored[j].Score[:],
-		); order != 0 {
-			return order < 0
-		}
-		left := input[scored[i].Index]
-		right := input[scored[j].Index]
-		if order := bytes.Compare(
-			left.TicketHash[:],
-			right.TicketHash[:],
-		); order != 0 {
-			return order < 0
-		}
-		return left.Participant.Cmp(right.Participant) < 0
+		return compareScoredWorkSeatsV1(scored[i], scored[j], input) < 0
 	})
 
 	ordered := make([]WorkSeatV1, len(scored))

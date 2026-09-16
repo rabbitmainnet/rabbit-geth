@@ -16,14 +16,15 @@ const (
 	// New capability name. Deliberately NOT "lqct": old Argon2 peers must never
 	// negotiate this RandomX/Work V1 payload by accident.
 	lqcWorkV1ProtocolName    = "lqcw"
-	lqcWorkV1ProtocolVersion = uint(2)
-	lqcWorkV1ProtocolLength  = uint64(2)
+	lqcWorkV1ProtocolVersion = uint(3)
+	lqcWorkV1ProtocolLength  = uint64(3)
 
 	lqcWorkV1StatusMsg     = uint64(0)
 	lqcWorkV1CandidatesMsg = uint64(1)
+	lqcWorkV1ClaimsMsg     = uint64(2)
 
 	lqcWorkV1HandshakeTimeout = 5 * time.Second
-	lqcWorkV1MaxMessageSize   = 8 * 1024
+	lqcWorkV1MaxMessageSize   = 16 * 1024
 	lqcWorkV1MaxKnownPerPeer  = 4096
 	lqcWorkV1InitialSyncLimit = 64
 
@@ -47,11 +48,12 @@ var (
 )
 
 type lqcWorkV1StatusPacket struct {
-	ProtocolVersion uint32
-	WorkVersion     uint32
-	NetworkID       uint64
-	Genesis         common.Hash
-	ChainID         *big.Int
+	ProtocolVersion  uint32
+	WorkVersion      uint32
+	CommitteeVersion uint32
+	NetworkID        uint64
+	Genesis          common.Hash
+	ChainID          *big.Int
 }
 
 type lqcWorkV1Context struct {
@@ -63,6 +65,12 @@ type lqcWorkV1Context struct {
 }
 
 type lqcWorkV1ContextProvider func() (lqcWorkV1Context, error)
+
+type lqcCommitteeContextProvider func(
+	targetBlock uint64,
+) (lqc.CommitteeParticipationVerificationContextV1, error)
+
+type lqcCommitteeInclusionBlockProvider func() uint64
 
 type lqcWorkV1CanonicalReconciler func(commitEpoch uint64) error
 
@@ -81,10 +89,12 @@ type lqcWorkV1TransportConfig struct {
 	NetworkID uint64
 	Genesis   common.Hash
 
-	Context         lqcWorkV1ContextProvider
-	Hasher          lqc.WorkRelayHasherV1
-	PoolPersistence lqc.WorkCommitPoolPersistenceV1
-	SeatStatus      lqcWorkV2SeatStatusProvider
+	Context                 lqcWorkV1ContextProvider
+	Hasher                  lqc.WorkRelayHasherV1
+	PoolPersistence         lqc.WorkCommitPoolPersistenceV1
+	SeatStatus              lqcWorkV2SeatStatusProvider
+	CommitteeContext        lqcCommitteeContextProvider
+	CommitteeInclusionBlock lqcCommitteeInclusionBlockProvider
 }
 
 type lqcWorkV1Transport struct {
@@ -92,14 +102,17 @@ type lqcWorkV1Transport struct {
 	networkID uint64
 	genesis   common.Hash
 
-	context      lqcWorkV1ContextProvider
-	reconcile    lqcWorkV1CanonicalReconciler
-	included     lqcWorkV1CanonicalIncludedCheck
-	hasher       lqc.WorkRelayHasherV1
-	pool         *lqc.WorkCommitPoolV1
-	limiter      *lqc.WorkRelayVerificationLimiterV1
-	fairVerifier *lqcWorkV1FairVerifier
-	seatStatus   lqcWorkV2SeatStatusProvider
+	context                 lqcWorkV1ContextProvider
+	reconcile               lqcWorkV1CanonicalReconciler
+	included                lqcWorkV1CanonicalIncludedCheck
+	hasher                  lqc.WorkRelayHasherV1
+	pool                    *lqc.WorkCommitPoolV1
+	limiter                 *lqc.WorkRelayVerificationLimiterV1
+	fairVerifier            *lqcWorkV1FairVerifier
+	seatStatus              lqcWorkV2SeatStatusProvider
+	committeeContext        lqcCommitteeContextProvider
+	committeeInclusionBlock lqcCommitteeInclusionBlockProvider
+	claimPool               *lqcCommitteeClaimPool
 
 	mu     sync.RWMutex
 	peers  map[string]*lqcWorkV1Peer
@@ -108,6 +121,8 @@ type lqcWorkV1Transport struct {
 	verificationMu         sync.Mutex
 	globalBudgetWindowFrom time.Time
 	globalBudgetUsed       int
+	claimStop              chan struct{}
+	claimDone              chan struct{}
 }
 
 type lqcWorkV1Peer struct {
@@ -156,9 +171,13 @@ func newLQCWorkV1Transport(
 			0,
 			config.PoolPersistence,
 		),
-		limiter:    limiter,
-		seatStatus: config.SeatStatus,
-		peers:      make(map[string]*lqcWorkV1Peer),
+		limiter:                 limiter,
+		seatStatus:              config.SeatStatus,
+		committeeContext:        config.CommitteeContext,
+		committeeInclusionBlock: config.CommitteeInclusionBlock,
+		claimPool:               newLQCCommitteeClaimPool(),
+		peers:                   make(map[string]*lqcWorkV1Peer),
+		claimStop:               make(chan struct{}),
 	}
 	transport.fairVerifier = newLQCWorkV1FairVerifier()
 	return transport, nil
@@ -178,11 +197,12 @@ func (n *lqcWorkV1Transport) Protocol() p2p.Protocol {
 
 func (n *lqcWorkV1Transport) status() lqcWorkV1StatusPacket {
 	return lqcWorkV1StatusPacket{
-		ProtocolVersion: uint32(lqcWorkV1ProtocolVersion),
-		WorkVersion:     uint32(lqc.RandomXWorkProtocolVersion),
-		NetworkID:       n.networkID,
-		Genesis:         n.genesis,
-		ChainID:         new(big.Int).Set(n.chainID),
+		ProtocolVersion:  uint32(lqcWorkV1ProtocolVersion),
+		WorkVersion:      uint32(lqc.RandomXWorkProtocolVersion),
+		CommitteeVersion: uint32(lqc.CommitteeParticipationVersionV1),
+		NetworkID:        n.networkID,
+		Genesis:          n.genesis,
+		ChainID:          new(big.Int).Set(n.chainID),
 	}
 }
 
@@ -262,11 +282,18 @@ func (n *lqcWorkV1Transport) runPeer(
 				message.Size,
 			)
 		}
+		if message.Code == lqcWorkV1ClaimsMsg {
+			var groups []lqc.CommitteeParticipationClaimGroupV1
+			if err := message.Decode(&groups); err != nil {
+				return err
+			}
+			if err := n.acceptCommitteeClaims(groups, peer); err != nil {
+				return err
+			}
+			continue
+		}
 		if message.Code != lqcWorkV1CandidatesMsg {
-			return fmt.Errorf(
-				"invalid lqc work v1 message code: %d",
-				message.Code,
-			)
+			return fmt.Errorf("invalid lqc work v1 message code: %d", message.Code)
 		}
 
 		var candidates []lqc.WorkCommitCandidateV1
@@ -453,6 +480,8 @@ func (n *lqcWorkV1Transport) handshake(
 			errorsCh <- errors.New("lqc work v1 protocol version mismatch")
 		case remote.WorkVersion != status.WorkVersion:
 			errorsCh <- errors.New("lqc work v1 algorithm version mismatch")
+		case remote.CommitteeVersion != status.CommitteeVersion:
+			errorsCh <- errors.New("lqc committee participation version mismatch")
 		case remote.NetworkID != status.NetworkID:
 			errorsCh <- errors.New("lqc work v1 network ID mismatch")
 		case remote.Genesis != status.Genesis:
@@ -557,23 +586,33 @@ func (n *lqcWorkV1Transport) Submit(
 func (n *lqcWorkV1Transport) sendPending(
 	peer *lqcWorkV1Peer,
 ) {
-	if _, err := n.currentContext(); err != nil {
-		return
+	if _, err := n.currentContext(); err == nil {
+		candidates, err := n.pool.AllCanonicalV1()
+		if err == nil {
+			if len(candidates) > lqcWorkV1InitialSyncLimit {
+				candidates = candidates[:lqcWorkV1InitialSyncLimit]
+			}
+			if err := peer.sendCandidateBatches(candidates); err != nil {
+				peer.peer.Log().Debug(
+					"LQC Work V1 initial pool sync failed",
+					"err",
+					err,
+				)
+			}
+		}
 	}
-
-	candidates, err := n.pool.AllCanonicalV1()
-	if err != nil {
-		return
-	}
-	if len(candidates) > lqcWorkV1InitialSyncLimit {
-		candidates = candidates[:lqcWorkV1InitialSyncLimit]
-	}
-	if err := peer.sendCandidateBatches(candidates); err != nil {
-		peer.peer.Log().Debug(
-			"LQC Work V1 initial pool sync failed",
-			"err",
-			err,
+	if n.committeeInclusionBlock != nil {
+		claims := n.pendingCommitteeClaims(
+			n.committeeInclusionBlock(),
+			nil,
 		)
+		if err := peer.sendCommitteeClaims(claims); err != nil {
+			peer.peer.Log().Debug(
+				"LQC committee initial pool sync failed",
+				"err",
+				err,
+			)
+		}
 	}
 }
 
@@ -644,11 +683,19 @@ func (n *lqcWorkV1Transport) Close() {
 	}
 
 	n.mu.Lock()
+	if n.closed {
+		n.mu.Unlock()
+		return
+	}
 	n.closed = true
 	for _, peer := range n.peers {
 		peer.peer.Disconnect(p2p.DiscQuitting)
 	}
 	n.mu.Unlock()
+	close(n.claimStop)
+	if n.claimDone != nil {
+		<-n.claimDone
+	}
 
 	if n.fairVerifier != nil {
 		n.fairVerifier.Close()

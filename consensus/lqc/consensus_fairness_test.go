@@ -461,6 +461,36 @@ func BenchmarkConsensusFairnessOneMillionWorkSeatOrdering(b *testing.B) {
 	}
 }
 
+func BenchmarkConsensusFairnessOneMillionCompactWorkSeatSelection(b *testing.B) {
+	const count = 1_000_000
+	const roleLimit = 1 + 5 + 128
+
+	seats := make([]WorkSeatV1, count)
+	for i := 1; i <= count; i++ {
+		v := uint64(i)
+		var address common.Address
+		var ticket common.Hash
+		for j := 0; j < 8; j++ {
+			address[19-j] = byte(v >> (8 * multiple(j, 1)))
+			ticket[31-j] = byte(v >> (8 * multiple(j, 1)))
+		}
+		seats[i-1] = WorkSeatV1{Participant: address, TicketHash: ticket}
+	}
+
+	seed := common.HexToHash("0x1234")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		selected, err := DeterministicallySelectWorkSeatsV1(seats, seed, roleLimit)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(selected) != roleLimit {
+			b.Fatalf("selected=%d want=%d", len(selected), roleLimit)
+		}
+	}
+}
+
 func multiple(a, b int) uint {
 	return uint(a * b)
 }

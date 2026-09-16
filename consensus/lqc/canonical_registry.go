@@ -468,7 +468,7 @@ func (r *CanonicalRegistry) ApplyOperation(chainID *big.Int, blockNumber, proofD
 			Active:        true,
 		}
 	case RegistryActionHeartbeat:
-		if !exists || !participant.Active {
+		if !exists {
 			return ErrParticipantNotActive
 		}
 		participant.LastHeartbeat = blockNumber
@@ -543,13 +543,19 @@ func (r *CanonicalRegistry) RestoreWorkSeatLiveness(addresses []common.Address, 
 }
 
 func (r *CanonicalRegistry) MarkWorkSeatProducerHeartbeat(address common.Address, blockNumber uint64) error {
-	if r == nil {
-		return ErrParticipantNotActive
+	if r == nil || address == (common.Address{}) {
+		return ErrInvalidRegistryAddress
 	}
+
 	participant, exists := r.entries[address]
 	if !exists {
-		return ErrParticipantNotActive
+		participant = CanonicalParticipant{
+			Address:      address,
+			RegisteredAt: blockNumber,
+			Active:       false,
+		}
 	}
+
 	participant.LastHeartbeat = blockNumber
 	participant.MissedTurns = 0
 	participant.JailedUntil = 0

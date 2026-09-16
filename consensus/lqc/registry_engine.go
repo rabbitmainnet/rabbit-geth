@@ -424,11 +424,15 @@ func (l *LQC) prepareCanonicalRegistryExtra(chain consensus.ChainHeaderReader, h
 			return HybridSelection{}, activationErr
 		}
 
-		operations := make([]RegistryOperation, 0, MaxRegistryOperationsPerBlock)
+		maxOperations := MaxRegistryOperationsPerBlock
+		if l.consensusLivenessV3Active(header.Number.Uint64()) {
+			maxOperations = MaxRegistryOperationsWithCommitteeClaimsV1
+		}
+		operations := make([]RegistryOperation, 0, maxOperations)
 		if l.registryPool != nil {
 			l.registryPool.PruneExpired(header.Number.Uint64())
 			for _, operation := range l.registryPool.Pending(header.Number.Uint64()) {
-				if len(operations) >= MaxRegistryOperationsPerBlock {
+				if len(operations) >= maxOperations {
 					break
 				}
 
@@ -508,11 +512,15 @@ func (l *LQC) prepareCanonicalRegistryExtra(chain consensus.ChainHeaderReader, h
 		return HybridSelection{}, err
 	}
 
-	operations := make([]RegistryOperation, 0, MaxRegistryOperationsPerBlock)
+	maxOperations := MaxRegistryOperationsPerBlock
+	if l.consensusLivenessV3Active(header.Number.Uint64()) {
+		maxOperations = MaxRegistryOperationsWithCommitteeClaimsV1
+	}
+	operations := make([]RegistryOperation, 0, maxOperations)
 	if l.registryPool != nil {
 		l.registryPool.PruneExpired(header.Number.Uint64())
 		for _, operation := range l.registryPool.Pending(header.Number.Uint64()) {
-			if len(operations) >= MaxRegistryOperationsPerBlock {
+			if len(operations) >= maxOperations {
 				break
 			}
 

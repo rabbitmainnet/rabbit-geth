@@ -143,11 +143,86 @@ func workV1EngineLabHybridSelection(
 // workV1EngineLabOrderSeatsByLiveness preserves the deterministic WorkSeat
 // order inside each group while moving temporarily penalized seats behind READY
 // seats. The activation block itself deliberately keeps every seat READY.
+func workV1EngineLabSeatAvailableAt(
+	registry *CanonicalRegistry,
+	seat WorkSeatV1,
+	blockNumber uint64,
+	rules RegistrySnapshotRules,
+) bool {
+	if registry == nil {
+		return false
+	}
+	participant, exists := registry.Participant(seat.Participant)
+	if !exists || participant.LastHeartbeat == 0 {
+		return false
+	}
+	availableUntil, ok := checkedRegistryBlockAdd(
+		participant.LastHeartbeat,
+		rules.HeartbeatWindow,
+		rules.HeartbeatGrace,
+	)
+	return ok && blockNumber <= availableUntil
+}
+
+func (l *LQC) workV1EngineLabSelectRolesV3(
+	registry *CanonicalRegistry,
+	seats []WorkSeatV1,
+	selectionSeed common.Hash,
+	blockNumber uint64,
+	roleLimit uint64,
+) ([]WorkSeatV1, error) {
+	if registry == nil {
+		return nil, ErrParticipantNotActive
+	}
+	rules := l.registryRules()
+	return deterministicallySelectWorkSeatsV1(
+		seats,
+		selectionSeed,
+		roleLimit,
+		func(seat WorkSeatV1) bool {
+			return workV1EngineLabSeatAvailableAt(
+				registry,
+				seat,
+				blockNumber,
+				rules,
+			)
+		},
+	)
+}
+
 func (l *LQC) workV1EngineLabOrderSeatsByLiveness(
 	registry *CanonicalRegistry,
 	ordered []WorkSeatV1,
 	blockNumber uint64,
 ) ([]WorkSeatV1, error) {
+	if l != nil && l.consensusLivenessV3Active(blockNumber) {
+		if registry == nil {
+			return nil, ErrParticipantNotActive
+		}
+
+		rules := l.registryRules()
+		available := make([]WorkSeatV1, 0, len(ordered))
+		unavailable := make([]WorkSeatV1, 0, len(ordered))
+
+		for _, seat := range ordered {
+			if workV1EngineLabSeatAvailableAt(
+				registry,
+				seat,
+				blockNumber,
+				rules,
+			) {
+				available = append(available, seat)
+			} else {
+				unavailable = append(unavailable, seat)
+			}
+		}
+
+		final := make([]WorkSeatV1, 0, len(ordered))
+		final = append(final, available...)
+		final = append(final, unavailable...)
+		return final, nil
+	}
+
 	if l == nil ||
 		l.config == nil ||
 		l.config.ConsensusHardeningBlock == 0 ||
@@ -193,6 +268,27 @@ func workV1EngineLabFilterCommitteeByLiveness(
 			continue
 		}
 		filtered = append(filtered, seat)
+	}
+	selection.Committee = filtered
+	return selection
+}
+
+func workV1EngineLabFilterCommitteeByAvailabilityV3(
+	selection WorkSelectionV1,
+	registry *CanonicalRegistry,
+	blockNumber uint64,
+	rules RegistrySnapshotRules,
+) WorkSelectionV1 {
+	filtered := make([]WorkSeatV1, 0, len(selection.Committee))
+	for _, seat := range selection.Committee {
+		if workV1EngineLabSeatAvailableAt(
+			registry,
+			seat,
+			blockNumber,
+			rules,
+		) {
+			filtered = append(filtered, seat)
+		}
 	}
 	selection.Committee = filtered
 	return selection
@@ -268,18 +364,29 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		committeeSize,
 	)
 
-	orderedSeats, err := DeterministicallyOrderWorkSeatsV1(
-		eligibleSeats,
-		selectionSeed,
-	)
-	if err != nil {
-		return HybridSelection{}, false, err
+	var orderedSeats []WorkSeatV1
+	if l.consensusLivenessV3Active(blockNumber) {
+		roleLimit := uint64(1) + fallbackCount + committeeSize
+		orderedSeats, err = l.workV1EngineLabSelectRolesV3(
+			registry,
+			eligibleSeats,
+			selectionSeed,
+			blockNumber,
+			roleLimit,
+		)
+	} else {
+		orderedSeats, err = DeterministicallyOrderWorkSeatsV1(
+			eligibleSeats,
+			selectionSeed,
+		)
+		if err == nil {
+			orderedSeats, err = l.workV1EngineLabOrderSeatsByLiveness(
+				registry,
+				orderedSeats,
+				blockNumber,
+			)
+		}
 	}
-	orderedSeats, err = l.workV1EngineLabOrderSeatsByLiveness(
-		registry,
-		orderedSeats,
-		blockNumber,
-	)
 	if err != nil {
 		return HybridSelection{}, false, err
 	}
@@ -288,7 +395,14 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		fallbackCount,
 		committeeSize,
 	)
-	if l.consensusCommitteeLivenessActive(blockNumber) {
+	if l.consensusLivenessV3Active(blockNumber) {
+		workSelection = workV1EngineLabFilterCommitteeByAvailabilityV3(
+			workSelection,
+			registry,
+			blockNumber,
+			l.registryRules(),
+		)
+	} else if l.consensusCommitteeLivenessActive(blockNumber) {
 		workSelection = workV1EngineLabFilterCommitteeByLiveness(
 			workSelection,
 			registry,
@@ -533,7 +647,7 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 		return nil
 	}
 
-	allowed, queuePos := IsAuthorAllowed(selection, producer)
+	allowed, queuePos := l.isAuthorAllowedAt(blockNumber, selection, producer)
 	if !allowed {
 		return ErrUnauthorizedRegistryProducer
 	}
@@ -579,7 +693,7 @@ func (l *LQC) workV1EngineLabPrepareRegistryBySeats(
 		header.Number == nil {
 		return ErrWorkV1EngineLabSelectionUnavailable
 	}
-	allowed, _ := IsAuthorAllowed(selection, header.Coinbase)
+	allowed, _ := l.isAuthorAllowedAt(header.Number.Uint64(), selection, header.Coinbase)
 	if !allowed {
 		return fmt.Errorf(
 			"%w: %s",
@@ -755,7 +869,7 @@ func (l *LQC) workV1EngineLabApplyRegistryBySeats(
 		header.ParentHash != parent.Hash {
 		return nil, ErrRegistrySnapshotChainMismatch
 	}
-	allowed, _ := IsAuthorAllowed(selection, header.Coinbase)
+	allowed, _ := l.isAuthorAllowedAt(header.Number.Uint64(), selection, header.Coinbase)
 	if !allowed {
 		return nil, ErrUnauthorizedRegistryProducer
 	}

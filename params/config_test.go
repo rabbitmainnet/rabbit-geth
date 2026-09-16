@@ -376,3 +376,36 @@ func TestRabbitConsensusStabilizationConfigCompatibility(t *testing.T) {
 		t.Fatalf("unexpected changed-fork compatibility error: %+v", err)
 	}
 }
+
+func TestRabbitConsensusLivenessV3ConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{LQC: &LQCConfig{
+			ConsensusFairnessBlock:   100,
+			ConsensusLivenessV3Block: activation,
+		}}
+	}
+
+	fork := config(200)
+	if fork.IsConsensusLivenessV3(big.NewInt(199)) {
+		t.Fatal("consensus liveness V3 active before block 200")
+	}
+	if !fork.IsConsensusLivenessV3(big.NewInt(200)) {
+		t.Fatal("consensus liveness V3 inactive at block 200")
+	}
+
+	if err := config(0).CheckCompatible(config(200), 199, 0); err != nil {
+		t.Fatalf("future liveness V3 rejected before activation: %v", err)
+	}
+
+	err := config(0).CheckCompatible(config(200), 200, 0)
+	if err == nil ||
+		err.What != "LQC consensus liveness V3 fork block" ||
+		err.RewindToBlock != 199 {
+		t.Fatalf("unexpected liveness V3 compatibility error: %+v", err)
+	}
+
+	invalid := config(99)
+	if err := invalid.CheckConfigForkOrder(); err == nil {
+		t.Fatal("liveness V3 preceding fairness was accepted")
+	}
+}

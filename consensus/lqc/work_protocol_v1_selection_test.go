@@ -3,11 +3,44 @@ package lqc
 import (
 	"fmt"
 	"math/big"
+	"reflect"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
+
+func TestDeterministicallySelectWorkSeatsV1MatchesFullOrder(t *testing.T) {
+	for _, count := range []int{1, 2, 6, 134, 135, 1_000, 10_000} {
+		seats := make([]WorkSeatV1, count)
+		for index := range seats {
+			seats[index] = WorkSeatV1{
+				TicketHash:  selectionV1TicketHash(index + 1),
+				Participant: common.BigToAddress(big.NewInt(int64(index + 1))),
+			}
+		}
+		for seedIndex := uint64(1); seedIndex <= 8; seedIndex++ {
+			seed := selectionV1SeedForTest(seedIndex)
+			full, err := DeterministicallyOrderWorkSeatsV1(seats, seed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, requested := range []uint64{1, 6, 134, uint64(count)} {
+				compact, err := DeterministicallySelectWorkSeatsV1(seats, seed, requested)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := int(requested)
+				if want > count {
+					want = count
+				}
+				if !reflect.DeepEqual(compact, full[:want]) {
+					t.Fatalf("count=%d seed=%d limit=%d compact selection differs", count, seedIndex, requested)
+				}
+			}
+		}
+	}
+}
 
 func selectionV1TicketHash(index int) common.Hash {
 	return crypto.Keccak256Hash(

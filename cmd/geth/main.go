@@ -342,6 +342,7 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
+	startRabbitBootstrapPeerAssist(ctx, stack)
 	// Rabbit bootnodes remain discovery seeds; do not promote them to static peers.
 
 	// Register wallet event handlers to open and auto-derive wallets
@@ -442,7 +443,11 @@ func startRabbitBootstrapPeerAssist(ctx *cli.Context, stack *node.Node) {
 				log.Info("Rabbit bootstrap peer assist released", "network", networkID, "peers", connected)
 				return
 			case <-deadline.C:
-				log.Info("Rabbit bootstrap peer assist kept for small network", "network", networkID, "peers", server.PeerCount())
+				connected := server.PeerCount()
+				for _, seed := range seeds {
+					server.RemovePeer(seed)
+				}
+				log.Info("Rabbit bootstrap peer assist released after warmup", "network", networkID, "peers", connected)
 				return
 			}
 		}

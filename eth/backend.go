@@ -459,6 +459,22 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			transport.Close()
 			return nil, err
 		}
+		if err := wireLQCCommitteeClaimProviderLab(
+			eth,
+			transport,
+			lqcEngine,
+		); err != nil {
+			transport.Close()
+			return nil, err
+		}
+		if err := startLQCCommitteeParticipantWorker(
+			eth,
+			transport,
+			lqcEngine,
+		); err != nil {
+			transport.Close()
+			return nil, err
+		}
 		log.Info(
 			"LQC Work V2 admission transport enabled",
 			"protocol", lqcWorkV1ProtocolName,

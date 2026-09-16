@@ -132,6 +132,20 @@ func (l *LQC) consensusFairnessActive(blockNumber uint64) bool {
 		blockNumber >= l.config.ConsensusFairnessBlock
 }
 
+func (l *LQC) consensusLivenessV3Active(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV3Block != 0 &&
+		blockNumber >= l.config.ConsensusLivenessV3Block
+}
+
+func (l *LQC) isAuthorAllowedAt(blockNumber uint64, selection HybridSelection, author common.Address) (bool, int) {
+	if l.consensusLivenessV3Active(blockNumber) {
+		return IsAuthorAllowedBounded(selection, author)
+	}
+	return IsAuthorAllowed(selection, author)
+}
+
 func (l *LQC) consensusCommitteeLivenessActive(blockNumber uint64) bool {
 	return l != nil &&
 		l.config != nil &&
@@ -201,19 +215,28 @@ func (l *LQC) ResolveLocalParticipant(
 	}
 
 	sel := l.selectionForHeaderMaybeWorkV1Lab(chain, next)
-	for queuePos, participant := range sel.Ordered {
-		for _, local := range accounts {
-			if participant.Address == local {
-				return consensus.LocalParticipant{
-					Address:  local,
-					QueuePos: queuePos,
-					Allowed:  true,
-				}
+	best := consensus.LocalParticipant{QueuePos: -1}
+
+	for _, local := range accounts {
+		allowed, queuePos := l.isAuthorAllowedAt(
+			blockNumber,
+			sel,
+			local,
+		)
+		if !allowed {
+			continue
+		}
+		if best.QueuePos < 0 || queuePos < best.QueuePos {
+			best = consensus.LocalParticipant{
+				Address:  local,
+				QueuePos: queuePos,
+				Allowed:  true,
 			}
 		}
 	}
 
-	return consensus.LocalParticipant{QueuePos: -1}
+	return best
+
 }
 
 func (l *LQC) recoveryTimeoutSeconds() uint64 {
@@ -434,7 +457,7 @@ func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchPar
 	}
 
 	if len(sel.Ordered) > 0 {
-		ok, queuePos := IsAuthorAllowed(sel, header.Coinbase)
+		ok, queuePos := l.isAuthorAllowedAt(header.Number.Uint64(), sel, header.Coinbase)
 		if !ok {
 			return fmt.Errorf("lqc unauthorized producer %s at block %d", header.Coinbase.Hex(), header.Number.Uint64())
 		}
@@ -629,7 +652,7 @@ func (l *LQC) Prepare(chain consensus.ChainHeaderReader, header *types.Header) e
 			sel = l.selectionForHeader(nil, header)
 		}
 		if len(sel.Ordered) > 0 {
-			ok, pos := IsAuthorAllowed(sel, header.Coinbase)
+			ok, pos := l.isAuthorAllowedAt(header.Number.Uint64(), sel, header.Coinbase)
 			if ok {
 				queuePos = pos
 			}
@@ -997,7 +1020,7 @@ func (l *LQC) Seal(chain consensus.ChainHeaderReader, block *types.Block, result
 		sel = l.selectionForHeader(chain, block.Header())
 	}
 	if len(sel.Ordered) > 0 {
-		ok, _ := IsAuthorAllowed(sel, block.Coinbase())
+		ok, _ := l.isAuthorAllowedAt(block.NumberU64(), sel, block.Coinbase())
 		if !ok {
 			return fmt.Errorf("lqc local node is not selected for block %d", block.NumberU64())
 		}

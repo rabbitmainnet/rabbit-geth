@@ -299,3 +299,44 @@ func TestCanonicalRegistryZeroRootIsStable(t *testing.T) {
 		t.Fatalf("invalid empty registry root: %s %s", left, right)
 	}
 }
+
+func TestCanonicalRegistryInactiveWorkSeatCanHeartbeat(t *testing.T) {
+	chainID := big.NewInt(928)
+	key := testRegistryKey(
+		t,
+		"0909090909090909090909090909090909090909090909090909090909090909",
+	)
+
+	register := registerOperation(t, chainID, key, 1, 200, 1)
+	exit := signRegistryOperation(t, chainID, key, RegistryOperation{
+		Version:    RegistryProtocolVersion,
+		Action:     RegistryActionExit,
+		Sequence:   2,
+		ValidUntil: 220,
+	})
+	heartbeat := signRegistryOperation(t, chainID, key, RegistryOperation{
+		Version:    RegistryProtocolVersion,
+		Action:     RegistryActionHeartbeat,
+		Sequence:   3,
+		ValidUntil: 240,
+	})
+
+	registry := NewCanonicalRegistry()
+	if err := registry.ApplyOperation(chainID, 100, 1, register); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ApplyOperation(chainID, 110, 1, exit); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ApplyOperation(chainID, 120, 1, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+
+	participant, exists := registry.Participant(crypto.PubkeyToAddress(key.PublicKey))
+	if !exists ||
+		participant.Active ||
+		participant.LastHeartbeat != 120 ||
+		participant.Sequence != 3 {
+		t.Fatalf("unexpected persistent WorkSeat heartbeat state: %+v", participant)
+	}
+}

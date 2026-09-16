@@ -135,6 +135,7 @@ func TestWorkV2EngineLabRelayContextUsesCanonicalRuntimeAndPermissionlessAdmissi
 		1,
 	)
 	config.EpochLength = WorkProtocolEpochLengthV1
+	config.ProofDifficulty = 17
 
 	engine := New(config, rawdb.NewMemoryDatabase())
 	genesis := &types.Header{

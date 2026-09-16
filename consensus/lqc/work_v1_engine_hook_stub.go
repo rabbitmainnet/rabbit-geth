@@ -41,6 +41,15 @@ func (l *LQC) WorkV2ParticipantSeatStatus(
 	return 0, 0, false, false, ErrWorkV1EngineLabUnavailable
 }
 
+func (l *LQC) WorkV1EngineLabCommitteeContext(
+	chain consensus.ChainHeaderReader,
+	blockNumber uint64,
+	blockHash common.Hash,
+) (CommitteeParticipationVerificationContextV1, error) {
+	return CommitteeParticipationVerificationContextV1{},
+		ErrWorkV1EngineLabUnavailable
+}
+
 func (l *LQC) prepareWorkV1EngineLabHook(
 	chain consensus.ChainHeaderReader,
 	header *types.Header,

@@ -38,7 +38,8 @@
       "jailBlocks": 256,
       "maxMissedTurns": 3,
       "minorSlashBps": 500,
-      "majorSlashBps": 2000
+      "majorSlashBps": 2000,
+      "consensusLivenessV3Block": 77000
     }
   },
   "nonce": "0x0",

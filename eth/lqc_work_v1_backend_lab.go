@@ -103,17 +103,49 @@ func newLQCWorkV1BackendTransport(
 			participant,
 		)
 	}
+	committeeContext := func(targetBlock uint64) (
+		lqc.CommitteeParticipationVerificationContextV1,
+		error,
+	) {
+		head := blockchain.CurrentHeader()
+		if head == nil || head.Number == nil || !head.Number.IsUint64() ||
+			targetBlock == 0 || targetBlock > head.Number.Uint64() ||
+			head.Number.Uint64()-targetBlock >= lqc.CommitteeParticipationClaimWindowV1 {
+			return lqc.CommitteeParticipationVerificationContextV1{},
+				errLQCWorkV1Context
+		}
+		header := blockchain.GetHeaderByNumber(targetBlock)
+		if header == nil {
+			return lqc.CommitteeParticipationVerificationContextV1{},
+				errLQCWorkV1Context
+		}
+		return engine.WorkV1EngineLabCommitteeContext(
+			blockchain,
+			targetBlock,
+			header.Hash(),
+		)
+	}
+	committeeInclusionBlock := func() uint64 {
+		head := blockchain.CurrentHeader()
+		if head == nil || head.Number == nil || !head.Number.IsUint64() ||
+			head.Number.Uint64() == ^uint64(0) {
+			return 0
+		}
+		return head.Number.Uint64() + 1
+	}
 
 	transport, err := newLQCWorkV1Transport(
 		lqcWorkV1TransportConfig{
-			Enabled:         true,
-			ChainID:         chainID,
-			NetworkID:       networkID,
-			Genesis:         blockchain.Genesis().Hash(),
-			Context:         context,
-			Hasher:          hasher.Hash,
-			PoolPersistence: journal,
-			SeatStatus:      seatStatus,
+			Enabled:                 true,
+			ChainID:                 chainID,
+			NetworkID:               networkID,
+			Genesis:                 blockchain.Genesis().Hash(),
+			Context:                 context,
+			Hasher:                  hasher.Hash,
+			PoolPersistence:         journal,
+			SeatStatus:              seatStatus,
+			CommitteeContext:        committeeContext,
+			CommitteeInclusionBlock: committeeInclusionBlock,
 		},
 	)
 	if err != nil {

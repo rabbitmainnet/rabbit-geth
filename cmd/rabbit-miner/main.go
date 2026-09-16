@@ -66,6 +66,33 @@ type participantStatus struct {
 	LocalPool      bool           `json:"localPool"`
 }
 
+type registryParameters struct {
+	CurrentBlock         hexutil.Uint64 `json:"currentBlock"`
+	NextBlock            hexutil.Uint64 `json:"nextBlock"`
+	HeartbeatWindow      hexutil.Uint64 `json:"heartbeatWindow"`
+	HeartbeatGrace       hexutil.Uint64 `json:"heartbeatGrace"`
+	MaxOperationLifetime hexutil.Uint64 `json:"maxOperationLifetime"`
+	RegistryRoot         common.Hash    `json:"registryRoot"`
+}
+
+type registryParticipant struct {
+	Exists         bool           `json:"exists"`
+	CanonicalBlock hexutil.Uint64 `json:"canonicalBlock"`
+	RegistryRoot   common.Hash    `json:"registryRoot"`
+	LastHeartbeat  hexutil.Uint64 `json:"lastHeartbeat"`
+	Sequence       hexutil.Uint64 `json:"sequence"`
+}
+
+type registryOperationArgs struct {
+	Version    hexutil.Uint64 `json:"version"`
+	Action     hexutil.Uint64 `json:"action"`
+	Address    common.Address `json:"address"`
+	Sequence   hexutil.Uint64 `json:"sequence"`
+	ValidUntil hexutil.Uint64 `json:"validUntil"`
+	ProofNonce hexutil.Uint64 `json:"proofNonce"`
+	Signature  hexutil.Bytes  `json:"signature"`
+}
+
 type observedBlock struct {
 	Number    hexutil.Uint64 `json:"number"`
 	Timestamp hexutil.Uint64 `json:"timestamp"`
@@ -252,6 +279,105 @@ func fetchParticipantStatus(
 		return participantStatus{}, errors.New("node returned status for another participant")
 	}
 	return result, nil
+}
+
+func refreshWorkSeatAvailability(
+	ctx context.Context,
+	client *rpc.Client,
+	chainID *big.Int,
+	key *keystore.Key,
+) (bool, error) {
+	var parameters registryParameters
+	if err := client.CallContext(
+		ctx,
+		&parameters,
+		"lqc_registryParameters",
+	); err != nil {
+		return false, err
+	}
+
+	var participant registryParticipant
+	if err := client.CallContext(
+		ctx,
+		&participant,
+		"lqc_registryParticipant",
+		key.Address,
+	); err != nil {
+		return false, err
+	}
+
+	if !participant.Exists {
+		return false, nil
+	}
+	if participant.CanonicalBlock != parameters.CurrentBlock ||
+		participant.RegistryRoot != parameters.RegistryRoot {
+		return false, errors.New("canonical registry changed while preparing heartbeat")
+	}
+
+	window := uint64(parameters.HeartbeatWindow)
+	if window == 0 {
+		return false, errors.New("zero heartbeat window")
+	}
+	refreshAfter := uint64(participant.LastHeartbeat) + window/2
+	if refreshAfter < uint64(participant.LastHeartbeat) {
+		return false, errors.New("heartbeat refresh overflow")
+	}
+	if uint64(parameters.CurrentBlock) < refreshAfter {
+		return false, nil
+	}
+
+	sequence := uint64(participant.Sequence) + 1
+	if sequence == 0 {
+		return false, errors.New("heartbeat sequence overflow")
+	}
+
+	lifetime := uint64(parameters.MaxOperationLifetime)
+	if lifetime == 0 {
+		return false, errors.New("zero registry operation lifetime")
+	}
+	validUntil := uint64(parameters.NextBlock) + lifetime - 1
+	if validUntil < uint64(parameters.NextBlock) {
+		return false, errors.New("heartbeat validity overflow")
+	}
+
+	operation := lqc.RegistryOperation{
+		Version:    lqc.RegistryProtocolVersion,
+		Action:     lqc.RegistryActionHeartbeat,
+		Address:    key.Address,
+		Sequence:   sequence,
+		ValidUntil: validUntil,
+	}
+	signingHash := lqc.RegistryOperationWalletSigningHash(
+		chainID,
+		operation,
+	)
+	signature, err := crypto.Sign(signingHash[:], key.PrivateKey)
+	if err != nil {
+		return false, err
+	}
+
+	var accepted common.Hash
+	err = client.CallContext(
+		ctx,
+		&accepted,
+		"lqc_submitRegistryOperation",
+		registryOperationArgs{
+			Version:    hexutil.Uint64(operation.Version),
+			Action:     hexutil.Uint64(operation.Action),
+			Address:    operation.Address,
+			Sequence:   hexutil.Uint64(operation.Sequence),
+			ValidUntil: hexutil.Uint64(operation.ValidUntil),
+			ProofNonce: hexutil.Uint64(operation.ProofNonce),
+			Signature:  signature,
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+	if accepted == (common.Hash{}) {
+		return false, errors.New("node returned empty heartbeat hash")
+	}
+	return true, nil
 }
 
 func wait(ctx context.Context, duration time.Duration) bool {
@@ -732,6 +858,7 @@ func run(ctx context.Context, opts options) error {
 	var lastWaitingMessage time.Time
 	var waitingReason string
 	var seatWasActive bool
+	var lastHeartbeatAttempt time.Time
 	var lastSyncStatusMessage time.Time
 	var statusStarted = time.Now()
 	var statusAttempts uint64
@@ -802,6 +929,22 @@ func run(ctx context.Context, opts options) error {
 		}
 		activeSeat.Store(status.ActiveSeat)
 		if status.ActiveSeat {
+			if time.Since(lastHeartbeatAttempt) >= 30*time.Second {
+				lastHeartbeatAttempt = time.Now()
+				refreshed, heartbeatErr := refreshWorkSeatAvailability(
+					ctx,
+					client,
+					chainID,
+					key,
+				)
+				if heartbeatErr != nil {
+					if opts.verbose {
+						fmt.Printf("HEARTBEAT | Submission failed: %v\n", heartbeatErr)
+					}
+				} else if refreshed {
+					fmt.Println("HEARTBEAT | WorkSeat availability renewed.")
+				}
+			}
 			if !seatWasActive {
 				fmt.Println()
 				fmt.Println("READY  | Your wallet has an ACTIVE LCQ seat.")

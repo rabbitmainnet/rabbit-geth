@@ -429,6 +429,21 @@ func IsAuthorAllowed(sel HybridSelection, author common.Address) (bool, int) {
 	return false, -1
 }
 
+// IsAuthorAllowedBounded authorizes only the scheduled producer and the
+// explicitly selected fallback slots. Committee and unassigned seats
+// cannot accumulate unbounded production delays from their raw queue index.
+func IsAuthorAllowedBounded(sel HybridSelection, author common.Address) (bool, int) {
+	if sel.Producer != nil && sel.Producer.Address == author {
+		return true, 0
+	}
+	for index, participant := range sel.Fallbacks {
+		if participant.Address == author {
+			return true, index + 1
+		}
+	}
+	return false, -1
+}
+
 func ApplySuccessfulTurn(p HybridParticipant) HybridParticipant {
 	out := cloneParticipant(p)
 	out.MissedTurns = 0

@@ -28,6 +28,10 @@ type WorkV1EngineLabTicketProvider func(
 	commitEpoch uint64,
 ) ([]SignedRandomXWorkTicketV1, error)
 
+type WorkV1EngineLabCommitteeClaimProvider func(
+	blockNumber uint64,
+) ([]CommitteeParticipationClaimGroupV1, error)
+
 const workV1SelectionBeaconCacheLimit = 32
 
 type workV1SelectionBeaconCacheKey struct {
@@ -36,11 +40,13 @@ type workV1SelectionBeaconCacheKey struct {
 }
 
 type workV1EngineLabRuntime struct {
-	mu       sync.Mutex
-	hasher   WorkRelayHasherV1
-	close    func()
-	runtimes map[common.Hash]*CanonicalWorkRuntimeStateV1
-	provider WorkV1EngineLabTicketProvider
+	mu            sync.Mutex
+	hasher        WorkRelayHasherV1
+	close         func()
+	runtimes      map[common.Hash]*CanonicalWorkRuntimeStateV1
+	provider      WorkV1EngineLabTicketProvider
+	claimLedgers  map[common.Hash]*CommitteeClaimLedgerV1
+	claimProvider WorkV1EngineLabCommitteeClaimProvider
 
 	// Selection entropy is constant for an entire closed source epoch. The
 	// block number is mixed only after RandomX, in WorkSelectionSeedV1. Cache
@@ -69,6 +75,7 @@ func workV1EngineLabRuntimeFor(
 		hasher:               hasher.Hash,
 		close:                hasher.Close,
 		runtimes:             make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
+		claimLedgers:         make(map[common.Hash]*CommitteeClaimLedgerV1),
 		selectionBeaconCache: make(map[workV1SelectionBeaconCacheKey]common.Hash),
 	}
 	actual, loaded := workV1EngineLabRuntimes.LoadOrStore(
@@ -80,6 +87,20 @@ func workV1EngineLabRuntimeFor(
 		return actual.(*workV1EngineLabRuntime), nil
 	}
 	return created, nil
+}
+
+func SetWorkV1EngineLabCommitteeClaimProvider(
+	engine *LQC,
+	provider WorkV1EngineLabCommitteeClaimProvider,
+) error {
+	state, err := workV1EngineLabRuntimeFor(engine)
+	if err != nil {
+		return err
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.claimProvider = provider
+	return nil
 }
 
 func (s *workV1EngineLabRuntime) cachedSelectionBeaconHash(
@@ -544,7 +565,14 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 			number,
 			hash,
 		); registryOK {
-			return cached, nil
+			if !l.consensusLivenessV3Active(number) {
+				return cached, nil
+			}
+			if _, claimOK, claimErr := l.workV1EngineLabCachedClaimLedger(hash); claimErr != nil {
+				return nil, claimErr
+			} else if claimOK {
+				return cached, nil
+			}
 		}
 	}
 
@@ -569,8 +597,16 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 				currentNumber,
 				currentHash,
 			); registryOK {
-				runtime = cached
-				break
+				if !l.consensusLivenessV3Active(currentNumber) {
+					runtime = cached
+					break
+				}
+				if _, claimOK, claimErr := l.workV1EngineLabCachedClaimLedger(currentHash); claimErr != nil {
+					return nil, claimErr
+				} else if claimOK {
+					runtime = cached
+					break
+				}
 			}
 		}
 		if currentNumber == 0 {
@@ -602,7 +638,66 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 		header := pending[index]
 		current := header.Number.Uint64()
 
-		if envelope, decodeErr := DecodeLQCHeaderExtraV3(
+		if l.consensusLivenessV3Active(current) {
+			envelopeV4, decodeErr := DecodeLQCHeaderExtraV4(
+				header.Extra,
+				MaxWorkTicketsPerBlockV1,
+			)
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			envelopeV3 := LQCHeaderEnvelopeV3{
+				Version:            LQCHeaderEnvelopeVersionV3,
+				BlockNumber:        envelopeV4.BlockNumber,
+				RegistryRoot:       envelopeV4.RegistryRoot,
+				WorkStateRoot:      envelopeV4.WorkStateRoot,
+				RegistryOperations: envelopeV4.RegistryOperations,
+				WorkTickets:        envelopeV4.WorkTickets,
+			}
+			registrySnapshot, err := l.workV1EngineLabReplayRegistryV3(
+				chain,
+				runtime,
+				header,
+				envelopeV3,
+			)
+			if err != nil {
+				return nil, err
+			}
+			ctx, err := l.workV1EngineLabContext(
+				chain,
+				runtime,
+				current,
+				envelopeV4.RegistryRoot,
+			)
+			if err != nil {
+				return nil, err
+			}
+			v4ctx, err := l.workV1EngineLabV4Context(
+				chain,
+				ctx,
+				header.ParentHash,
+			)
+			if err != nil {
+				return nil, err
+			}
+			_, next, nextClaims, _, err :=
+				ValidateAndApplyLQCHeaderExtraV4WithCanonicalRuntimeV1(
+					v4ctx,
+					header.Hash(),
+					header.Extra,
+				)
+			if err != nil {
+				return nil, err
+			}
+			runtime = next
+			if err := l.workV1EngineLabRememberClaimLedger(
+				header.Hash(),
+				nextClaims,
+			); err != nil {
+				return nil, err
+			}
+			l.rememberRegistrySnapshot(registrySnapshot)
+		} else if envelope, decodeErr := DecodeLQCHeaderExtraV3(
 			header.Extra,
 			MaxWorkTicketsPerBlockV1,
 		); decodeErr == nil {
@@ -716,6 +811,7 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 	}
 	state.mu.Lock()
 	provider := state.provider
+	claimProvider := state.claimProvider
 	state.mu.Unlock()
 
 	if provider != nil {
@@ -737,11 +833,36 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 		}
 	}
 
-	extra, _, err := BuildLQCHeaderExtraV3WithCanonicalWorkV1(
-		ctx,
-		registryEnvelope.Operations,
-		tickets,
-	)
+	var extra []byte
+	if l.consensusLivenessV3Active(header.Number.Uint64()) {
+		var claims []CommitteeParticipationClaimGroupV1
+		if claimProvider != nil {
+			claims, err = claimProvider(header.Number.Uint64())
+			if err != nil {
+				return err
+			}
+		}
+		v4ctx, err := l.workV1EngineLabV4Context(
+			chain,
+			ctx,
+			header.ParentHash,
+		)
+		if err != nil {
+			return err
+		}
+		extra, _, _, err = BuildLQCHeaderExtraV4WithCanonicalRuntimeV1(
+			v4ctx,
+			registryEnvelope.Operations,
+			tickets,
+			claims,
+		)
+	} else {
+		extra, _, err = BuildLQCHeaderExtraV3WithCanonicalWorkV1(
+			ctx,
+			registryEnvelope.Operations,
+			tickets,
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -759,12 +880,36 @@ func (l *LQC) verifyCanonicalRegistryHeaderMaybeWorkV1Lab(
 		return l.verifyCanonicalRegistryHeader(chain, header)
 	}
 
-	envelope, err := DecodeLQCHeaderExtraV3(
-		header.Extra,
-		MaxWorkTicketsPerBlockV1,
+	activeV4 := l.consensusLivenessV3Active(header.Number.Uint64())
+	var (
+		envelope   LQCHeaderEnvelopeV3
+		envelopeV4 LQCHeaderEnvelopeV4
+		err        error
 	)
-	if err != nil {
-		return l.verifyCanonicalRegistryHeader(chain, header)
+	if activeV4 {
+		envelopeV4, err = DecodeLQCHeaderExtraV4(
+			header.Extra,
+			MaxWorkTicketsPerBlockV1,
+		)
+		if err != nil {
+			return HybridSelection{}, nil, err
+		}
+		envelope = LQCHeaderEnvelopeV3{
+			Version:            LQCHeaderEnvelopeVersionV3,
+			BlockNumber:        envelopeV4.BlockNumber,
+			RegistryRoot:       envelopeV4.RegistryRoot,
+			WorkStateRoot:      envelopeV4.WorkStateRoot,
+			RegistryOperations: envelopeV4.RegistryOperations,
+			WorkTickets:        envelopeV4.WorkTickets,
+		}
+	} else {
+		envelope, err = DecodeLQCHeaderExtraV3(
+			header.Extra,
+			MaxWorkTicketsPerBlockV1,
+		)
+		if err != nil {
+			return l.verifyCanonicalRegistryHeader(chain, header)
+		}
 	}
 
 	parentRuntime, err := l.workV1EngineLabRuntimeAt(
@@ -860,12 +1005,40 @@ func (l *LQC) verifyCanonicalRegistryHeaderMaybeWorkV1Lab(
 	if err != nil {
 		return HybridSelection{}, nil, err
 	}
-	_, next, err :=
-		ValidateAndApplyLQCHeaderExtraV3WithCanonicalWorkV1(
+	var next *CanonicalWorkRuntimeStateV1
+	if activeV4 {
+		v4ctx, err := l.workV1EngineLabV4Context(
+			chain,
 			ctx,
-			header.Hash(),
-			header.Extra,
+			header.ParentHash,
 		)
+		if err != nil {
+			return HybridSelection{}, nil, err
+		}
+		var nextClaims *CommitteeClaimLedgerV1
+		_, next, nextClaims, _, err =
+			ValidateAndApplyLQCHeaderExtraV4WithCanonicalRuntimeV1(
+				v4ctx,
+				header.Hash(),
+				header.Extra,
+			)
+		if err != nil {
+			return HybridSelection{}, nil, err
+		}
+		if err := l.workV1EngineLabRememberClaimLedger(
+			header.Hash(),
+			nextClaims,
+		); err != nil {
+			return HybridSelection{}, nil, err
+		}
+	} else {
+		_, next, err =
+			ValidateAndApplyLQCHeaderExtraV3WithCanonicalWorkV1(
+				ctx,
+				header.Hash(),
+				header.Extra,
+			)
+	}
 	if err != nil {
 		return HybridSelection{}, nil, err
 	}
