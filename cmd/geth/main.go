@@ -22,7 +22,6 @@ import (
 	"os"
 	"slices"
 	"sort"
-	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
@@ -343,7 +342,7 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
 	startRabbitBootstrapPeerAssist(ctx, stack)
-	// Rabbit bootnodes remain discovery seeds; do not promote them to static peers.
+	// Rabbit official seeds remain persistent peers for network resilience.
 
 	// Register wallet event handlers to open and auto-derive wallets
 	events := make(chan accounts.WalletEvent, 16)
@@ -421,37 +420,8 @@ func startRabbitBootstrapPeerAssist(ctx *cli.Context, stack *node.Node) {
 		return
 	}
 
-	log.Info("Rabbit bootstrap peer assist enabled", "network", networkID, "seeds", len(seeds))
+	log.Info("Rabbit persistent official peers enabled", "network", networkID, "peers", len(seeds))
 
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		deadline := time.NewTimer(5 * time.Minute)
-		defer deadline.Stop()
-
-		releaseAt := len(seeds) + 1
-		for {
-			select {
-			case <-ticker.C:
-				connected := server.PeerCount()
-				if connected < releaseAt {
-					continue
-				}
-				for _, seed := range seeds {
-					server.RemovePeer(seed)
-				}
-				log.Info("Rabbit bootstrap peer assist released", "network", networkID, "peers", connected)
-				return
-			case <-deadline.C:
-				connected := server.PeerCount()
-				for _, seed := range seeds {
-					server.RemovePeer(seed)
-				}
-				log.Info("Rabbit bootstrap peer assist released after warmup", "network", networkID, "peers", connected)
-				return
-			}
-		}
-	}()
 }
 
 // unlockRabbitLQCProducer unlocks only the explicitly configured producer and
