@@ -293,6 +293,7 @@ loop:
 			// there was no error.
 			if err != nil {
 				reason = DiscNetworkError
+				p.log.Trace("Peer terminating", "source", "writeErr", "err", err, "reason", reason)
 				break loop
 			}
 			writeStart <- struct{}{}
@@ -303,12 +304,15 @@ loop:
 			} else {
 				reason = DiscNetworkError
 			}
+			p.log.Trace("Peer terminating", "source", "readErr", "err", err, "reason", reason)
 			break loop
 		case err = <-p.protoErr:
 			reason = discReasonForError(err)
+			p.log.Trace("Peer terminating", "source", "protoErr", "err", err, "reason", reason)
 			break loop
 		case err = <-p.disc:
 			reason = discReasonForError(err)
+			p.log.Trace("Peer terminating", "source", "disc", "err", err, "reason", reason)
 			break loop
 		case <-live1min.C:
 			if p.Inbound() {
@@ -476,7 +480,7 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 			if err == nil {
 				p.log.Trace(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))
 				err = errProtocolReturned
-			} else if !errors.Is(err, io.EOF) {
+			} else if err != nil || errors.Is(err, io.EOF) {
 				p.log.Trace(fmt.Sprintf("Protocol %s/%d failed", proto.Name, proto.Version), "err", err)
 			}
 			p.protoErr <- err

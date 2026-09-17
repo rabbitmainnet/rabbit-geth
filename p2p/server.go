@@ -509,15 +509,13 @@ func (srv *Server) setupDiscovery() error {
 	}
 
 	// Bootstrap nodes are immediate dynamic dial candidates, not static peers.
-	// This gives a fresh or long-offline node a fast path into the network while
-	// discovery continues learning the wider permissionless mesh. CycleNodes
-	// keeps the bootstrap path available for automatic recovery after total peer
-	// loss; normal dial checks prevent dialing nodes that are already connected,
-	// already being dialed, or still inside dial history.
+	// Present each configured bootstrap node once for fast initial connectivity.
+	// Discovery remains active and supplies the long-lived permissionless mesh,
+	// including recovery and rediscovery after peer loss.
 	if len(srv.BootstrapNodes) > 0 {
 		srv.discmix.AddSource(enode.WithSourceName(
 			"bootstrap-default",
-			enode.CycleNodes(srv.BootstrapNodes),
+			enode.IterNodes(srv.BootstrapNodes),
 		))
 	}
 
