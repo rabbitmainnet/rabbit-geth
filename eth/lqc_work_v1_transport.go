@@ -310,6 +310,12 @@ func (n *lqcWorkV1Transport) runPeer(
 
 		ctx, err := n.currentContext()
 		if err != nil {
+			if errors.Is(err, errLQCWorkV1Context) {
+				// Canonical Work V2 context can be temporarily unavailable
+				// while this node is catching up. Keep the peer so ETH can sync.
+				peer.peer.Log().Debug("Deferring LQC Work V2 gossip until local canonical context is ready")
+				continue
+			}
 			return err
 		}
 
@@ -338,6 +344,16 @@ func (n *lqcWorkV1Transport) runPeer(
 				ctx.Eligibility,
 			)
 			if err != nil {
+				if errors.Is(err, lqc.ErrWorkCommitEpochMismatchV1) {
+					// A syncing node can be on an older canonical epoch than its
+					// peer. Drop this Work gossip, but keep the P2P/ETH session
+					// alive so normal blockchain synchronization can continue.
+					peer.peer.Log().Debug("Ignoring LQC Work V2 gossip from different canonical epoch",
+						"localEpoch", ctx.Epoch,
+						"remoteEpoch", candidate.Signed.Ticket.Epoch,
+					)
+					continue
+				}
 				return err
 			}
 
