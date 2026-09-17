@@ -24,6 +24,12 @@ jobs:
           - target: windows-amd64
             runner: windows-2022
             archive: zip
+          - target: darwin-arm64
+            runner: macos-15
+            archive: tar.gz
+          - target: darwin-amd64
+            runner: macos-15-intel
+            archive: tar.gz
 
     runs-on: ${{ matrix.runner }}
 
@@ -47,8 +53,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake nasm
 
+      - name: Install macOS native dependencies
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install cmake nasm
+
       - name: Build Unix package
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: bash
         env:
           RABBIT_TARGET: ${{ matrix.target }}
@@ -64,7 +76,7 @@ jobs:
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.3.1-${{ matrix.target }}
+          name: rabbit-core-testnet-v2.3.2-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -78,7 +90,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-v2.3.1-*
+          pattern: rabbit-core-testnet-v2.3.2-*
           path: releases
           merge-multiple: true
 
@@ -96,7 +108,7 @@ jobs:
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.3.1-release-bundle
+          name: rabbit-core-testnet-v2.3.2-release-bundle
           path: releases/*
           if-no-files-found: error
           retention-days: 30

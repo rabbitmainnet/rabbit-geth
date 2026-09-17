@@ -7,8 +7,22 @@ EXPECTED_GENESIS="${TESTNET_GENESIS_SHA256:-1e3dbb01317c0f89f7865576caca906cd29a
 TARGET="${RABBIT_TARGET:?RABBIT_TARGET is required}"
 
 case "$TARGET" in
-  linux-amd64) expected_os=linux; expected_arch=x86_64 ;;
-  *) echo "unsupported Unix target: $TARGET" >&2; exit 1 ;;
+  linux-amd64)
+    expected_os=linux
+    expected_arch=x86_64
+    ;;
+  darwin-amd64)
+    expected_os=darwin
+    expected_arch=x86_64
+    ;;
+  darwin-arm64)
+    expected_os=darwin
+    expected_arch=arm64
+    ;;
+  *)
+    echo "unsupported Unix target: $TARGET" >&2
+    exit 1
+    ;;
 esac
 
 actual_os="$(go env GOOS)"
@@ -69,7 +83,7 @@ export CGO_LDFLAGS="-L$work/RandomX/build -lrandomx"
 
 go test -tags 'rabbit_workv1 rabbit_randomx' ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
 
-package="rabbit-core-testnet-v2.3.1-$TARGET"
+package="rabbit-core-testnet-v2.3.2-$TARGET"
 stage="$work/$package"
 mkdir -p "$stage" dist
 
@@ -91,7 +105,7 @@ cp docs/rabbit-core.md docs/rabbit-miner.md "$stage/"
 cp scripts/rabbit-release/NOTICE-TESTNET.txt "$stage/NOTICE-TESTNET.txt"
 
 cat > "$stage/BUILD-METADATA.txt" <<EOF
-RABBIT_RELEASE=rabbit-core-testnet-v2.3.1
+RABBIT_RELEASE=rabbit-core-testnet-v2.3.2
 SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth
 SOURCE_COMMIT=$source_commit
 TARGET=$TARGET
@@ -116,7 +130,22 @@ set -e
 cd "$(dirname "$0")"
 exec ./rabbit-core
 LAUNCHER
-chmod 755 "$stage/rabbit-core" "$stage/rabbit-node" "$stage/rabbit-miner" "$stage/Start-Rabbit-Core.sh"
+
+chmod 755 \
+  "$stage/rabbit-core" \
+  "$stage/rabbit-node" \
+  "$stage/rabbit-miner" \
+  "$stage/Start-Rabbit-Core.sh"
+
+if [[ "$expected_os" == darwin ]]; then
+  cat > "$stage/Start-Rabbit-Core.command" <<'LAUNCHER'
+#!/usr/bin/env bash
+set -e
+cd "$(dirname "$0")"
+exec ./rabbit-core
+LAUNCHER
+  chmod 755 "$stage/Start-Rabbit-Core.command"
+fi
 
 (
   cd "$stage"
