@@ -33,7 +33,6 @@ import (
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/p2p/enode"
 	"go.uber.org/automaxprocs/maxprocs"
 
 	// Force-load the tracer engines to trigger registration
@@ -341,8 +340,6 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
-	startRabbitBootstrapPeerAssist(ctx, stack)
-	// Rabbit official seeds remain persistent peers for network resilience.
 
 	// Register wallet event handlers to open and auto-derive wallets
 	events := make(chan accounts.WalletEvent, 16)
@@ -384,44 +381,6 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 			}
 		}
 	}()
-}
-
-// startRabbitBootstrapPeerAssist gives a completely fresh Rabbit node a direct
-// connection path to the configured Rabbit seeds while normal discovery warms
-// up. Seeds remain ordinary P2P peers and have no consensus authority.
-func startRabbitBootstrapPeerAssist(ctx *cli.Context, stack *node.Node) {
-	if ctx == nil || stack == nil {
-		return
-	}
-	networkID := ctx.Uint64(utils.NetworkIdFlag.Name)
-	if networkID != 928 && networkID != 9280 {
-		return
-	}
-	raw := ctx.String(utils.BootnodesFlag.Name)
-	if raw == "" {
-		return
-	}
-	server := stack.Server()
-	if server == nil {
-		return
-	}
-
-	seeds := make([]*enode.Node, 0)
-	for _, url := range utils.SplitAndTrim(raw) {
-		seed, err := enode.Parse(enode.ValidSchemes, url)
-		if err != nil {
-			log.Warn("Rabbit bootstrap peer URL ignored", "enode", url, "err", err)
-			continue
-		}
-		seeds = append(seeds, seed)
-		server.AddPeer(seed)
-	}
-	if len(seeds) == 0 {
-		return
-	}
-
-	log.Info("Rabbit persistent official peers enabled", "network", networkID, "peers", len(seeds))
-
 }
 
 // unlockRabbitLQCProducer unlocks only the explicitly configured producer and
