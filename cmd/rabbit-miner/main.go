@@ -99,6 +99,19 @@ type observedBlock struct {
 	Miner     common.Address `json:"miner"`
 }
 
+type rewardClaimRPC struct {
+	TargetBlock hexutil.Uint64 `json:"targetBlock"`
+	Amount      *hexutil.Big   `json:"amount"`
+}
+
+type rewardActivityRPC struct {
+	BlockNumber        hexutil.Uint64   `json:"blockNumber"`
+	Producer           common.Address   `json:"producer"`
+	ProducerReward     *hexutil.Big     `json:"producerReward"`
+	ProducerFullReward bool             `json:"producerFullReward"`
+	CommitteeClaims    []rewardClaimRPC `json:"committeeClaims"`
+}
+
 type rpcSyncProgress struct {
 	CurrentBlock hexutil.Uint64 `json:"currentBlock"`
 	HighestBlock hexutil.Uint64 `json:"highestBlock"`
@@ -571,6 +584,30 @@ func positiveBalanceDelta(current, previous *big.Int) *big.Int {
 	return new(big.Int).Sub(new(big.Int).Set(current), previous)
 }
 
+func fetchRewardActivity(
+	ctx context.Context,
+	client *rpc.Client,
+	participant common.Address,
+	number uint64,
+) (rewardActivityRPC, error) {
+	var result rewardActivityRPC
+	err := client.CallContext(
+		ctx,
+		&result,
+		"lqc_rewardActivity",
+		hexutil.Uint64(number),
+		participant,
+	)
+	return result, err
+}
+
+func rewardRPCAmount(value *hexutil.Big) *big.Int {
+	if value == nil {
+		return new(big.Int)
+	}
+	return new(big.Int).Set((*big.Int)(value))
+}
+
 func shortAddress(address common.Address) string {
 	text := address.Hex()
 	if len(text) <= 14 {
@@ -694,40 +731,110 @@ func monitorNetwork(
 						}
 						delta := positiveBalanceDelta(balance, lastBalance)
 
-						switch {
-						case block.Miner == participant:
+						activity, rewardErr := fetchRewardActivity(
+							ctx,
+							client,
+							participant,
+							number,
+						)
+						if rewardErr != nil {
+							if verbose {
+								fmt.Printf(
+									"BLOCK_REWARD_ACTIVITY number=%d error=%q\n",
+									number,
+									rewardErr,
+								)
+							}
+							fmt.Printf(
+								"BLOCK  | #%d | Balance: %s %s | Reward details unavailable\n",
+								number,
+								formatRAB(balance),
+								unit,
+							)
+							lastBalance = balance
+							continue
+						}
+
+						if block.Miner != activity.Producer && verbose {
+							fmt.Printf(
+								"BLOCK_REWARD_PRODUCER_MISMATCH number=%d block=%s reward=%s\n",
+								number,
+								block.Miner.Hex(),
+								activity.Producer.Hex(),
+							)
+						}
+
+						printedReward := false
+
+						if activity.Producer == participant {
 							produced++
-							fmt.Printf("BLOCK  | #%d | 🐇 PRODUCER 🟢  | +%s %s | Balance: %s %s\n",
-								number,
-								formatRAB(delta),
-								unit,
-								formatRAB(balance),
-								unit,
+
+							producerReward := rewardRPCAmount(
+								activity.ProducerReward,
 							)
-						case delta.Sign() > 0 && activeSeat != nil && activeSeat.Load():
+
+							if activity.ProducerFullReward {
+								fmt.Printf(
+									"BLOCK  | #%d | 🐇 PRODUCER 🟢  | +%s %s | FULL REWARD | Balance: %s %s\n",
+									number,
+									formatRAB(producerReward),
+									unit,
+									formatRAB(balance),
+									unit,
+								)
+							} else {
+								fmt.Printf(
+									"BLOCK  | #%d | 🐇 PRODUCER 🟢  | +%s %s | Balance: %s %s\n",
+									number,
+									formatRAB(producerReward),
+									unit,
+									formatRAB(balance),
+									unit,
+								)
+							}
+
+							printedReward = true
+						}
+
+						for _, claim := range activity.CommitteeClaims {
+							amount := rewardRPCAmount(claim.Amount)
+							if amount.Sign() <= 0 {
+								continue
+							}
+
 							committeeRewards++
-							fmt.Printf("BLOCK  | #%d | 🥕 COMMITTEE 🟠 | +%s %s | Balance: %s %s\n",
+
+							fmt.Printf(
+								"CLAIM  | #%d | 🥕 COMMITTEE 🟠 | +%s %s | From block #%d | Balance: %s %s\n",
+								number,
+								formatRAB(amount),
+								unit,
+								uint64(claim.TargetBlock),
+								formatRAB(balance),
+								unit,
+							)
+
+							printedReward = true
+						}
+
+						if !printedReward && delta.Sign() > 0 {
+							fmt.Printf(
+								"BLOCK  | #%d | CREDIT | +%s %s | Balance: %s %s\n",
 								number,
 								formatRAB(delta),
 								unit,
 								formatRAB(balance),
 								unit,
 							)
-						case delta.Sign() > 0:
-							fmt.Printf("BLOCK  | #%d | CREDIT | +%s %s | Balance: %s %s\n",
-								number,
-								formatRAB(delta),
-								unit,
-								formatRAB(balance),
-								unit,
-							)
-						default:
-							fmt.Printf("BLOCK  | #%d | Balance: %s %s\n",
+						} else if !printedReward {
+							fmt.Printf(
+								"BLOCK  | #%d | Balance: %s %s\n",
 								number,
 								formatRAB(balance),
 								unit,
 							)
 						}
+
 						lastBalance = balance
 					}
 					lastHeight = telemetry.Height
