@@ -24,8 +24,10 @@ func (l *LQC) workV1EngineLabRememberClaimLedger(
 		return err
 	}
 	state.mu.Lock()
-	defer state.mu.Unlock()
 	state.claimLedgers[headerHash] = ledger.clone()
+	state.mu.Unlock()
+
+	l.persistWorkV1EngineCheckpointIfReady(headerHash)
 	return nil
 }
 

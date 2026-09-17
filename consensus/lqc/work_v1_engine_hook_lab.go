@@ -377,8 +377,10 @@ func (l *LQC) workV1EngineLabRemember(
 		return err
 	}
 	state.mu.Lock()
-	defer state.mu.Unlock()
 	state.runtimes[headerHash] = runtime
+	state.mu.Unlock()
+
+	l.persistWorkV1EngineCheckpointIfReady(headerHash)
 	return nil
 }
 
@@ -585,6 +587,24 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 		cached, ok, err := l.workV1EngineLabCached(currentHash)
 		if err != nil {
 			return nil, err
+		}
+		if !ok &&
+			currentNumber > 0 &&
+			currentNumber%l.registryCheckpointInterval() == 0 {
+			restored, restoreErr := l.workV1EngineLabRestoreCheckpoint(
+				chain,
+				currentNumber,
+				currentHash,
+			)
+			if restoreErr != nil {
+				return nil, restoreErr
+			}
+			if restored {
+				cached, ok, err = l.workV1EngineLabCached(currentHash)
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 		if ok && cached.Work.Number == currentNumber {
 			if l.config == nil ||

@@ -303,11 +303,18 @@ func TestWorkV1EngineLabRelayContextReplaysHeaderV3AfterRestart(
 	if err := eligibility(participants[0]); err != nil {
 		t.Fatalf("historical participant rejected: %v", err)
 	}
+	if runtime, ok, err := restarted.workV1EngineLabCached(parent.Hash()); err != nil {
+		t.Fatalf("cached runtime after restart: %v", err)
+	} else if !ok || runtime == nil || runtime.Work == nil ||
+		runtime.Work.Number != WorkProtocolEpochLengthV1 ||
+		runtime.Work.Hash != parent.Hash() {
+		t.Fatal("canonical Work runtime checkpoint was not restored after restart")
+	}
 	if snapshot, ok := restarted.cachedRegistrySnapshot(
-		1,
-		challenge.Hash(),
+		WorkProtocolEpochLengthV1,
+		parent.Hash(),
 	); !ok || snapshot == nil {
-		t.Fatal("Header V3 registry snapshot was not rebuilt after restart")
+		t.Fatal("canonical registry checkpoint was not available after restart")
 	}
 }
 
