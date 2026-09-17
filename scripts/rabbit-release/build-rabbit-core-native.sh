@@ -69,7 +69,7 @@ export CGO_LDFLAGS="-L$work/RandomX/build -lrandomx"
 
 go test -tags 'rabbit_workv1 rabbit_randomx' ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
 
-package="rabbit-core-testnet-v2.3.0-$TARGET"
+package="rabbit-core-testnet-v2.3.1-$TARGET"
 stage="$work/$package"
 mkdir -p "$stage" dist
 
@@ -91,7 +91,7 @@ cp docs/rabbit-core.md docs/rabbit-miner.md "$stage/"
 cp scripts/rabbit-release/NOTICE-TESTNET.txt "$stage/NOTICE-TESTNET.txt"
 
 cat > "$stage/BUILD-METADATA.txt" <<EOF
-RABBIT_RELEASE=rabbit-core-testnet-v2.3.0
+RABBIT_RELEASE=rabbit-core-testnet-v2.3.1
 SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth
 SOURCE_COMMIT=$source_commit
 TARGET=$TARGET
@@ -99,6 +99,7 @@ CHAIN_ID=9280
 NETWORK_ID=9280
 CONSENSUS_STABILIZATION_BLOCK=50500
 CONSENSUS_FAIRNESS_BLOCK=73000
+CONSENSUS_LIVENESS_V3_BLOCK=77000
 GENESIS_SHA256=$EXPECTED_GENESIS
 GO_VERSION=$(go version | awk '{print $3}')
 RANDOMX_COMMIT=$RANDOMX_COMMIT
