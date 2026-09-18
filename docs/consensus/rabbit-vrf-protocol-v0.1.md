@@ -112,7 +112,6 @@ Executable byte-for-byte conformance tests are in:
 A library or implementation change MUST NOT change any V1 vector byte.
 
 OPEN:
-- Reproduce the frozen vectors with an independent implementation.
 - Obtain dedicated cryptographic review before Mainnet.
 
 ## 5. Threshold BLS
@@ -737,10 +736,15 @@ Completed:
   panic, crash or invariant failure.
 - Frozen Rabbit VRF V1 vectors pass natively on Linux amd64, Windows amd64,
   macOS arm64 and macOS amd64 in the dedicated Testnet interoperability CI.
+- An independent py_ecc 8.0.0 implementation reproduces all three frozen base
+  vectors byte-for-byte, including public keys, signatures and randomness.
+- The independent implementation also reproduces the frozen 3-of-5 threshold
+  vector, verification shares, partial signatures, Lagrange reconstruction,
+  combined threshold signature and final randomness byte-for-byte.
 
 In progress:
 
-- Independent implementation reproduction of frozen cryptographic vectors.
+- Testnet protocol and product integration.
 
 Not started / OPEN:
 
