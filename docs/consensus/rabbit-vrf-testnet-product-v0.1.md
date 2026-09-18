@@ -128,27 +128,125 @@ OPEN:
 A request MUST expose enough information to prevent ambiguity between different
 users, epochs, rounds and applications.
 
-Candidate request parameters:
+DECIDED REQUEST ABI FOR TESTNET V0.1:
 
-- consumer address;
-- requester address;
-- application-defined request nonce;
-- callback gas limit;
-- application data or application data hash;
-- payment amount;
-- current VRF epoch;
-- canonical request domain.
+    requestRandomness(
+        uint32 callbackGasLimit,
+        bytes32 appDataHash
+    )
+        external
+        payable
+        returns (bytes32 requestId)
 
-Candidate return value:
+    quoteRequestFee(
+        uint32 callbackGasLimit
+    )
+        external
+        view
+        returns (uint256 fee)
 
-    requestId
+    nextRequestNonce(
+        address requester
+    )
+        external
+        view
+        returns (uint64 nonce)
+
+    getRequest(
+        bytes32 requestId
+    )
+        external
+        view
+        returns (
+            address requester,
+            uint64 requesterNonce,
+            uint64 requestBlock,
+            uint64 epoch,
+            uint64 round,
+            uint32 callbackGasLimit,
+            uint256 feePaid,
+            bytes32 appDataHash,
+            bytes32 randomness,
+            bytes32 proofHash,
+            uint8 status
+        )
+
+Testnet V0.1 uses the same request entry point for EOAs and contracts.
+
+Rules:
+
+- msg.sender is the canonical requester.
+- A contract requesting a callback is also the callback consumer.
+- callbackGasLimit == 0 means no callback is requested.
+- callbackGasLimit > 0 requests a callback to msg.sender.
+- The requester nonce starts at zero.
+- The requester nonce increments only after a successful request.
+- msg.value MUST equal quoteRequestFee(callbackGasLimit).
+- Ordinary transaction gas is separate from the Rabbit VRF protocol fee.
+- appDataHash is application-defined metadata binding and MAY be bytes32(0).
+
+The canonical request domain is:
+
+    keccak256("RABBIT_VRF_REQUEST_V1")
+
+The canonical requestId is:
+
+    keccak256(
+        abi.encode(
+            REQUEST_DOMAIN_V1,
+            block.chainid,
+            address(this),
+            msg.sender,
+            requesterNonce,
+            callbackGasLimit,
+            appDataHash
+        )
+    )
+
+The requestId MUST be calculated before incrementing the requester nonce.
+
+Canonical request statuses:
+
+    0 = NONE
+    1 = PENDING
+    2 = FULFILLED
+    3 = EXPIRED
+    4 = FAILED
+
+Canonical V0.1 events:
+
+    RandomnessRequested(
+        bytes32 indexed requestId,
+        address indexed requester,
+        uint64 indexed requesterNonce,
+        uint32 callbackGasLimit,
+        bytes32 appDataHash,
+        uint256 feePaid
+    )
+
+    RandomnessFulfilled(
+        bytes32 indexed requestId,
+        uint64 indexed epoch,
+        uint64 indexed round,
+        bytes32 randomness,
+        bytes32 proofHash
+    )
+
+    RandomnessRequestExpired(
+        bytes32 indexed requestId,
+        uint256 refundAmount
+    )
+
+    RandomnessCallbackResult(
+        bytes32 indexed requestId,
+        address indexed consumer,
+        bool success
+    )
 
 OPEN:
-- Freeze the exact request ABI.
-- Freeze requestId derivation.
-- Freeze maximum application data size.
-- Freeze callback gas rules.
-- Decide whether EOAs and contracts use the same request entry point.
+- Freeze maximum callback gas.
+- Freeze callback execution/retry rules.
+- Freeze the canonical threshold proof bytes committed by proofHash.
 
 ## 7. Payment model
 
@@ -450,16 +548,16 @@ Activation block remains UNSET.
 ## 18. Immediate design decisions still required
 
 OPEN:
-- Coordinator architecture.
-- Request ABI.
-- requestId derivation.
+- Native-to-EVM fulfillment mechanism.
 - Testnet VRF fee.
 - Reward recipients and split.
 - Refund rules.
 - Timeout rules.
 - Callback ABI.
+- Maximum callback gas.
 - Callback gas accounting.
 - Failure retry behavior.
+- Canonical proofHash input bytes.
 - Subscription support after V0.1.
 - Explorer indexing model.
 
