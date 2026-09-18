@@ -250,54 +250,349 @@ OPEN:
 
 ## 7. Payment model
 
-V0.1 is intended to use native Testnet tRAB.
+Testnet V0.1 uses a pay-per-request model.
 
-Preferred initial product model:
+The Rabbit VRF service price is denominated in tRUSD, but users pay the
+protocol fee in native tRAB.
 
-    pay-per-request
+Canonical Testnet pricing assets:
 
-A request SHOULD NOT require a subscription for the first public Testnet
-version.
+    tRUSD:
+        0xaB9fEC2ff2b4f481F585b2358f3842C66e0194bd
+        decimals = 6
 
-The VRF-specific request fee is separate from ordinary transaction gas.
+    tWRAB:
+        0xef03f43ed1cb21d56cb0b26934d09cabc1994c8d
+        decimals = 18
 
-The fee model MUST be deterministic and publicly inspectable.
+    RabbitSwap tRUSD/tWRAB Pair:
+        0x8b9f4581b71964049ac6be03b22000132438b385
+
+    RabbitSwap Factory:
+        0x3455FF1c81B8FC1D8229019766495cD2a9A6C577
+
+    RabbitSwap Router02:
+        0xF5A9BF9Df2c6CEb8987b2cb26f4CcE310577A7b0
+
+The verified RabbitSwap pair has:
+
+    token0 = tRUSD
+    token1 = tWRAB
+
+and exposes:
+
+    getReserves()
+    price0CumulativeLast()
+    price1CumulativeLast()
+
+The pair uses UQ112x112 cumulative pricing.
+
+Because token0 is tRUSD and token1 is tWRAB, Rabbit VRF V0.1 uses the
+time-weighted `price0` direction to convert a tRUSD-denominated protocol fee
+into tRAB wei.
+
+The protocol MUST NOT use the instantaneous reserve ratio as the canonical VRF
+billing price.
+
+The protocol MUST NOT use a website, RPC operator, centralized API or trusted
+off-chain price feed as the canonical VRF billing price.
+
+Canonical TWAP arithmetic:
+
+    Q112 = 2 ** 112
+
+    averagePrice0X112 =
+        (
+            currentPrice0Cumulative
+            - previousPrice0Cumulative
+        )
+        / elapsedSeconds
+
+For a configured VRF service price expressed in tRUSD base units:
+
+    protocolFeeWei =
+        ceil(
+            vrfFeeTRUSDBaseUnits
+            * averagePrice0X112
+            / Q112
+        )
+
+Because tRUSD base units use 6 decimals and tWRAB uses 18 decimals, the raw
+UQ112x112 pair price already performs the required base-unit conversion.
+No floating-point arithmetic is permitted.
+
+The conversion MUST round upward so the protocol is not underpaid because of
+integer truncation.
+
+The canonical current cumulative price MUST account for elapsed time since the
+pair's last reserve update using the same reserve ratio and uint32 timestamp
+semantics as RabbitSwapPair.
+
+A lack of swaps MUST NOT freeze the VRF price oracle.
+
+TWAP observations MUST be maintained deterministically by protocol-controlled
+state. A user request MUST NOT be allowed to choose or initialize its own TWAP
+baseline.
+
+If a valid TWAP observation is unavailable, stale beyond the protocol limit or
+otherwise invalid, a new VRF request MUST fail deterministically.
+
+There is no trusted fallback price.
+
+The VRF protocol fee is separate from ordinary transaction gas.
+
+Callback execution funding is also separate from the VRF protocol fee.
+
+The 50/30/20 Rabbit VRF reward split applies only to the VRF protocol fee.
+Callback gas funding MUST NOT alter that split.
+
+Frozen Testnet V0.1 pricing parameters:
+
+    VRF_BASE_FEE_TRUSD_BASE_UNITS = 10_000
+    TWAP_MIN_WINDOW_SECONDS = 1_800
+    TWAP_OBSERVATION_CADENCE_SECONDS = 300
+    TWAP_MAX_AGE_SECONDS = 3_600
+
+`tRUSD` has 6 decimals, therefore:
+
+    10_000 tRUSD base units = 0.01 tRUSD
+
+The canonical Testnet V0.1 VRF service price is therefore 0.01 tRUSD per
+request, converted to native tRAB using the canonical RabbitSwap TWAP.
+
+The TWAP observation used for billing MUST span at least 1,800 seconds.
+
+Canonical protocol observations SHOULD be advanced no more frequently than
+once every 300 seconds.
+
+An observation older than 3,600 seconds MUST NOT be accepted as a valid
+billing baseline.
+
+These pricing and TWAP parameters are protocol constants for Testnet V0.1.
+
+The coordinator MUST NOT expose an owner, admin or privileged setter capable
+of changing the service price, TWAP window, observation cadence or maximum
+observation age.
+
+Changing any of these Testnet V0.1 pricing constants requires a protocol fork.
+
+Frozen deterministic TWAP observation mechanism:
+
+The Rabbit VRF pricing oracle is advanced by a consensus-driven EVM system
+call during `PreExecution`.
+
+The system call MUST execute only when:
+
+    ChainConfig.IsRabbitVRF(blockNumber) == true
+
+`VRFProtocolBlock == 0` means the Rabbit VRF protocol, including its pricing
+oracle system call, is disabled.
+
+The pricing observation system call:
+
+- executes before normal transactions in the block;
+- originates from `params.SystemAddress`;
+- targets `RabbitVRFCoordinatorV1`;
+- has no keeper, relayer or externally owned operator;
+- cannot be triggered as a privileged pricing update by a user;
+- cannot be controlled by an owner or admin.
+
+Running the pricing update before normal transactions ensures that swaps made
+inside the current block cannot change the canonical billing observation used
+by VRF requests in that same block.
+
+`RabbitVRFCoordinatorV1` maintains a fixed-size circular buffer of:
+
+    TWAP_OBSERVATION_RING_SIZE = 16
+
+Each observation contains:
+
+    observedAt
+    price0Cumulative
+
+where `observedAt` is the canonical block timestamp of the system observation
+and `price0Cumulative` is the counterfactual RabbitSwap `price0` cumulative
+value for that timestamp.
+
+The current cumulative value MUST be derived from RabbitSwapPair using the same
+semantics as the verified pair implementation.
+
+Given:
+
+    storedPrice0Cumulative = pair.price0CumulativeLast()
+
+and:
+
+    (reserve0, reserve1, pairTimestampLast) = pair.getReserves()
+
+the protocol computes the counterfactual cumulative value using the same
+UQ112x112 reserve ratio and uint32 timestamp arithmetic as RabbitSwapPair.
+
+Conceptually:
+
+    currentTimestamp32 = uint32(block.timestamp)
+
+    elapsed32 =
+        currentTimestamp32 - pairTimestampLast
+
+    currentPrice0Cumulative =
+        storedPrice0Cumulative
+        +
+        UQ112x112(reserve1 / reserve0) * elapsed32
+
+The uint32 subtraction MUST preserve the same wraparound semantics used by
+RabbitSwapPair.
+
+If either reserve is zero, the protocol MUST NOT fabricate a price.
+
+An invalid or temporarily unavailable pair price MUST NOT cause a trusted
+fallback price to be used.
+
+The observation ring is advanced deterministically.
+
+If no prior observation exists, the first valid pre-execution observation is
+stored.
+
+Otherwise, a new observation is stored only when:
+
+    block.timestamp - newestObservation.observedAt
+        >= TWAP_OBSERVATION_CADENCE_SECONDS
+
+where:
+
+    TWAP_OBSERVATION_CADENCE_SECONDS = 300
+
+Because the system call executes every active block, the first valid block at
+or after the cadence boundary advances the observation ring.
+
+A VRF request uses only protocol-recorded observations.
+
+The request MUST NOT use the instantaneous pair reserve ratio and MUST NOT use
+a price observation created by the requesting transaction.
+
+For billing, let `latest` be the newest valid protocol observation.
+
+The protocol selects the newest older observation `baseline` satisfying:
+
+    latest.observedAt - baseline.observedAt
+        >= TWAP_MIN_WINDOW_SECONDS
+
+and:
+
+    block.timestamp - baseline.observedAt
+        <= TWAP_MAX_AGE_SECONDS
+
+where:
+
+    TWAP_MIN_WINDOW_SECONDS = 1800
+    TWAP_MAX_AGE_SECONDS = 3600
+
+The canonical TWAP is:
+
+    averagePrice0X112 =
+        (
+            latest.price0Cumulative
+            - baseline.price0Cumulative
+        )
+        /
+        (
+            latest.observedAt
+            - baseline.observedAt
+        )
+
+The selected observation pair is deterministic.
+
+If multiple baseline observations satisfy the rules, the newest satisfying
+baseline MUST be selected.
+
+If no valid baseline exists, a new VRF request MUST fail deterministically.
+
+This includes the initial protocol warm-up period after VRF activation and
+recovery after a sufficiently long observation gap.
+
+The protocol MUST accumulate at least `TWAP_MIN_WINDOW_SECONDS` of valid price
+history before accepting new requests.
+
+There is no administrative bypass and no trusted fallback during warm-up.
+
+The 16-entry ring provides sufficient history for the frozen Testnet V0.1
+cadence, minimum window and maximum age while keeping bounded state.
+
+The exact coordinator storage layout and system-call function selector will be
+frozen with the `RabbitVRFCoordinatorV1` implementation.
 
 OPEN:
-- Freeze the Testnet VRF base fee.
-- Decide whether callback gas is prepaid separately.
-- Decide whether the fee changes with committee size or threshold.
-- Decide whether fee changes require a protocol fork.
-- Decide whether unused callback budget is refunded.
-- Decide whether failed rounds receive full, partial or zero refund.
+- Freeze callback gas prepayment/accounting.
+- Freeze unused callback budget refund behavior.
+- Freeze failed/expired request refund behavior.
 
-No production Mainnet fee is defined by this document.
+No production Mainnet price or oracle configuration is defined by this
+document.
 
 ## 8. Reward model
 
 Rabbit VRF rewards MUST incentivize correct and timely participation without
 creating an advantage for withholding or selective participation.
 
-Possible reward recipients include:
+DECIDED FOR TESTNET V0.1:
 
-- participants that submitted valid partial signatures;
-- the final block producer performing deterministic inclusion;
-- other protocol roles explicitly defined by consensus.
+The Rabbit VRF protocol fee is split independently from the normal Rabbit block
+reward:
+
+    50% = Producer
+    30% = VRF Committee
+    20% = Rabbit Allocation
+
+Canonical basis-point constants:
+
+    VRF_PRODUCER_BPS = 5000
+    VRF_COMMITTEE_BPS = 3000
+    VRF_RABBIT_BPS = 2000
+    VRF_TOTAL_BPS = 10000
+
+For a successfully fulfilled request with protocol fee `feePaid`:
+
+    producerReward =
+        feePaid * VRF_PRODUCER_BPS / VRF_TOTAL_BPS
+
+    committeeReward =
+        feePaid * VRF_COMMITTEE_BPS / VRF_TOTAL_BPS
+
+    rabbitAllocation =
+        feePaid - producerReward - committeeReward
+
+Integer division uses normal EVM floor division.
+
+Any integer-division remainder is therefore assigned deterministically to the
+Rabbit Allocation so that:
+
+    producerReward
+    + committeeReward
+    + rabbitAllocation
+    == feePaid
+
+The Producer share belongs to the canonical Rabbit block producer responsible
+for the consensus-defined successful fulfillment inclusion.
+
+The Committee share belongs to the VRF committee reward pool for that fulfilled
+request.
+
+The Rabbit Allocation is a protocol-defined allocation and MUST NOT be
+controlled by the RabbitVRFCoordinatorV1 owner because V0.1 has no mutable
+owner/admin role.
+
+The Rabbit VRF 50/30/20 split is independent from the existing Rabbit block
+reward 70/30 split. The two reward systems MUST NOT be mixed implicitly.
 
 OPEN:
-- Freeze who earns a VRF reward.
-- Freeze whether only valid contributors earn or the full eligible committee
-  shares the reward.
-- Freeze reward split.
+- Freeze how the 30% committee pool is divided between valid contributors.
 - Freeze treatment of late partial signatures.
 - Freeze treatment of invalid partial signatures.
 - Freeze treatment of offline participants.
-- Decide whether VRF rewards are independent from existing block reward rules.
+- Freeze the destination and internal policy for the 20% Rabbit Allocation.
 - Define anti-withholding incentives.
 - Define anti-spam economics.
-
-The existing Rabbit block reward split MUST NOT be implicitly reused for VRF
-without an explicit protocol decision.
+- Freeze reward behavior for expired or failed requests.
 
 ## 9. Failure and refund behavior
 
@@ -550,7 +845,8 @@ Activation block remains UNSET.
 OPEN:
 - Native-to-EVM fulfillment mechanism.
 - Testnet VRF fee.
-- Reward recipients and split.
+- Committee internal reward distribution.
+- Rabbit Allocation destination and internal policy.
 - Refund rules.
 - Timeout rules.
 - Callback ABI.
