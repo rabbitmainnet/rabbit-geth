@@ -288,6 +288,10 @@ func (n *lqcWorkV1Transport) runPeer(
 				return err
 			}
 			if err := n.acceptCommitteeClaims(groups, peer); err != nil {
+				if errors.Is(err, errLQCWorkV1Context) {
+					peer.peer.Log().Debug("Deferring LQC committee claims until local canonical context is ready")
+					continue
+				}
 				return err
 			}
 			continue

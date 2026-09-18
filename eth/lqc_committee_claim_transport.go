@@ -37,7 +37,7 @@ func (n *lqcWorkV1Transport) acceptCommitteeClaims(
 	peer *lqcWorkV1Peer,
 ) error {
 	if len(groups) == 0 {
-		return errLQCWorkV1Context
+		return errors.New("empty lqc committee claims packet")
 	}
 	total := 0
 	accepted := make([]lqc.CommitteeParticipationClaimGroupV1, 0, len(groups))
