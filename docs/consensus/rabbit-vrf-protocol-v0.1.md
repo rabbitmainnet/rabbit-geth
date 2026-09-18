@@ -112,8 +112,6 @@ Executable byte-for-byte conformance tests are in:
 A library or implementation change MUST NOT change any V1 vector byte.
 
 OPEN:
-- Run the frozen vectors on Linux amd64, Windows amd64, macOS arm64 and
-  macOS amd64.
 - Reproduce the frozen vectors with an independent implementation.
 - Obtain dedicated cryptographic review before Mainnet.
 
@@ -737,10 +735,11 @@ Completed:
   partial signatures and canonical G1/G2 decoding.
 - Initial fuzz campaigns for all five Rabbit VRF fuzz targets complete without
   panic, crash or invariant failure.
+- Frozen Rabbit VRF V1 vectors pass natively on Linux amd64, Windows amd64,
+  macOS arm64 and macOS amd64 in the dedicated Testnet interoperability CI.
 
 In progress:
 
-- Cross-platform execution of frozen cryptographic vectors.
 - Independent implementation reproduction of frozen cryptographic vectors.
 
 Not started / OPEN:
@@ -759,7 +758,6 @@ Not started / OPEN:
 - External API.
 - Fee path.
 - Multi-node adversarial suite.
-- Cross-platform execution of frozen vectors.
 - External security review.
 
 ## 26. Non-negotiable activation principle
