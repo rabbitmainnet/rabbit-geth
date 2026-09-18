@@ -775,7 +775,7 @@ func monitorNetwork(
 
 							if activity.ProducerFullReward {
 								fmt.Printf(
-									"BLOCK  | #%d | 🐇 PRODUCER 🟢  | +%s %s | FULL REWARD | Balance: %s %s\n",
+									"PRODUCED  | #%d | 🐇 +%s %s | FULL REWARD - NO ELIGIBLE COMMITTEE | Balance: %s %s\n",
 									number,
 									formatRAB(producerReward),
 									unit,
@@ -784,7 +784,7 @@ func monitorNetwork(
 								)
 							} else {
 								fmt.Printf(
-									"BLOCK  | #%d | 🐇 PRODUCER 🟢  | +%s %s | Balance: %s %s\n",
+									"PRODUCED  | #%d | 🐇 +%s %s | PRODUCER REWARD | Balance: %s %s\n",
 									number,
 									formatRAB(producerReward),
 									unit,
@@ -805,7 +805,7 @@ func monitorNetwork(
 							committeeRewards++
 
 							fmt.Printf(
-								"CLAIM  | #%d | 🥕 COMMITTEE 🟠 | +%s %s | From block #%d | Balance: %s %s\n",
+								"COMMITTEE | credited in #%d | 🥕 +%s %s | FOR BLOCK #%d | Balance: %s %s\n",
 								number,
 								formatRAB(amount),
 								unit,
@@ -819,16 +819,16 @@ func monitorNetwork(
 
 						if !printedReward && delta.Sign() > 0 {
 							fmt.Printf(
-								"BLOCK  | #%d | CREDIT | +%s %s | Balance: %s %s\n",
+								"CREDIT    | #%d | +%s %s | NON-LCQ CREDIT | Balance: %s %s\n",
 								number,
 								formatRAB(delta),
 								unit,
 								formatRAB(balance),
 								unit,
 							)
-						} else if !printedReward {
+						} else if !printedReward && verbose {
 							fmt.Printf(
-								"BLOCK  | #%d | Balance: %s %s\n",
+								"NETWORK   | #%d | no wallet reward | Balance: %s %s\n",
 								number,
 								formatRAB(balance),
 								unit,
