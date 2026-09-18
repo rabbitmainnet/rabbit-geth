@@ -147,9 +147,21 @@ corresponding test master secret.
 
 A centralized Shamir dealer MUST NOT exist in production.
 
+Completed test coverage:
+- Property tests cover multiple thresholds, committee sizes and ShareID sets,
+  including 1-of-1, 1-of-n, t-of-n, threshold-equals-n, irregular IDs,
+  near-MaxUint64 IDs, subset variation and participant reordering.
+- Property tests reject duplicate verified tokens, insufficient shares and
+  invalid thresholds.
+- Fuzz targets cover threshold reconstruction across varying t/n, ShareID
+  ranges, ordering and messages.
+- Fuzz targets cover relabeled ShareIDs, mutated partial signatures and
+  canonical G1/G2 decoding of untrusted byte encodings.
+
 OPEN:
-- Fuzz duplicate IDs, malformed points, insufficient shares and large IDs.
-- Add property tests over multiple thresholds, committee sizes and ShareID sets.
+- Extend fuzz mutation coverage specifically for duplicate verified tokens and
+  insufficient-share reconstruction inputs.
+- Run longer fuzz campaigns and retain any discovered regression corpus.
 
 ## 6. Distributed Key Generation
 
@@ -718,10 +730,16 @@ Completed:
 - Fr modulus boundary rejection is frozen by test.
 - One complete 3-of-5 threshold interoperability vector is frozen.
 - Frozen vectors are enforced by executable conformance tests.
+- Threshold property tests cover multiple t-of-n configurations, committee
+  sizes, ShareID sets, subset variation, ordering, duplicate tokens,
+  insufficient shares and invalid thresholds.
+- Threshold fuzz targets cover reconstruction, relabeled ShareIDs, mutated
+  partial signatures and canonical G1/G2 decoding.
+- Initial fuzz campaigns for all five Rabbit VRF fuzz targets complete without
+  panic, crash or invariant failure.
 
 In progress:
 
-- Threshold fuzz/property testing.
 - Cross-platform execution of frozen cryptographic vectors.
 - Independent implementation reproduction of frozen cryptographic vectors.
 
