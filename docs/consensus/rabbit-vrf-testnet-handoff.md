@@ -278,6 +278,35 @@ same UQ112x112 and uint32 timestamp semantics as RabbitSwapPair.
 
 If valid TWAP history does not exist, requests fail deterministically.
 
+The newest observation and the selected baseline are both subject to:
+
+    TWAP_MAX_AGE_SECONDS = 3600
+
+After an observation outage makes the retained history stale, a single fresh
+observation does not restore service. A new valid TWAP window of at least:
+
+    TWAP_MIN_WINDOW_SECONDS = 1800
+
+must accumulate before new requests are accepted again.
+
+Canonical billing uses one final full-precision rounded-up conversion:
+
+    protocolFeeWei =
+        ceil(
+            VRF_BASE_FEE_TRUSD_BASE_UNITS
+            * deltaPrice0Cumulative
+            /
+            (
+                elapsedSeconds
+                * 2**112
+            )
+        )
+
+`deltaPrice0Cumulative` uses uint256 wraparound subtraction matching the
+RabbitSwap cumulative accumulator. The implementation must avoid intermediate
+uint256 multiplication overflow and must not truncate an intermediate average
+price before the final fee calculation.
+
 An initial warm-up period of at least 1800 seconds is required.
 
 ## Reward model

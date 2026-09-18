@@ -555,11 +555,15 @@ result.
 The service MAY abstract gas from end users, but network computation is not
 free and MUST be metered.
 
+Frozen Testnet V0.1 stale-price behavior is defined by the canonical
+RabbitSwap TWAP rules in `rabbit-vrf-testnet-product-v0.1.md`: stale or
+insufficient observation history causes deterministic request rejection, with
+no trusted fallback, and recovery requires a new complete minimum TWAP window.
+
 OPEN:
 - Finalize RAB-denominated payment flow.
 - Finalize USD reference mechanism if retained.
 - Finalize prepaid-credit design if retained.
-- Define stale-price behavior.
 - Define relayer reimbursement.
 - Define protocol revenue accounting.
 

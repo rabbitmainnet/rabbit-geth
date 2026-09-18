@@ -301,21 +301,51 @@ Canonical TWAP arithmetic:
 
     Q112 = 2 ** 112
 
-    averagePrice0X112 =
-        (
-            currentPrice0Cumulative
-            - previousPrice0Cumulative
+For the selected `latest` and `baseline` observations:
+
+    elapsedSeconds =
+        latest.observedAt
+        - baseline.observedAt
+
+    deltaPrice0Cumulative =
+        unchecked(
+            latest.price0Cumulative
+            - baseline.price0Cumulative
         )
+
+The cumulative subtraction MUST use uint256 wraparound semantics matching the
+RabbitSwapPair cumulative-price accumulator.
+
+The conceptual TWAP price is:
+
+    averagePrice0X112 =
+        deltaPrice0Cumulative
         / elapsedSeconds
 
-For a configured VRF service price expressed in tRUSD base units:
+However, canonical billing MUST NOT first truncate `averagePrice0X112` and then
+perform the fee conversion.
+
+For a configured VRF service price expressed in tRUSD base units, the canonical
+fee is computed directly as:
 
     protocolFeeWei =
         ceil(
             vrfFeeTRUSDBaseUnits
-            * averagePrice0X112
-            / Q112
+            * deltaPrice0Cumulative
+            /
+            (
+                elapsedSeconds
+                * Q112
+            )
         )
+
+The implementation MUST perform this multiply-divide operation with sufficient
+intermediate precision to avoid uint256 multiplication overflow and MUST round
+the final quotient upward.
+
+Equivalently, the implementation requires a full-precision `mulDiv` operation
+with rounding up. Intermediate integer truncation before the final division is
+not permitted.
 
 Because tRUSD base units use 6 decimals and tWRAB uses 18 decimals, the raw
 UQ112x112 pair price already performs the required base-unit conversion.
@@ -472,7 +502,12 @@ a price observation created by the requesting transaction.
 
 For billing, let `latest` be the newest valid protocol observation.
 
-The protocol selects the newest older observation `baseline` satisfying:
+The `latest` observation itself MUST satisfy:
+
+    block.timestamp - latest.observedAt
+        <= TWAP_MAX_AGE_SECONDS
+
+The protocol then selects the newest older observation `baseline` satisfying:
 
     latest.observedAt - baseline.observedAt
         >= TWAP_MIN_WINDOW_SECONDS
@@ -486,6 +521,10 @@ where:
 
     TWAP_MIN_WINDOW_SECONDS = 1800
     TWAP_MAX_AGE_SECONDS = 3600
+
+Both observations therefore remain bounded by the same maximum protocol age.
+An old `latest` observation MUST NOT remain usable merely because no newer
+observation has been recorded.
 
 The canonical TWAP is:
 
@@ -505,15 +544,24 @@ The selected observation pair is deterministic.
 If multiple baseline observations satisfy the rules, the newest satisfying
 baseline MUST be selected.
 
-If no valid baseline exists, a new VRF request MUST fail deterministically.
+If `latest` is stale, if no valid baseline exists, or if either selected
+observation is otherwise invalid, a new VRF request MUST fail deterministically.
 
-This includes the initial protocol warm-up period after VRF activation and
-recovery after a sufficiently long observation gap.
+This includes:
 
-The protocol MUST accumulate at least `TWAP_MIN_WINDOW_SECONDS` of valid price
-history before accepting new requests.
+- the initial protocol warm-up period after VRF activation;
+- an observation outage long enough to make the retained history stale;
+- recovery after such an outage.
 
-There is no administrative bypass and no trusted fallback during warm-up.
+Recording one fresh observation after an outage MUST NOT immediately restore
+billing. The protocol MUST accumulate a new valid observation window spanning
+at least `TWAP_MIN_WINDOW_SECONDS` before accepting requests again.
+
+The protocol MUST therefore accumulate at least `TWAP_MIN_WINDOW_SECONDS` of
+valid price history before initial service and after stale-history recovery.
+
+There is no administrative bypass, manually supplied baseline or trusted
+fallback during warm-up or recovery.
 
 The 16-entry ring provides sufficient history for the frozen Testnet V0.1
 cadence, minimum window and maximum age while keeping bounded state.
