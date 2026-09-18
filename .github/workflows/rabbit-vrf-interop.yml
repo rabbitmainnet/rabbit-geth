@@ -1,0 +1,63 @@
+name: Rabbit VRF V1 Testnet Interoperability
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "crypto/rabbitvrf/**"
+      - "docs/consensus/rabbit-vrf-crypto-profile-v1.md"
+      - ".github/workflows/rabbit-vrf-interop.yml"
+  pull_request:
+    paths:
+      - "crypto/rabbitvrf/**"
+      - "docs/consensus/rabbit-vrf-crypto-profile-v1.md"
+      - ".github/workflows/rabbit-vrf-interop.yml"
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.13"
+
+jobs:
+  frozen-vectors:
+    name: ${{ matrix.target }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+
+          - target: windows-amd64
+            runner: windows-2022
+
+          - target: darwin-arm64
+            runner: macos-15
+
+          - target: darwin-amd64
+            runner: macos-15-intel
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out Rabbit Chain
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Record native environment
+        run: |
+          go version
+          go env GOOS GOARCH
+
+      - name: Verify frozen Rabbit VRF V1 vectors
+        run: go test ./crypto/rabbitvrf -run '^TestCryptoProfileV1' -count=1 -v
