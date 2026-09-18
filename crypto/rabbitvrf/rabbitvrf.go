@@ -12,9 +12,12 @@ import (
 )
 
 const (
-	SecretKeySize = 32
-	PublicKeySize = bls12381.SizeOfG1AffineCompressed
-	SignatureSize = bls12381.SizeOfG2AffineCompressed
+	SecretKeySize      = 32
+	PublicKeySize      = bls12381.SizeOfG1AffineCompressed
+	SignatureSize      = bls12381.SizeOfG2AffineCompressed
+	ProfileV1          = "RABBIT-VRF-BLS12381-G1PK-G2SIG-V1"
+	HashToG2DSTV1      = "RABBIT-VRF-BLS12381G2_XMD:SHA-256_SSWU_RO_V1"
+	RandomnessDomainV1 = "RABBIT-VRF-RANDOMNESS-V1"
 )
 
 var (
@@ -22,15 +25,6 @@ var (
 	ErrInvalidPublicKey = errors.New("invalid Rabbit VRF public key")
 	ErrInvalidSignature = errors.New("invalid Rabbit VRF signature")
 	ErrInvalidMessage   = errors.New("invalid Rabbit VRF message")
-)
-
-var (
-	hashToG2DST = []byte(
-		"RABBIT-VRF-BLS12381G2_XMD:SHA-256_SSWU_RO_V1",
-	)
-	randomnessDomain = []byte(
-		"RABBIT-VRF-RANDOMNESS-V1",
-	)
 )
 
 type SecretKey struct {
@@ -130,7 +124,7 @@ func (sk *SecretKey) Sign(message []byte) (Signature, error) {
 		return out, err
 	}
 
-	hashed, err := bls12381.HashToG2(message, hashToG2DST)
+	hashed, err := bls12381.HashToG2(message, []byte(HashToG2DSTV1))
 	if err != nil {
 		return out, err
 	}
@@ -204,7 +198,7 @@ func Verify(
 		return err
 	}
 
-	hashed, err := bls12381.HashToG2(message, hashToG2DST)
+	hashed, err := bls12381.HashToG2(message, []byte(HashToG2DSTV1))
 	if err != nil {
 		return err
 	}
@@ -249,7 +243,7 @@ func VerifyAndDeriveRandomness(
 	}
 
 	return crypto.Keccak256Hash(
-		randomnessDomain,
+		[]byte(RandomnessDomainV1),
 		message,
 		signature[:],
 	), nil
