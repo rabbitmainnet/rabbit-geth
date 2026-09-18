@@ -77,15 +77,13 @@ The preferred V0.1 architecture is:
 - read-only protocol metadata;
 - public events for requests and fulfillment.
 
-Working name:
+Canonical Testnet V0.1 names:
 
     RabbitVRFCoordinatorV1
-
-Consumer interface working name:
-
+    IRabbitVRFCoordinatorV1
     IRabbitVRFConsumerV1
 
-These names are not yet frozen.
+These names are frozen for Testnet V0.1.
 
 The coordinator MUST NOT generate randomness itself.
 
@@ -95,11 +93,35 @@ randomness result.
 The coordinator MUST NOT contain a privileged method capable of replacing the
 active threshold public key, committee or threshold rules.
 
+DECIDED FOR TESTNET V0.1:
+
+- Rabbit VRF cryptographic execution and consensus decisions remain
+  consensus-native.
+- The EVM-facing RabbitVRFCoordinatorV1 will be an immutable system predeploy.
+- The system predeploy is a deterministic EVM facade over consensus-native VRF
+  state and MUST NOT generate or choose randomness itself.
+- Consensus controls epoch, committee, threshold, threshold public key,
+  canonical round validity and final randomness.
+- The coordinator may expose requests, payments, fulfillment state, callbacks,
+  events and read-only protocol metadata.
+- There is no mutable owner/admin upgrade path in V0.1.
+- No privileged account may replace randomness, committee membership,
+  threshold parameters or the active threshold public key.
+
+DECIDED SYSTEM PREDEPLOY ADDRESS:
+
+    0xdFc21aeA108e3F527E5f236ebf354dc8262719da
+
+The address is deterministically derived as the low 20 bytes of:
+
+    keccak256("RABBIT_VRF_COORDINATOR_V1")
+
+The derivation is part of the Testnet V0.1 specification and avoids the
+standard low precompile range and all system/predeploy addresses currently
+reserved by Rabbit Core.
+
 OPEN:
-- Decide whether V0.1 uses a system contract, predeploy, native precompile-like
-  interface or ordinary immutable coordinator contract.
-- Freeze coordinator address strategy.
-- Freeze upgrade policy. Default preference is no mutable admin upgrade path.
+- Freeze the exact native-to-EVM fulfillment mechanism.
 
 ## 6. Request interface
 
