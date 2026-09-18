@@ -161,6 +161,12 @@ func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent *types.He
 			misc.ApplyEIP7997(evm.StateDB)
 		}
 	}
+	// Rabbit VRF Coordinator V1 is installed exactly once at the
+	// Rabbit VRF activation boundary.
+	if config.IsRabbitVRF(number) && !config.IsRabbitVRF(parent.Number) {
+		misc.ApplyRabbitVRFCoordinatorV1(evm.StateDB)
+	}
+
 	// EIP-4788
 	if beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, evm, blockAccessList)

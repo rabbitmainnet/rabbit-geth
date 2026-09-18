@@ -385,6 +385,12 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(b.header.Number) == 0 {
 			misc.ApplyDAOHardFork(statedb)
 		}
+		// Rabbit VRF Coordinator V1 is installed exactly once at the
+		// Rabbit VRF activation boundary.
+		if config.IsRabbitVRF(b.header.Number) && !config.IsRabbitVRF(parent.Number()) {
+			misc.ApplyRabbitVRFCoordinatorV1(statedb)
+		}
+
 		// EIP-7997: insert the deterministic deployment factory at the Amsterdam
 		// activation block via an irregular state transition.
 		if config.IsAmsterdam(b.header.Number, b.header.Time) && !config.IsAmsterdam(parent.Number(), parent.Time()) {
