@@ -628,6 +628,7 @@ type LQCConfig struct {
 	ConsensusStabilizationBlock uint64           `json:"consensusStabilizationBlock,omitempty"`
 	ConsensusFairnessBlock      uint64           `json:"consensusFairnessBlock,omitempty"`
 	ConsensusLivenessV3Block    uint64           `json:"consensusLivenessV3Block,omitempty"`
+	VRFProtocolBlock            uint64           `json:"vrfProtocolBlock,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
 	BootstrapOnlyUntil uint64   `json:"bootstrapOnlyUntil,omitempty"`
@@ -681,6 +682,13 @@ func (c *LQCConfig) consensusLivenessV3ForkBlock() *big.Int {
 		return nil
 	}
 	return new(big.Int).SetUint64(c.ConsensusLivenessV3Block)
+}
+
+func (c *LQCConfig) vrfProtocolForkBlock() *big.Int {
+	if c == nil || c.VRFProtocolBlock == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.VRFProtocolBlock)
 }
 
 func (c *LQCConfig) validateConsensusLivenessV3() error {
@@ -1032,6 +1040,11 @@ func (c *ChainConfig) IsConsensusLivenessV3(num *big.Int) bool {
 	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusLivenessV3ForkBlock(), num)
 }
 
+// IsRabbitVRF reports whether the Rabbit VRF protocol fork is active.
+func (c *ChainConfig) IsRabbitVRF(num *big.Int) bool {
+	return c != nil && c.LQC != nil && isBlockForked(c.LQC.vrfProtocolForkBlock(), num)
+}
+
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	return isBlockForked(c.HomesteadBlock, num)
 }
@@ -1374,6 +1387,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	newLivenessV3Fork := newcfg.LQC.consensusLivenessV3ForkBlock()
 	if isForkBlockIncompatible(storedLivenessV3Fork, newLivenessV3Fork, headNumber) {
 		return newBlockCompatError("LQC consensus liveness V3 fork block", storedLivenessV3Fork, newLivenessV3Fork)
+	}
+
+	storedVRFFork := c.LQC.vrfProtocolForkBlock()
+	newVRFFork := newcfg.LQC.vrfProtocolForkBlock()
+	if isForkBlockIncompatible(storedVRFFork, newVRFFork, headNumber) {
+		return newBlockCompatError("LQC VRF protocol fork block", storedVRFFork, newVRFFork)
 	}
 
 	storedRegistryFork := c.LQC.registryProtocolForkBlock()
