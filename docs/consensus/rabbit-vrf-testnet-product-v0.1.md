@@ -205,6 +205,29 @@ The canonical requestId is:
 
 The requestId MUST be calculated before incrementing the requester nonce.
 
+Canonical pending-request storage semantics:
+
+- requestBlock is the block.number of the successful request transaction.
+- requestBlock MUST fit in uint64.
+- epoch is stored as zero while the request is PENDING.
+- round is stored as zero while the request is PENDING.
+- Pending epoch == 0 and round == 0 are placeholders only and MUST NOT be
+  interpreted as assignment to VRF epoch zero or round zero.
+- epoch and round are assigned only by the future canonical Rabbit VRF
+  fulfillment path once the request is bound to the finalized VRF result.
+- randomness is bytes32(0) while PENDING.
+- proofHash is bytes32(0) while PENDING.
+- feePaid records only the Rabbit VRF protocol fee.
+- Callback execution funding or escrow MUST NOT be included in feePaid.
+- Until callback escrow and execution semantics are frozen and implemented,
+  the pre-activation Testnet V0.1 coordinator MUST reject
+  callbackGasLimit > 0.
+- callbackGasLimit == 0 is the supported request mode during this
+  pre-activation implementation stage.
+- quoteRequestFee(0) returns the canonical Rabbit VRF protocol fee.
+- quoteRequestFee(callbackGasLimit > 0) MUST reject while callback funding is
+  not implemented.
+
 Canonical request statuses:
 
     0 = NONE

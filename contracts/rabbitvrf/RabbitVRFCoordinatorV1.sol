@@ -28,6 +28,11 @@ contract RabbitVRFCoordinatorV1 {
 
     uint256 private constant Q112 = 1 << 112;
 
+    bytes32 private constant REQUEST_DOMAIN_V1 =
+        keccak256("RABBIT_VRF_REQUEST_V1");
+
+    uint8 private constant REQUEST_STATUS_PENDING = 1;
+
     bytes4 private constant GET_RESERVES_SELECTOR =
         bytes4(keccak256("getReserves()"));
 
@@ -46,10 +51,42 @@ contract RabbitVRFCoordinatorV1 {
     // The fixed Testnet V0.1 observation ring starts after the packed metadata.
     Observation[16] private _observations;
 
+    struct Request {
+        address requester;
+        uint64 requesterNonce;
+        uint64 requestBlock;
+        uint64 epoch;
+        uint64 round;
+        uint32 callbackGasLimit;
+        uint256 feePaid;
+        bytes32 appDataHash;
+        bytes32 randomness;
+        bytes32 proofHash;
+        uint8 status;
+    }
+
+    // Request state is append-only after the canonical TWAP storage above.
+    mapping(address => uint64) private _nextRequestNonces;
+    mapping(bytes32 => Request) private _requests;
+
     error OnlySystem();
     error ObservationSlotOutOfRange();
     error PricingUnavailable();
     error FeeOverflow();
+    error CallbackFundingUnavailable();
+    error RequestBlockOverflow();
+    error RequestNonceOverflow(address requester);
+    error IncorrectRequestFee(uint256 expected, uint256 actual);
+    error RequestAlreadyExists(bytes32 requestId);
+
+    event RandomnessRequested(
+        bytes32 indexed requestId,
+        address indexed requester,
+        uint64 indexed requesterNonce,
+        uint32 callbackGasLimit,
+        bytes32 appDataHash,
+        uint256 feePaid
+    );
 
     modifier onlySystem() {
         if (msg.sender != SYSTEM_ADDRESS) {
@@ -108,26 +145,143 @@ contract RabbitVRFCoordinatorV1 {
         );
     }
 
+    /// @notice Returns the nonce that will be used by the requester's next
+    ///         successful Rabbit VRF request.
+    function nextRequestNonce(
+        address requester
+    ) external view returns (uint64 nonce) {
+        return _nextRequestNonces[requester];
+    }
+
+    /// @notice Returns canonical stored state for one Rabbit VRF request.
+    function getRequest(
+        bytes32 requestId
+    )
+        external
+        view
+        returns (
+            address requester,
+            uint64 requesterNonce,
+            uint64 requestBlock,
+            uint64 epoch,
+            uint64 round,
+            uint32 callbackGasLimit,
+            uint256 feePaid,
+            bytes32 appDataHash,
+            bytes32 randomness,
+            bytes32 proofHash,
+            uint8 status
+        )
+    {
+        Request storage request = _requests[requestId];
+
+        return (
+            request.requester,
+            request.requesterNonce,
+            request.requestBlock,
+            request.epoch,
+            request.round,
+            request.callbackGasLimit,
+            request.feePaid,
+            request.appDataHash,
+            request.randomness,
+            request.proofHash,
+            request.status
+        );
+    }
+
     /// @notice Returns the current canonical Rabbit VRF protocol fee in native wei.
     /// @dev Reverts during oracle warm-up, stale history or recovery.
     ///      Callback funding is deliberately excluded from this value.
     function quoteProtocolFee() external view returns (uint256 fee) {
-        (
-            bool valid,
-            uint256 deltaPrice0Cumulative,
-            uint256 elapsedSeconds
-        ) = _billingWindow();
+        return _quoteProtocolFee();
+    }
 
-        if (!valid) {
-            revert PricingUnavailable();
+    /// @notice Returns the amount required for a Rabbit VRF request.
+    /// @dev Callback funding is not implemented during the pre-activation stage.
+    function quoteRequestFee(
+        uint32 callbackGasLimit
+    ) external view returns (uint256 fee) {
+        if (callbackGasLimit != 0) {
+            revert CallbackFundingUnavailable();
         }
 
-        uint256 denominator = elapsedSeconds * Q112;
+        return _quoteProtocolFee();
+    }
 
-        return _mulDivRoundingUp(
-            VRF_BASE_FEE_TRUSD_BASE_UNITS,
-            deltaPrice0Cumulative,
-            denominator
+    /// @notice Creates one canonical Rabbit VRF request.
+    /// @dev Callback execution remains disabled until callback escrow and
+    ///      execution semantics are implemented.
+    function requestRandomness(
+        uint32 callbackGasLimit,
+        bytes32 appDataHash
+    ) external payable returns (bytes32 requestId) {
+        if (callbackGasLimit != 0) {
+            revert CallbackFundingUnavailable();
+        }
+
+        if (block.number > type(uint64).max) {
+            revert RequestBlockOverflow();
+        }
+
+        uint256 fee = _quoteProtocolFee();
+
+        if (msg.value != fee) {
+            revert IncorrectRequestFee(
+                fee,
+                msg.value
+            );
+        }
+
+        uint64 requesterNonce =
+            _nextRequestNonces[msg.sender];
+
+        if (requesterNonce == type(uint64).max) {
+            revert RequestNonceOverflow(msg.sender);
+        }
+
+        requestId = keccak256(
+            abi.encode(
+                REQUEST_DOMAIN_V1,
+                block.chainid,
+                address(this),
+                msg.sender,
+                requesterNonce,
+                callbackGasLimit,
+                appDataHash
+            )
+        );
+
+        if (_requests[requestId].status != 0) {
+            revert RequestAlreadyExists(requestId);
+        }
+
+        _requests[requestId] = Request({
+            requester: msg.sender,
+            requesterNonce: requesterNonce,
+            requestBlock: uint64(block.number),
+            epoch: 0,
+            round: 0,
+            callbackGasLimit: callbackGasLimit,
+            feePaid: fee,
+            appDataHash: appDataHash,
+            randomness: bytes32(0),
+            proofHash: bytes32(0),
+            status: REQUEST_STATUS_PENDING
+        });
+
+        unchecked {
+            _nextRequestNonces[msg.sender] =
+                requesterNonce + 1;
+        }
+
+        emit RandomnessRequested(
+            requestId,
+            msg.sender,
+            requesterNonce,
+            callbackGasLimit,
+            appDataHash,
+            fee
         );
     }
 
@@ -191,6 +345,27 @@ contract RabbitVRFCoordinatorV1 {
         if (_observationCount < TWAP_OBSERVATION_RING_SIZE) {
             _observationCount += 1;
         }
+    }
+
+    /// @dev Computes the canonical Rabbit VRF protocol fee.
+    function _quoteProtocolFee() internal view returns (uint256 fee) {
+        (
+            bool valid,
+            uint256 deltaPrice0Cumulative,
+            uint256 elapsedSeconds
+        ) = _billingWindow();
+
+        if (!valid) {
+            revert PricingUnavailable();
+        }
+
+        uint256 denominator = elapsedSeconds * Q112;
+
+        return _mulDivRoundingUp(
+            VRF_BASE_FEE_TRUSD_BASE_UNITS,
+            deltaPrice0Cumulative,
+            denominator
+        );
     }
 
     /// @dev Selects the deterministic TWAP billing window.

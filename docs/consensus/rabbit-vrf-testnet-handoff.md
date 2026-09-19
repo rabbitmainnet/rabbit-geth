@@ -150,6 +150,23 @@ Other frozen public concepts include:
     nextRequestNonce(...)
     getRequest(...)
 
+Pending request storage semantics:
+
+    requestBlock = block.number of the successful request
+    epoch = 0 while PENDING
+    round = 0 while PENDING
+    randomness = bytes32(0) while PENDING
+    proofHash = bytes32(0) while PENDING
+    feePaid = Rabbit VRF protocol fee only
+
+The zero epoch/round values above are pending placeholders. Canonical epoch
+and round assignment belongs to the future fulfillment path.
+
+Callback funding remains separate from feePaid. Until callback escrow and
+execution semantics are frozen and implemented, the pre-activation
+coordinator rejects callbackGasLimit > 0. callbackGasLimit == 0 remains the
+supported request mode.
+
 Request status values:
 
     0 NONE
