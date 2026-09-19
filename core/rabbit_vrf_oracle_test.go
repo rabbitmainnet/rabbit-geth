@@ -879,3 +879,516 @@ func TestRabbitVRFPriceObservationPreExecutionActivation(t *testing.T) {
 		)
 	}
 }
+
+func rabbitVRFTestQuoteProtocolFee(
+	t *testing.T,
+	sdb *state.StateDB,
+	timestamp uint64,
+) (*big.Int, error) {
+	t.Helper()
+
+	selector := crypto.Keccak256(
+		[]byte("quoteProtocolFee()"),
+	)[:4]
+
+	ret, _, err := rabbitVRFTestEVM(
+		sdb,
+		timestamp,
+	).Call(
+		common.Address{0x01},
+		params.RabbitVRFCoordinatorV1Address,
+		selector,
+		vm.NewGasBudget(30_000_000, 30_000_000),
+		common.U2560,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if len(ret) != 32 {
+		t.Fatalf(
+			"quoteProtocolFee returned %d bytes, want 32",
+			len(ret),
+		)
+	}
+
+	return new(big.Int).SetBytes(ret), nil
+}
+
+func TestRabbitVRFProtocolFeeWarmupAndStale(
+	t *testing.T,
+) {
+	sdb := mkState(nil)
+	misc.ApplyRabbitVRFCoordinatorV1(sdb)
+
+	rabbitVRFTestSetPair(
+		sdb,
+		big.NewInt(0),
+		1,
+		2,
+		0,
+	)
+
+	for _, timestamp := range []uint64{
+		1000,
+		1300,
+		1600,
+		1900,
+		2200,
+		2500,
+	} {
+		rabbitVRFTestObserve(
+			t,
+			sdb,
+			timestamp,
+		)
+	}
+
+	if fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		2500,
+	); err == nil {
+		t.Fatalf(
+			"warm-up quote unexpectedly succeeded: %s",
+			fee,
+		)
+	}
+
+	rabbitVRFTestObserve(
+		t,
+		sdb,
+		2800,
+	)
+
+	fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		2800,
+	)
+	if err != nil {
+		t.Fatalf(
+			"exact 1800-second quote failed: %v",
+			err,
+		)
+	}
+
+	if fee.Cmp(big.NewInt(20_000)) != 0 {
+		t.Fatalf(
+			"exact-window fee = %s, want 20000",
+			fee,
+		)
+	}
+
+	fee, err = rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		4600,
+	)
+	if err != nil {
+		t.Fatalf(
+			"3600-second baseline-age boundary failed: %v",
+			err,
+		)
+	}
+
+	if fee.Cmp(big.NewInt(20_000)) != 0 {
+		t.Fatalf(
+			"boundary fee = %s, want 20000",
+			fee,
+		)
+	}
+
+	if fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		4601,
+	); err == nil {
+		t.Fatalf(
+			"stale baseline quote unexpectedly succeeded: %s",
+			fee,
+		)
+	}
+}
+
+func TestRabbitVRFProtocolFeeRecoveryNeedsNewWindow(
+	t *testing.T,
+) {
+	sdb := mkState(nil)
+	misc.ApplyRabbitVRFCoordinatorV1(sdb)
+
+	rabbitVRFTestSetPair(
+		sdb,
+		big.NewInt(0),
+		1,
+		2,
+		0,
+	)
+
+	for _, timestamp := range []uint64{
+		1000,
+		1300,
+		1600,
+		1900,
+		2200,
+		2500,
+		2800,
+	} {
+		rabbitVRFTestObserve(
+			t,
+			sdb,
+			timestamp,
+		)
+	}
+
+	fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		2800,
+	)
+	if err != nil {
+		t.Fatalf(
+			"pre-outage quote failed: %v",
+			err,
+		)
+	}
+
+	if fee.Cmp(big.NewInt(20_000)) != 0 {
+		t.Fatalf(
+			"pre-outage fee = %s, want 20000",
+			fee,
+		)
+	}
+
+	if fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		6501,
+	); err == nil {
+		t.Fatalf(
+			"stale latest quote unexpectedly succeeded: %s",
+			fee,
+		)
+	}
+
+	rabbitVRFTestObserve(
+		t,
+		sdb,
+		6800,
+	)
+
+	if fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		6800,
+	); err == nil {
+		t.Fatalf(
+			"single fresh observation restored billing: %s",
+			fee,
+		)
+	}
+
+	for _, timestamp := range []uint64{
+		7100,
+		7400,
+		7700,
+		8000,
+		8300,
+	} {
+		rabbitVRFTestObserve(
+			t,
+			sdb,
+			timestamp,
+		)
+	}
+
+	if fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		8300,
+	); err == nil {
+		t.Fatalf(
+			"1500-second recovery window unexpectedly succeeded: %s",
+			fee,
+		)
+	}
+
+	rabbitVRFTestObserve(
+		t,
+		sdb,
+		8600,
+	)
+
+	fee, err = rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		8600,
+	)
+	if err != nil {
+		t.Fatalf(
+			"recovered 1800-second window failed: %v",
+			err,
+		)
+	}
+
+	if fee.Cmp(big.NewInt(20_000)) != 0 {
+		t.Fatalf(
+			"recovered fee = %s, want 20000",
+			fee,
+		)
+	}
+}
+
+func rabbitVRFTestObserveStoredCumulative(
+	t *testing.T,
+	sdb *state.StateDB,
+	timestamp uint64,
+	cumulative *big.Int,
+) {
+	t.Helper()
+
+	if timestamp > math.MaxUint32 {
+		t.Fatalf(
+			"test timestamp %d exceeds uint32",
+			timestamp,
+		)
+	}
+
+	rabbitVRFTestSetPair(
+		sdb,
+		cumulative,
+		1,
+		1,
+		uint32(timestamp),
+	)
+
+	rabbitVRFTestObserve(
+		t,
+		sdb,
+		timestamp,
+	)
+}
+
+func TestRabbitVRFProtocolFeeUsesNewestValidBaseline(
+	t *testing.T,
+) {
+	sdb := mkState(nil)
+	misc.ApplyRabbitVRFCoordinatorV1(sdb)
+
+	q112 := new(big.Int).Lsh(
+		big.NewInt(1),
+		112,
+	)
+
+	entries := []struct {
+		timestamp  uint64
+		multiplier int64
+	}{
+		{1000, 0},
+		{1300, 10},
+		{1600, 16},
+		{1900, 22},
+		{2200, 28},
+		{2500, 34},
+		{2800, 40},
+		{3100, 46},
+	}
+
+	for _, entry := range entries {
+		cumulative := new(big.Int).Mul(
+			new(big.Int).Set(q112),
+			big.NewInt(entry.multiplier),
+		)
+
+		rabbitVRFTestObserveStoredCumulative(
+			t,
+			sdb,
+			entry.timestamp,
+			cumulative,
+		)
+	}
+
+	fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		3100,
+	)
+	if err != nil {
+		t.Fatalf(
+			"newest-baseline quote failed: %v",
+			err,
+		)
+	}
+
+	if fee.Cmp(big.NewInt(200)) != 0 {
+		t.Fatalf(
+			"newest-baseline fee = %s, want 200",
+			fee,
+		)
+	}
+}
+
+func TestRabbitVRFProtocolFeeRoundsUp(
+	t *testing.T,
+) {
+	sdb := mkState(nil)
+	misc.ApplyRabbitVRFCoordinatorV1(sdb)
+
+	rabbitVRFTestSetPair(
+		sdb,
+		big.NewInt(0),
+		3,
+		1,
+		0,
+	)
+
+	rabbitVRFTestObserve(
+		t,
+		sdb,
+		1000,
+	)
+
+	rabbitVRFTestObserve(
+		t,
+		sdb,
+		2800,
+	)
+
+	fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		2800,
+	)
+	if err != nil {
+		t.Fatalf(
+			"rounding quote failed: %v",
+			err,
+		)
+	}
+
+	q112 := new(big.Int).Lsh(
+		big.NewInt(1),
+		112,
+	)
+
+	priceX112 := new(big.Int).Div(
+		new(big.Int).Set(q112),
+		big.NewInt(3),
+	)
+
+	numerator := new(big.Int).Mul(
+		big.NewInt(10_000),
+		priceX112,
+	)
+
+	want := new(big.Int).Add(
+		numerator,
+		new(big.Int).Sub(
+			new(big.Int).Set(q112),
+			big.NewInt(1),
+		),
+	)
+	want.Div(want, q112)
+
+	if fee.Cmp(want) != 0 {
+		t.Fatalf(
+			"rounded fee = %s, want %s",
+			fee,
+			want,
+		)
+	}
+
+	if fee.Cmp(big.NewInt(3334)) != 0 {
+		t.Fatalf(
+			"rounded fee = %s, want 3334",
+			fee,
+		)
+	}
+}
+
+func TestRabbitVRFProtocolFeeUint256WrapAnd512BitMulDiv(
+	t *testing.T,
+) {
+	sdb := mkState(nil)
+	misc.ApplyRabbitVRFCoordinatorV1(sdb)
+
+	rabbitVRFTestObserveStoredCumulative(
+		t,
+		sdb,
+		1000,
+		big.NewInt(1),
+	)
+
+	rabbitVRFTestObserveStoredCumulative(
+		t,
+		sdb,
+		2800,
+		big.NewInt(0),
+	)
+
+	fee, err := rabbitVRFTestQuoteProtocolFee(
+		t,
+		sdb,
+		2800,
+	)
+	if err != nil {
+		t.Fatalf(
+			"512-bit wrapped quote failed: %v",
+			err,
+		)
+	}
+
+	two256 := new(big.Int).Lsh(
+		big.NewInt(1),
+		256,
+	)
+
+	delta := new(big.Int).Sub(
+		two256,
+		big.NewInt(1),
+	)
+
+	numerator := new(big.Int).Mul(
+		big.NewInt(10_000),
+		delta,
+	)
+
+	q112 := new(big.Int).Lsh(
+		big.NewInt(1),
+		112,
+	)
+
+	denominator := new(big.Int).Mul(
+		big.NewInt(1800),
+		q112,
+	)
+
+	want := new(big.Int).Add(
+		numerator,
+		new(big.Int).Sub(
+			new(big.Int).Set(denominator),
+			big.NewInt(1),
+		),
+	)
+
+	want.Div(
+		want,
+		denominator,
+	)
+
+	if numerator.BitLen() <= 256 {
+		t.Fatalf(
+			"test did not exercise 512-bit multiplication: bitlen=%d",
+			numerator.BitLen(),
+		)
+	}
+
+	if fee.Cmp(want) != 0 {
+		t.Fatalf(
+			"512-bit wrapped fee = %s, want %s",
+			fee,
+			want,
+		)
+	}
+}

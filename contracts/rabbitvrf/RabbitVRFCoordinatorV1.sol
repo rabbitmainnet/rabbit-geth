@@ -26,6 +26,8 @@ contract RabbitVRFCoordinatorV1 {
     uint256 public constant TWAP_MAX_AGE_SECONDS = 3_600;
     uint256 public constant TWAP_OBSERVATION_RING_SIZE = 16;
 
+    uint256 private constant Q112 = 1 << 112;
+
     bytes4 private constant GET_RESERVES_SELECTOR =
         bytes4(keccak256("getReserves()"));
 
@@ -46,6 +48,8 @@ contract RabbitVRFCoordinatorV1 {
 
     error OnlySystem();
     error ObservationSlotOutOfRange();
+    error PricingUnavailable();
+    error FeeOverflow();
 
     modifier onlySystem() {
         if (msg.sender != SYSTEM_ADDRESS) {
@@ -101,6 +105,29 @@ contract RabbitVRFCoordinatorV1 {
             true,
             observation.observedAt,
             observation.price0Cumulative
+        );
+    }
+
+    /// @notice Returns the current canonical Rabbit VRF protocol fee in native wei.
+    /// @dev Reverts during oracle warm-up, stale history or recovery.
+    ///      Callback funding is deliberately excluded from this value.
+    function quoteProtocolFee() external view returns (uint256 fee) {
+        (
+            bool valid,
+            uint256 deltaPrice0Cumulative,
+            uint256 elapsedSeconds
+        ) = _billingWindow();
+
+        if (!valid) {
+            revert PricingUnavailable();
+        }
+
+        uint256 denominator = elapsedSeconds * Q112;
+
+        return _mulDivRoundingUp(
+            VRF_BASE_FEE_TRUSD_BASE_UNITS,
+            deltaPrice0Cumulative,
+            denominator
         );
     }
 
@@ -163,6 +190,179 @@ contract RabbitVRFCoordinatorV1 {
 
         if (_observationCount < TWAP_OBSERVATION_RING_SIZE) {
             _observationCount += 1;
+        }
+    }
+
+    /// @dev Selects the deterministic TWAP billing window.
+    ///      The newest qualifying older observation is the canonical baseline.
+    function _billingWindow()
+        internal
+        view
+        returns (
+            bool valid,
+            uint256 deltaPrice0Cumulative,
+            uint256 elapsedSeconds
+        )
+    {
+        uint8 count = _observationCount;
+
+        if (count < 2) {
+            return (false, 0, 0);
+        }
+
+        Observation storage latest =
+            _observations[_observationIndex];
+
+        if (block.timestamp < uint256(latest.observedAt)) {
+            return (false, 0, 0);
+        }
+
+        if (
+            block.timestamp - uint256(latest.observedAt)
+                > TWAP_MAX_AGE_SECONDS
+        ) {
+            return (false, 0, 0);
+        }
+
+        for (uint256 offset = 1; offset < uint256(count); offset++) {
+            uint256 baselineIndex =
+                (
+                    uint256(_observationIndex)
+                    + TWAP_OBSERVATION_RING_SIZE
+                    - offset
+                )
+                % TWAP_OBSERVATION_RING_SIZE;
+
+            Observation storage baseline =
+                _observations[baselineIndex];
+
+            if (baseline.observedAt > latest.observedAt) {
+                return (false, 0, 0);
+            }
+
+            uint256 elapsed =
+                uint256(latest.observedAt)
+                - uint256(baseline.observedAt);
+
+            if (elapsed < TWAP_MIN_WINDOW_SECONDS) {
+                continue;
+            }
+
+            if (block.timestamp < uint256(baseline.observedAt)) {
+                return (false, 0, 0);
+            }
+
+            if (
+                block.timestamp - uint256(baseline.observedAt)
+                    > TWAP_MAX_AGE_SECONDS
+            ) {
+                return (false, 0, 0);
+            }
+
+            uint256 delta;
+
+            unchecked {
+                delta =
+                    latest.price0Cumulative
+                    - baseline.price0Cumulative;
+            }
+
+            return (true, delta, elapsed);
+        }
+
+        return (false, 0, 0);
+    }
+
+    /// @dev Full-precision x*y/denominator rounded upward.
+    function _mulDivRoundingUp(
+        uint256 x,
+        uint256 y,
+        uint256 denominator
+    )
+        internal
+        pure
+        returns (uint256 result)
+    {
+        unchecked {
+            if (denominator == 0) {
+                revert FeeOverflow();
+            }
+
+            uint256 prod0;
+            uint256 prod1;
+
+            assembly {
+                let mm := mulmod(x, y, not(0))
+                prod0 := mul(x, y)
+                prod1 := sub(
+                    sub(mm, prod0),
+                    lt(mm, prod0)
+                )
+            }
+
+            uint256 remainder;
+
+            if (prod1 == 0) {
+                result = prod0 / denominator;
+                remainder = mulmod(x, y, denominator);
+
+                if (remainder != 0) {
+                    if (result == type(uint256).max) {
+                        revert FeeOverflow();
+                    }
+                    result += 1;
+                }
+
+                return result;
+            }
+
+            if (denominator <= prod1) {
+                revert FeeOverflow();
+            }
+
+            assembly {
+                remainder := mulmod(x, y, denominator)
+                prod1 := sub(
+                    prod1,
+                    gt(remainder, prod0)
+                )
+                prod0 := sub(prod0, remainder)
+            }
+
+            uint256 twos =
+                denominator & (0 - denominator);
+
+            assembly {
+                denominator := div(denominator, twos)
+                prod0 := div(prod0, twos)
+                twos := add(
+                    div(sub(0, twos), twos),
+                    1
+                )
+            }
+
+            prod0 |= prod1 * twos;
+
+            uint256 inverse =
+                (3 * denominator) ^ 2;
+
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+
+            result = prod0 * inverse;
+
+            if (remainder != 0) {
+                if (result == type(uint256).max) {
+                    revert FeeOverflow();
+                }
+                result += 1;
+            }
+
+            return result;
         }
     }
 
