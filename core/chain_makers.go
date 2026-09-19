@@ -391,6 +391,21 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			misc.ApplyRabbitVRFCoordinatorV1(statedb)
 		}
 
+		if config.IsRabbitVRF(b.header.Number) {
+			blockContext := NewEVMBlockContext(
+				b.header,
+				cm,
+				&b.header.Coinbase,
+			)
+			evm := vm.NewEVM(
+				blockContext,
+				statedb,
+				cm.config,
+				vm.Config{},
+			)
+			ProcessRabbitVRFPriceObservation(evm, b.bal)
+		}
+
 		// EIP-7997: insert the deterministic deployment factory at the Amsterdam
 		// activation block via an irregular state transition.
 		if config.IsAmsterdam(b.header.Number, b.header.Time) && !config.IsAmsterdam(parent.Number(), parent.Time()) {

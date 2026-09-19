@@ -167,6 +167,10 @@ func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent *types.He
 		misc.ApplyRabbitVRFCoordinatorV1(evm.StateDB)
 	}
 
+	if config.IsRabbitVRF(number) {
+		ProcessRabbitVRFPriceObservation(evm, blockAccessList)
+	}
+
 	// EIP-4788
 	if beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, evm, blockAccessList)
@@ -314,6 +318,70 @@ func systemCallGasBudget(evm *vm.EVM) (gasLimit uint64, gasBudget vm.GasBudget) 
 		gasBudget = vm.NewGasBudget(gasLimit, stateBudget)
 	}
 	return gasLimit, gasBudget
+}
+
+var rabbitVRFPriceObservationSelector = crypto.Keccak256([]byte("systemObservePrice()"))[:4]
+
+// ProcessRabbitVRFPriceObservation advances the consensus-driven RabbitSwap
+// observation used by Rabbit VRF pricing.
+func ProcessRabbitVRFPriceObservation(
+	evm *vm.EVM,
+	blockAccessList *bal.ConstructionBlockAccessList,
+) {
+	if tracer := evm.Config.Tracer; tracer != nil {
+		onSystemCallStart(tracer, evm.GetVMContext())
+		if tracer.OnSystemCallEnd != nil {
+			defer tracer.OnSystemCallEnd()
+		}
+	}
+
+	gasLimit, gasBudget := systemCallGasBudget(evm)
+	msg := &Message{
+		From:      params.SystemAddress,
+		GasLimit:  gasLimit,
+		GasPrice:  uint256.NewInt(0),
+		GasFeeCap: uint256.NewInt(0),
+		GasTipCap: uint256.NewInt(0),
+		To:        &params.RabbitVRFCoordinatorV1Address,
+		Data:      rabbitVRFPriceObservationSelector,
+	}
+
+	evm.SetTxContext(NewEVMTxContext(msg))
+	evm.StateDB.Prepare(
+		evm.GetRules(),
+		common.Address{},
+		common.Address{},
+		nil,
+		nil,
+		nil,
+	)
+	evm.StateDB.SetTxContext(common.Hash{}, 0, 0)
+	evm.StateDB.AddAddressToAccessList(
+		params.RabbitVRFCoordinatorV1Address,
+	)
+
+	_, _, err := evm.Call(
+		msg.From,
+		*msg.To,
+		msg.Data,
+		gasBudget,
+		common.U2560,
+	)
+	if err != nil {
+		panic(fmt.Sprintf(
+			"Rabbit VRF price observation system call failed: %v",
+			err,
+		))
+	}
+
+	if evm.StateDB.AccessEvents() != nil {
+		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
+	}
+
+	systemBAL := evm.StateDB.Finalise(true)
+	if blockAccessList != nil {
+		blockAccessList.Merge(systemBAL)
+	}
 }
 
 // ProcessBeaconBlockRoot applies the EIP-4788 system call to the beacon block root

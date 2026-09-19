@@ -31,14 +31,14 @@ func TestRabbitVRFCoordinatorV1Artifact(t *testing.T) {
 		t.Fatalf("coordinator address = %s, want %s", params.RabbitVRFCoordinatorV1Address, wantAddr)
 	}
 
-	wantHash := common.HexToHash("0x509aab4e37e844bf1b462312a6258651fe12a3c81d0797636ed4e082a7a9d46c")
+	wantHash := common.HexToHash("0xea9fef77319be20103e351a27f33853bed941c28be7970e8bc41662f23250709")
 	gotHash := crypto.Keccak256Hash(params.RabbitVRFCoordinatorV1Code)
 	if gotHash != wantHash {
 		t.Fatalf("runtime code hash = %s, want %s", gotHash, wantHash)
 	}
 
-	if got := len(params.RabbitVRFCoordinatorV1Code); got != 211 {
-		t.Fatalf("runtime byte length = %d, want 211", got)
+	if got := len(params.RabbitVRFCoordinatorV1Code); got != 2175 {
+		t.Fatalf("runtime byte length = %d, want 2175", got)
 	}
 }
 
@@ -227,9 +227,27 @@ func TestRabbitVRFCoordinatorV1ChainMakerActivationBoundary(t *testing.T) {
 					t.Fatalf("block 1: coordinator installed before fork: %x", got)
 				}
 
+				rabbitVRFTestSetPair(
+					b.statedb,
+					big.NewInt(0),
+					1,
+					1,
+					0,
+				)
+
 			case 2:
 				if got := b.statedb.GetCode(addr); !bytes.Equal(got, params.RabbitVRFCoordinatorV1Code) {
 					t.Fatal("block 2: coordinator not installed at activation")
+				}
+
+				if got := b.statedb.GetState(
+					addr,
+					common.Hash{},
+				); got != common.BigToHash(big.NewInt(1)) {
+					t.Fatalf(
+						"block 2: oracle observation missing: got %s want 0x1",
+						got,
+					)
 				}
 
 				b.statedb.SetState(addr, slot, value)
@@ -237,6 +255,16 @@ func TestRabbitVRFCoordinatorV1ChainMakerActivationBoundary(t *testing.T) {
 			case 3:
 				if got := b.statedb.GetCode(addr); !bytes.Equal(got, params.RabbitVRFCoordinatorV1Code) {
 					t.Fatal("block 3: coordinator code missing")
+				}
+
+				if got := b.statedb.GetState(
+					addr,
+					common.Hash{},
+				); got != common.BigToHash(big.NewInt(1)) {
+					t.Fatalf(
+						"block 3: oracle observation changed unexpectedly: got %s want 0x1",
+						got,
+					)
 				}
 
 				if got := b.statedb.GetState(addr, slot); got != value {
