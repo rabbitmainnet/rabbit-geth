@@ -632,15 +632,118 @@ owner/admin role.
 The Rabbit VRF 50/30/20 split is independent from the existing Rabbit block
 reward 70/30 split. The two reward systems MUST NOT be mixed implicitly.
 
+Frozen Testnet V0.1 reward-accounting architecture:
+
+    VRF_SETTLEMENT_PERIOD_BLOCKS = 128
+
+The settlement schedule is anchored to the Rabbit VRF activation block.
+
+For an active Rabbit VRF block `B`:
+
+    settlementPeriod =
+        (B - VRFProtocolBlock)
+        / VRF_SETTLEMENT_PERIOD_BLOCKS
+
+using normal integer floor division.
+
+Therefore:
+
+    period 0 =
+        VRFProtocolBlock
+        through
+        VRFProtocolBlock + 127
+
+    period 1 =
+        VRFProtocolBlock + 128
+        through
+        VRFProtocolBlock + 255
+
+and so on.
+
+This guarantees that every complete Rabbit VRF settlement period contains
+exactly 128 Rabbit VRF-active blocks regardless of the chosen activation
+height.
+
+A successful VRF fulfillment is the economic accounting point.
+
+For every request that transitions canonically to `FULFILLED`:
+
+1. `producerReward` is credited to the canonical Rabbit producer of the block
+   containing that successful fulfillment.
+2. `committeeReward` is credited to the canonical VRF committee reward pool
+   associated with that fulfillment.
+3. `rabbitAllocation` is credited to the Rabbit Allocation accounting ledger.
+4. The callback escrow, if any, remains completely separate from all three
+   reward credits.
+
+The producer reward therefore belongs to the producer of the fulfillment block,
+not the producer of the original request block.
+
+Multiple rewards belonging to the same recipient during one settlement period
+MAY be aggregated into one pending balance.
+
+Reward accounting MUST use a pull-based settlement model.
+
+A successful fulfillment MUST NOT iterate over reward recipients and MUST NOT
+perform arbitrary external value transfers to miners or committee members.
+
+Credits created during settlement period `P` are `pending` during `P`.
+
+When the chain enters a later settlement period, credits from earlier periods
+are mature and MAY become `claimable`.
+
+The 128-block settlement boundary is a logical accounting pulse. It MUST NOT
+require a global loop over miners, committee members or reward accounts.
+
+Maturation SHOULD be performed lazily when an affected reward account is
+credited, queried or claimed, so protocol cost remains bounded independently
+of the total number of historical participants.
+
+A participant MAY accumulate rewards across multiple settlement periods before
+claiming them.
+
+A reward claim is an ordinary EVM transaction and MUST NOT be required for
+Rabbit block production, VRF threshold completion or consensus liveness.
+
+The reward implementation MUST follow checks-effects-interactions or an
+equivalent reentrancy-safe withdrawal design.
+
+The canonical producer recipient is consensus-derived. A block producer MUST
+NOT be allowed to nominate a different address as the producer reward recipient
+for an already-defined fulfillment.
+
+The canonical committee reward recipients MUST be derived from protocol-
+verifiable VRF participation evidence. The block producer, requester,
+coordinator caller, website, relayer or administrator MUST NOT be able to
+supply an arbitrary committee reward list.
+
+The exact rule deciding which valid committee contributors share the 30% pool
+is not yet frozen. Until that rule is frozen, no production implementation may
+invent a committee distribution policy.
+
+A request that has not reached a canonical valid fulfillment MUST NOT create the
+50/30/20 fulfillment reward credits.
+
+The eventual refund amount for an expired or failed request remains a separate
+rule and is not defined by this reward-accounting section.
+
+Coordinator native balance MUST NOT be treated as equivalent to distributable
+VRF revenue.
+
+Only protocol-tracked request fees, escrows, refunds and reward credits may
+participate in Rabbit VRF accounting. Untracked native balance already present
+at the coordinator address MUST NOT become claimable merely because the
+coordinator code is installed.
+
 OPEN:
 - Freeze how the 30% committee pool is divided between valid contributors.
 - Freeze treatment of late partial signatures.
 - Freeze treatment of invalid partial signatures.
 - Freeze treatment of offline participants.
 - Freeze the destination and internal policy for the 20% Rabbit Allocation.
+- Freeze the exact claim ABI and payout-address policy.
 - Define anti-withholding incentives.
 - Define anti-spam economics.
-- Freeze reward behavior for expired or failed requests.
 
 ## 9. Failure and refund behavior
 

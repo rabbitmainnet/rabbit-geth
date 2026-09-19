@@ -335,6 +335,51 @@ The internal destination/policy of the Rabbit 20% allocation is not yet frozen.
 
 The internal distribution of the committee 30% is not yet frozen.
 
+Frozen Testnet V0.1 reward settlement architecture:
+
+    VRF_SETTLEMENT_PERIOD_BLOCKS = 128
+    settlementPeriod =
+        (block.number - VRFProtocolBlock)
+        / VRF_SETTLEMENT_PERIOD_BLOCKS
+
+Rewards are accounted when a request becomes canonically `FULFILLED`.
+
+The producer 50% is credited to the canonical producer of the fulfillment
+block. It is not assigned to the producer of the request block.
+
+The committee 30% is credited to the canonical committee reward pool for the
+fulfillment. The producer/requester MUST NOT provide an arbitrary recipient
+list. Exact valid-contributor distribution remains OPEN.
+
+The Rabbit 20% is credited to protocol accounting, but its final destination
+and internal policy remain OPEN.
+
+Credits are pull-based:
+
+    fulfillment
+        -> pending credit
+        -> next settlement-period boundary
+        -> claimable credit
+        -> participant claim
+
+The 128-block schedule is anchored to `VRFProtocolBlock`, so the first
+settlement period begins exactly at Rabbit VRF activation and contains 128
+VRF-active blocks.
+
+The 128-block boundary is a logical pulse only. There is no global transfer
+loop over miners or committee members at the boundary.
+
+Maturation is intended to be lazy and bounded so a participant may aggregate
+multiple rewards before claiming.
+
+Expired or failed requests without canonical valid fulfillment create no
+50/30/20 fulfillment rewards. Exact refund economics remain OPEN.
+
+Callback escrow is independent from this reward ledger.
+
+The coordinator's raw native balance is not authoritative accounting. Only
+explicit protocol-tracked liabilities and credits are eligible for settlement.
+
 ## Existing system-call infrastructure confirmed
 
 core/state_processor.go already has deterministic PreExecution and
@@ -382,6 +427,7 @@ Economics:
     failed/expired request refund
     committee 30% internal distribution
     Rabbit 20% destination/policy
+    settlement/claim storage and ABI implementation
     anti-withholding rules
     anti-spam behavior
 

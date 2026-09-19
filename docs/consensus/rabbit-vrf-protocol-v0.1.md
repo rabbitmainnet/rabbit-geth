@@ -555,6 +555,32 @@ result.
 The service MAY abstract gas from end users, but network computation is not
 free and MUST be metered.
 
+Frozen Testnet V0.1 reward settlement uses a 128-block logical settlement
+period anchored to `VRFProtocolBlock`. Period zero starts at the Rabbit VRF
+activation block, and subsequent periods advance every 128 VRF-active blocks.
+
+Successful fulfillment creates deterministic pending reward credits; crossing
+into a later settlement period makes earlier credits eligible to become
+claimable without requiring a global recipient loop.
+
+Reward withdrawal is pull-based and MUST remain independent from consensus
+liveness.
+
+No 50/30/20 fulfillment reward is created for a request that never reaches a
+canonical valid fulfillment.
+
+The canonical producer reward recipient is the Rabbit producer of the
+fulfillment block. Committee reward recipients MUST be derived from
+protocol-verifiable participation data and MUST NOT be arbitrarily supplied by
+the block producer or requester.
+
+The coordinator's raw native balance MUST NOT be used as the reward ledger.
+Only explicitly protocol-accounted funds may become rewards, refunds or
+claimable balances.
+
+The exact committee 30% distribution, Rabbit 20% destination, claim ABI and
+failed/expired refund amount remain separately OPEN.
+
 Frozen Testnet V0.1 stale-price behavior is defined by the canonical
 RabbitSwap TWAP rules in `rabbit-vrf-testnet-product-v0.1.md`: stale or
 insufficient observation history causes deterministic request rejection, with
