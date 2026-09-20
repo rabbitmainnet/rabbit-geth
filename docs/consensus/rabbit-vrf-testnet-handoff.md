@@ -827,112 +827,209 @@ Tests cover:
 No network transport, sender authentication or encryption is implemented by
 this layer.
 
+## Frozen authenticated DKG envelope foundation
+
+The Participant-authenticated public DKG envelope foundation is implemented and
+tested.
+
+Implementation files:
+
+    consensus/lqc/rabbit_vrf_dkg_envelope_v1.go
+    consensus/lqc/rabbit_vrf_dkg_envelope_v1_test.go
+
+Envelope version:
+
+    1
+
+Current public message type:
+
+    RabbitVRFDKGMessagePolynomialCommitmentV1 = 1
+
+Domains:
+
+    RABBIT-VRF-DKG-ENVELOPE-SIGN-V1
+    RABBIT-VRF-DKG-ENVELOPE-SLOT-V1
+    RABBIT-VRF-DKG-ENVELOPE-ID-V1
+
+The signed payload binds:
+
+    version
+    canonical DKG SessionID
+    message type
+    immutable sender ShareID
+    canonical Participant
+    payload hash
+
+Signing uses:
+
+    accounts.Wallet.SignData
+
+Verification performs:
+
+    canonical RLP signing data
+    Keccak256
+    secp256k1 SigToPub recovery
+    recovered address == canonical Participant
+
+The P2P node key is explicitly NOT the DKG Participant identity.
+
+For public polynomial commitment messages:
+
+    PayloadHash = validated canonical polynomial commitment root
+
+Replay/equivocation identity is split into:
+
+    SlotID
+    EnvelopeID
+
+SlotID binds:
+
+    version
+    SessionID
+    message type
+    sender ShareID
+
+EnvelopeID binds:
+
+    SlotID
+    Participant
+    PayloadHash
+
+Signature bytes do not affect EnvelopeID.
+
+For the current singleton polynomial commitment message, no monotonic sequence
+number is required.
+
+Two valid differently signed payloads for one:
+
+    SessionID + message type + ShareID
+
+produce:
+
+    same SlotID
+    different EnvelopeID
+
+and are therefore suitable as later objective equivocation evidence.
+
+Cross-session and cross-chain replay rejection are explicitly tested.
+
+Real keystore-backed:
+
+    accounts.Wallet.SignData
+
+is explicitly tested against:
+
+    VerifyRabbitVRFDKGEnvelopeV1
+
+Raw private polynomial evaluations are NOT carried in this public envelope.
+
 ## Exact next implementation step
 
 Do NOT activate Rabbit VRF yet.
 
 Current committed checkpoint:
 
-    3e3f5e5f5 feat(rabbitvrf): add public dkg polynomial commitments
+    5641470fb feat(rabbitvrf): verify private dkg evaluations
 
-The current uncommitted protocol slice has now implemented and tested:
+The current uncommitted protocol slice has implemented and tested:
 
-    canonical 32-byte private dealer evaluation scalar
-    zero individual dealer contribution support
-    Feldman evaluation verification equation
-    recipient ShareID bounds
-    dealer commitment validation
-    DKG session binding
-    tamper rejection
+    Participant-authenticated public DKG envelope
+    canonical Wallet.SignData signing bytes
+    secp256k1 Participant recovery
+    ShareID -> Participant binding
+    polynomial commitment payload binding
+    deterministic SlotID
+    deterministic EnvelopeID
+    same-slot equivocation identity
+    cross-session replay rejection
+    cross-chain replay rejection
+    real keystore Wallet.SignData compatibility
 
 The next protocol slice is:
 
-    authenticated DKG message envelope
-
-Do NOT implement encrypted private-share transport yet.
-
-First freeze a canonical, domain-separated envelope that authenticates every
-public DKG protocol message to the canonical WorkSeat Participant wallet.
-
-The envelope MUST bind at least:
-
-    protocol/envelope version
-    canonical DKG session ID
-    DKG phase/message type
-    sender immutable ShareID
-    sender canonical Participant address
-    payload hash
-    deterministic replay/equivocation identity
-
-The sender signature MUST use the existing Rabbit wallet identity model:
-
-    accounts.Wallet.SignData
-
-and verification MUST recover the secp256k1 signer and require:
-
-    recovered address == canonical committee Participant
-
-The P2P node key MUST NOT be accepted as a substitute for the Participant
-wallet identity.
-
-Before implementation, inspect and freeze:
-
-1. Existing CommitteeParticipationV1 signing payload/domain and verification.
-
-2. Exact domain/version pattern to reuse without creating signature-domain
-   collisions.
-
-3. Canonical mapping:
-
-       ShareID -> WorkSeat Participant
-
-4. Message phase/type numbering.
-
-5. Replay identity.
-
-   It must distinguish legitimate messages while making same-session
-   equivocation provable.
-
-6. Whether a monotonic per-sender sequence number is needed, or whether
-   phase/type plus object identity is sufficient.
-
-7. Payload hashing rules.
-
-The first authenticated-envelope slice SHOULD cover public protocol objects
-only.
-
-Do NOT put raw private evaluation bytes into a broadcast authenticated envelope.
-
-Private dealer evaluations will later require:
-
-    recipient binding
-    transport encryption public-key binding
-    authenticated ciphertext
-    confidential point-to-point delivery
-
-Do NOT yet implement:
-
-    encryption
-    private evaluation P2P delivery
-    transport key generation
-    complaints
-    qualification/disqualification
-    transcript finalization
-    secret-share persistence
-    keyset activation
-    public Testnet activation
-
-After the authenticated envelope is frozen and tested, continue with:
-
     transport encryption key binding
-    encrypted private evaluation transport
+
+Do NOT transport private polynomial evaluations yet.
+
+First freeze how each immutable DKG Participant advertises and authenticates an
+ephemeral/session-scoped encryption public key.
+
+Important architectural rule:
+
+    Participant wallet identity != P2P node key
+
+The encryption key MUST therefore be independently generated for DKG transport
+and cryptographically bound to:
+
+    canonical DKG SessionID
+    immutable ShareID
+    canonical Participant
+    encryption scheme/version
+    encryption public key
+
+The Participant wallet MUST authenticate this binding.
+
+Before selecting or implementing the encryption scheme, inspect the repository
+for existing:
+
+    ECIES
+    ECDH
+    secp256k1 encryption helpers
+    RLPx key-agreement primitives
+    secure randomness APIs
+    encrypted local secret-storage patterns
+
+Do NOT automatically reuse the node's P2P private key.
+
+The next slice must freeze:
+
+1. Encryption key algorithm.
+
+2. Canonical public-key encoding.
+
+3. Canonical binding message/domain.
+
+4. Participant Wallet.SignData authentication.
+
+5. Session scoping.
+
+6. ShareID and Participant binding.
+
+7. Invalid-key rejection.
+
+8. Duplicate/conflicting transport-key behavior.
+
+9. Whether transport keys are ephemeral per DKG session.
+
+10. What private transport key material must survive restart.
+
+Security requirement:
+
+    private transport secret keys MUST NOT be written plaintext into generic
+    chain database state.
+
+After transport-key binding is frozen and tested, continue with:
+
+    recipient-bound encrypted private evaluation message
+    authenticated ciphertext
+    confidential point-to-point P2P delivery
+    replay/deduplication rules
     complaint evidence
     qualification/disqualification state machine
-    canonical transcript root
-    crash-safe persistence
+    canonical DKG transcript
+    final share aggregation
+    crash-safe secret persistence
     restart/reorg recovery
     keyset activation lifecycle
     canonical VRF round message
+
+Do NOT yet implement:
+
+    complaint state transitions
+    qualification/disqualification
+    DKG transcript finalization
+    keyset activation
+    public Testnet activation
 
 VRFProtocolBlock MUST remain disabled in the public Testnet configuration until
 the complete activation gate is satisfied.

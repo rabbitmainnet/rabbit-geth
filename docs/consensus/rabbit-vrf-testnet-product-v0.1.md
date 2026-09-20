@@ -1417,3 +1417,154 @@ Still OPEN after this foundation:
 - crash-safe secret persistence;
 - restart/reorg recovery;
 - keyset activation lifecycle.
+### Frozen Rabbit VRF authenticated DKG envelope foundation
+
+Rabbit VRF V1 now freezes the authenticated envelope foundation for PUBLIC DKG
+protocol objects.
+
+Implementation files:
+
+    consensus/lqc/rabbit_vrf_dkg_envelope_v1.go
+    consensus/lqc/rabbit_vrf_dkg_envelope_v1_test.go
+
+Envelope version:
+
+    1
+
+Current V1 public message type:
+
+    1 = polynomial commitment
+
+Canonical signature domain:
+
+    RABBIT-VRF-DKG-ENVELOPE-SIGN-V1
+
+Canonical equivocation-slot domain:
+
+    RABBIT-VRF-DKG-ENVELOPE-SLOT-V1
+
+Canonical exact-message identity domain:
+
+    RABBIT-VRF-DKG-ENVELOPE-ID-V1
+
+The signed envelope binds:
+
+    envelope version
+    canonical DKG SessionID
+    message type
+    immutable sender ShareID
+    canonical sender Participant address
+    canonical payload hash
+
+The exact RLP signing payload is supplied to:
+
+    accounts.Wallet.SignData
+
+The wallet signs:
+
+    Keccak256(canonical RLP signing bytes)
+
+Verification recovers the secp256k1 signer and requires:
+
+    recovered signer == canonical committee Participant
+
+The P2P node key is NOT a substitute for the Participant wallet identity.
+
+The sender mapping remains:
+
+    immutable ShareID -> canonical committee Participant
+
+where ShareID was fixed by the committed deterministic VRF committee and is
+never renumbered by DKG participation, complaints, liveness or qualification.
+
+For the current polynomial commitment message:
+
+    PayloadHash = canonical dealer polynomial commitment root
+
+The polynomial commitment is validated against the same DKG session before its
+root is accepted as an envelope payload hash.
+
+V1 uses two deterministic identities.
+
+The singleton public-message slot identity binds:
+
+    envelope version
+    DKG SessionID
+    message type
+    sender ShareID
+
+under:
+
+    RABBIT-VRF-DKG-ENVELOPE-SLOT-V1
+
+PayloadHash and Participant are deliberately excluded from SlotID.
+
+Because ShareID has one canonical Participant, two otherwise valid signed
+messages for the same:
+
+    SessionID + message type + ShareID
+
+occupy the same slot.
+
+The exact envelope identity binds:
+
+    SlotID
+    Participant
+    PayloadHash
+
+under:
+
+    RABBIT-VRF-DKG-ENVELOPE-ID-V1
+
+Signature bytes are deliberately excluded from EnvelopeID.
+
+Therefore:
+
+- retransmitting the same authenticated object retains the same EnvelopeID;
+- changing signature bytes does not change canonical object identity;
+- changing the public payload changes EnvelopeID;
+- two valid signed different payloads for the same singleton slot have the same
+  SlotID and different EnvelopeIDs;
+- those two signed objects can later serve as objective equivocation evidence.
+
+No monotonic per-sender sequence number is required for this singleton public
+polynomial-commitment message.
+
+Cross-session and cross-chain replay are rejected because SessionID already
+binds the canonical DKG context, including ChainID.
+
+Tests cover:
+
+- valid Participant signature;
+- deterministic SlotID and EnvelopeID;
+- signature-independent canonical identity;
+- tampered session;
+- tampered message type;
+- tampered ShareID;
+- tampered Participant;
+- tampered payload;
+- malformed signature;
+- wrong canonical committee member;
+- cross-session replay rejection;
+- cross-chain replay rejection;
+- two separately signed conflicting public payloads in one equivocation slot;
+- real accounts.Wallet.SignData compatibility through a keystore wallet;
+- full LQC regression suite.
+
+This authenticated envelope is currently for PUBLIC DKG protocol objects only.
+
+Raw private polynomial evaluation bytes MUST NOT be broadcast through this
+public envelope.
+
+Still OPEN:
+
+- transport encryption key generation;
+- Participant-signed transport encryption public-key binding;
+- recipient-bound encrypted private evaluation envelope;
+- confidential point-to-point private evaluation delivery;
+- complaint/evidence rules;
+- qualification/disqualification state machine;
+- canonical DKG transcript;
+- crash-safe secret persistence;
+- restart/reorg recovery;
+- keyset activation lifecycle.
