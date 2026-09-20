@@ -705,82 +705,159 @@ Current cryptographic dependencies already include:
 No production drand or kyber dependency is currently required by the Rabbit VRF
 foundation.
 
+## Frozen public polynomial commitment foundation
+
+The public polynomial commitment layer is now implemented and tested.
+
+Implementation files:
+
+    crypto/rabbitvrf/dkg_commitment_v1.go
+    crypto/rabbitvrf/dkg_commitment_v1_test.go
+    consensus/lqc/rabbit_vrf_dkg_commitment_v1.go
+    consensus/lqc/rabbit_vrf_dkg_commitment_v1_test.go
+
+Frozen representation:
+
+    scalar coefficients: BLS12-381 Fr
+    public commitments: BLS12-381 G1
+    compressed commitment size: 48 bytes
+    polynomial coefficient count: threshold
+    exact polynomial degree: threshold - 1
+
+For coefficient a[j]:
+
+    C[j] = G1 * a[j]
+
+Every G1 encoding is required to be canonical, on-curve and in-subgroup.
+
+The constant coefficient commitment and highest-degree coefficient commitment
+MUST be non-infinity.
+
+Intermediate coefficient commitments MAY be canonical G1 infinity points,
+representing zero intermediate scalar coefficients.
+
+Canonical commitment domain:
+
+    RABBIT-VRF-DKG-POLY-COMMITMENT-V1
+
+Each dealer commitment binds:
+
+    version
+    DKG session ID
+    immutable DealerShareID
+    ordered coefficient commitments
+
+The commitment identity is Keccak256 over the canonical RLP payload.
+
+The implementation rejects:
+
+    wrong coefficient count
+    malformed G1 encoding
+    non-canonical G1 encoding
+    zero constant commitment
+    zero highest-degree commitment
+    zero DealerShareID
+    DealerShareID above original committee size
+    wrong DKG session
+
+Dealer commitment collections are ordered by ascending DealerShareID.
+
+Duplicate DealerShareIDs are rejected.
+
+P2P arrival order cannot select the canonical order.
+
+Canonicalized commitments deep-copy coefficient slices.
+
+This layer contains no private polynomial coefficients and performs no DKG
+network transport.
+
+Dealer authentication is NOT yet supplied by this structure itself. Future DKG
+messages must bind the dealer ShareID to the canonical WorkSeat Participant
+wallet identity.
+
 ## Exact next implementation step
 
 Do NOT activate Rabbit VRF yet.
 
-Current committed recovery checkpoint:
+Current committed checkpoint:
 
-    058df1c57 docs(rabbitvrf): update dkg implementation handoff
+    3b411d0cc feat(rabbitvrf): add deterministic dkg session
 
-The current uncommitted protocol slice has now implemented and tested:
+The current uncommitted protocol slice has implemented and tested:
 
-    RabbitVRFThresholdPolicyV1
-    RabbitVRFDKGSessionContextV1
-    RabbitVRFDKGSessionIDV1
-    RABBIT-VRF-DKG-SESSION-V1
+    canonical 48-byte BLS12-381 G1 coefficient commitments
+    exact threshold-1 polynomial commitment shape
+    RABBIT-VRF-DKG-POLY-COMMITMENT-V1
+    deterministic per-dealer commitment hash
+    canonical dealer ordering
+    duplicate DealerShareID rejection
+    network-arrival-order independence
 
 The next protocol slice is:
 
-    public polynomial commitment format
+    private polynomial evaluation share verification foundation
 
-Do NOT implement private-share transport yet.
+Do NOT implement P2P transport or encryption yet.
 
-The next slice must define the public commitment to each DKG dealer/member's
-polynomial before any private evaluation shares are accepted.
+First freeze the pure cryptographic rule by which recipient ShareID `x`
+validates one dealer's private polynomial evaluation `s` against that dealer's
+public commitments:
 
-The design must determine and freeze:
+    G1 * s
+        ==
+    C[0] + x*C[1] + x^2*C[2] + ... + x^(t-1)*C[t-1]
 
-1. Exact polynomial degree:
+The next slice must determine and test:
 
-       threshold - 1
+1. Canonical scalar encoding for a private dealer evaluation contribution.
 
-2. Exact BLS12-381 group used for coefficient commitments.
+2. Whether zero dealer contributions are permitted.
 
-3. Canonical serialized representation of every coefficient commitment.
+   Important: an individual dealer evaluation MAY mathematically be zero even
+   though the recipient's final aggregated secret share must later be non-zero.
 
-4. Domain-separated commitment message binding at least:
+3. Recipient ShareID validation:
 
-       DKG session ID
-       dealer immutable ShareID
-       ordered coefficient commitments
+       ShareID != 0
+       ShareID <= original committee size
 
-5. Validation rules for:
+4. Exact evaluation arithmetic in Fr.
 
-       wrong number of coefficients
-       point at infinity where forbidden
-       malformed/non-canonical point encoding
-       wrong session
-       zero or out-of-range dealer ShareID
-       duplicate dealer commitment
-       reordered coefficients
-       cross-chain replay
-       cross-epoch replay
+5. Exact G1 verification equation against the ordered public commitments.
 
-6. Exact deterministic commitment root/hash used later by complaint evidence and
-   the canonical DKG transcript.
+6. Rejection of:
 
-The public polynomial commitment layer MUST NOT contain the dealer's secret
-polynomial coefficients.
+       wrong recipient ShareID
+       malformed/non-canonical scalar bytes
+       scalar outside Fr
+       wrong dealer commitment
+       wrong DKG session
+       altered coefficient commitment
+       altered private evaluation
 
-It MUST be possible for a recipient later to verify a private evaluation share
-against the dealer's public coefficient commitments.
+7. Tests proving that valid polynomial evaluations verify for multiple
+   recipient ShareIDs and that tampering fails.
+
+This slice MUST remain pure/local cryptographic verification.
 
 Do NOT yet implement:
 
-    production private-share encryption
+    private-share encryption
     private-share P2P messages
+    Participant-signed DKG envelope
     complaints
     qualification/disqualification
     transcript finalization
-    secret-share persistence
+    local secret-share persistence
     keyset activation
     public Testnet activation
 
-After the public commitment foundation passes deterministic and adversarial
-tests, continue with:
+After the evaluation verification foundation passes deterministic and
+adversarial tests, continue with:
 
-    private share transport/authentication
+    authenticated DKG message envelope
+    transport encryption key binding
+    encrypted private share transport
     complaint evidence
     qualification/disqualification state machine
     canonical transcript root

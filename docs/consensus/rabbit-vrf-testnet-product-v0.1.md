@@ -1214,3 +1214,116 @@ OPEN:
 - Explorer indexing model.
 
 These decisions MUST be resolved before the product layer is considered frozen.
+### Frozen Rabbit VRF public polynomial commitment foundation
+
+Rabbit VRF V1 now freezes the public polynomial commitment representation used
+before private DKG evaluation shares are exchanged.
+
+Each DKG dealer uses a polynomial over the BLS12-381 scalar field Fr.
+
+For threshold `t`, V1 requires exactly:
+
+    t coefficient commitments
+
+corresponding to an exact polynomial degree:
+
+    t - 1
+
+For scalar coefficients:
+
+    a[0], a[1], ..., a[t-1]
+
+the public commitments are:
+
+    C[j] = G1 * a[j]
+
+The commitment group is BLS12-381 G1, matching the Rabbit VRF threshold public
+key group.
+
+Each coefficient commitment uses the existing gnark-crypto canonical compressed
+G1 representation:
+
+    48 bytes
+
+Every encoded point MUST:
+
+- decode successfully;
+- consume exactly 48 bytes;
+- be on the BLS12-381 curve;
+- be in the correct subgroup;
+- re-encode to exactly the same canonical bytes.
+
+V1 requires:
+
+- C[0] to be non-infinity;
+- C[t-1] to be non-infinity;
+- intermediate coefficient commitments MAY be the canonical G1 point at
+  infinity, representing a zero intermediate scalar coefficient.
+
+Therefore every dealer polynomial has an exact non-zero highest degree and a
+non-zero constant contribution.
+
+The canonical dealer commitment domain is:
+
+    RABBIT-VRF-DKG-POLY-COMMITMENT-V1
+
+The commitment payload binds:
+
+- commitment version;
+- canonical DKG session ID;
+- immutable dealer ShareID;
+- ordered coefficient commitments.
+
+The dealer commitment hash is:
+
+    Keccak256(
+        RLP(
+            domain,
+            version,
+            sessionID,
+            dealerShareID,
+            orderedCoefficientCommitments
+        )
+    )
+
+Changing coefficient order, dealer ShareID, DKG session, chain or target epoch
+changes the resulting commitment identity.
+
+A commitment is invalid if:
+
+- the dealer ShareID is zero;
+- the dealer ShareID exceeds the original committee size;
+- the coefficient count differs from the frozen threshold;
+- C[0] is infinity;
+- C[t-1] is infinity;
+- any G1 encoding is malformed or non-canonical;
+- the commitment belongs to another DKG session.
+
+Collections of dealer commitments are canonicalized by ascending immutable
+DealerShareID.
+
+Network arrival order MUST NOT affect the canonical collection.
+
+Two commitments carrying the same DealerShareID are rejected rather than
+resolved by arrival order or local peer preference.
+
+The canonicalized collection deep-copies coefficient bytes so mutation of an
+input object cannot modify the canonical result.
+
+This layer contains NO private polynomial scalar coefficients.
+
+It also does NOT yet authenticate the dealer over P2P. Dealer authentication is
+a separate future message-envelope rule bound to the canonical Participant
+wallet identity.
+
+Still OPEN after this foundation:
+
+- production polynomial generation;
+- private polynomial evaluation share representation;
+- private evaluation share verification against public commitments;
+- authenticated/encrypted private share transport;
+- complaint evidence;
+- qualification/disqualification state machine;
+- canonical DKG transcript;
+- DKG persistence and restart recovery;
+- keyset activation lifecycle.
