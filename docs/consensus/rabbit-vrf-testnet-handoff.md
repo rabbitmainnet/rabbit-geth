@@ -923,45 +923,158 @@ is explicitly tested against:
 
 Raw private polynomial evaluations are NOT carried in this public envelope.
 
+## Frozen recipient-bound encrypted private evaluation foundation
+
+Rabbit VRF V1 now implements and tests recipient-bound encrypted private
+polynomial evaluation transport at the protocol-object layer.
+
+Implementation files:
+
+    consensus/lqc/rabbit_vrf_dkg_encrypted_evaluation_v1.go
+    consensus/lqc/rabbit_vrf_dkg_encrypted_evaluation_v1_test.go
+
+The canonical plaintext is exactly one:
+
+    DKGPolynomialEvaluationV1
+
+encoded as exactly 32 canonical BLS12-381 Fr bytes.
+
+The encrypted object binds:
+
+- protocol version;
+- canonical DKG SessionID;
+- immutable dealer ShareID;
+- dealer Participant wallet;
+- immutable recipient ShareID;
+- recipient Participant wallet;
+- canonical dealer polynomial CommitmentRoot;
+- authenticated recipient TransportKeyRoot;
+- randomized geth ECIES ciphertext;
+- dealer Participant-wallet signature.
+
+Rabbit VRF V1 uses the authenticated recipient transport key with geth ECIES
+over secp256k1 using AES-128 / SHA-256.
+
+For the exact 32-byte evaluation plaintext, the V1 ciphertext representation is
+fixed at 145 bytes under this geth ECIES profile.
+
+Exact shared-information domains are:
+
+    RABBIT-VRF-DKG-EVAL-ECIES-KDF-V1
+    RABBIT-VRF-DKG-EVAL-ECIES-MAC-V1
+
+Ciphertext slot and identity domains are:
+
+    RABBIT-VRF-DKG-EVAL-CIPHERTEXT-SLOT-V1
+    RABBIT-VRF-DKG-EVAL-CIPHERTEXT-ID-V1
+
+Dealer authentication uses:
+
+    RABBIT-VRF-DKG-EVAL-CIPHERTEXT-SIGN-V1
+
+The dealer signs canonical RLP metadata plus the exact ciphertext hash using the
+canonical Participant wallet identity.
+
+The P2P node key and DKG transport key are NOT accepted as substitutes for the
+dealer Participant wallet signature.
+
+ECIES is randomized.
+
+Therefore two valid encryptions for the same semantic dealer-to-recipient slot:
+
+- have the same SlotID;
+- normally have different ciphertext bytes;
+- normally have different MessageIDs;
+- are NOT automatically equivocation merely because the ciphertext differs.
+
+MessageID commits to the semantic SlotID and exact ciphertext hash.
+
+Signature bytes themselves are excluded from MessageID.
+
+Decryption requires:
+
+- the exact canonical DKG session;
+- the canonical dealer;
+- the dealer's authenticated Participant-wallet signature;
+- the canonical recipient;
+- the authenticated recipient transport-key binding;
+- the exact local transport private key matching that binding;
+- successful ECIES authentication/decryption;
+- canonical 32-byte Fr evaluation decoding;
+- successful Feldman evaluation verification against the dealer commitment.
+
+Tests cover:
+
+- encrypt/decrypt round-trip;
+- domain-separated s1 and s2;
+- randomized ciphertext with stable semantic SlotID;
+- ciphertext tampering rejection;
+- wrong transport private-key rejection;
+- metadata tampering;
+- cross-session rejection;
+- cross-chain rejection;
+- unauthenticated replacement transport-key rejection;
+- dealer signature tampering;
+- wrong dealer signer;
+- real accounts.Wallet.SignData compatibility;
+- deterministic s1, s2, SlotID and MessageID vectors;
+- full LQC regression.
+
+Raw private polynomial evaluations remain forbidden from public DKG gossip.
+
+No production P2P delivery is enabled by this foundation.
+
 ## Exact next implementation step
 
-**Recipient-bound encrypted private polynomial evaluation transport.**
+**Encrypted crash-safe persistence and restart recovery for the session transport private key.**
 
 Do NOT activate Rabbit VRF yet.
 
-Do NOT broadcast raw private polynomial evaluations.
+Do NOT enable private-evaluation P2P delivery until the transport private key can
+survive a crash/restart without changing its already authenticated public
+binding.
 
-Before any P2P transport is enabled, freeze and implement the exact V1 private
-ciphertext protocol:
+The persistence layer must enforce:
 
-- sender SessionID;
-- sender immutable ShareID;
-- recipient immutable ShareID;
-- sender Participant identity;
-- recipient authenticated transport public key;
-- exact private polynomial-evaluation plaintext representation;
-- ECIES encryption using the recipient's authenticated session transport key;
-- exact domain-separated `s1` and `s2` semantics;
-- ciphertext identity / replay protection;
-- sender-to-recipient binding;
-- ciphertext tamper rejection;
-- wrong-recipient rejection;
-- wrong-session and cross-chain rejection;
-- no plaintext private evaluation in public gossip or generic consensus state.
+- generate the dedicated transport key independently once per DKG session,
+  before its authenticated public binding is announced;
+- encrypt the transport private key at rest;
+- never store the raw transport private key in generic chain state;
+- persist enough metadata to bind the secret to:
+  - SessionID;
+  - immutable ShareID;
+  - Participant wallet;
+  - transport Scheme;
+  - expected canonical transport public key;
+- after restart, reload the exact same private key and reproduce the previously
+  announced transport public key;
+- never silently generate a replacement after a binding has been published;
+- missing, corrupted or undecryptable persisted state must fail closed;
+- wrong credentials must fail closed;
+- writes must be crash-safe / atomic;
+- secret files must use restrictive permissions;
+- the transport key must remain different from both:
+  - Participant wallet key;
+  - P2P node key;
+- retention and secure erasure occur only after DKG finalization plus the
+  complaint-evidence retention window; the exact retention window remains to be
+  frozen later.
 
-After the ciphertext protocol is frozen and tested, implement:
+Before implementing persistence, inspect the existing Rabbit Core credential
+flow, keystore integration, node datadir lifecycle and atomic-file helpers.
 
-1. encrypted transport-private-key persistence and restart recovery;
-2. point-to-point DKG delivery;
-3. replay / duplicate handling;
-4. complaint evidence;
-5. dealer qualification;
-6. transcript commitment;
-7. final secret-share aggregation;
-8. crash-safe DKG state recovery;
-9. final Rabbit VRF keyset lifecycle.
+After transport-key persistence is frozen and tested, continue with:
 
-The Participant wallet, Rabbit VRF DKG transport key, and P2P node key remain
+1. confidential point-to-point DKG delivery;
+2. replay / duplicate handling;
+3. complaint evidence;
+4. dealer qualification / disqualification;
+5. canonical transcript commitment;
+6. final secret-share aggregation;
+7. crash-safe full DKG state recovery;
+8. final Rabbit VRF keyset lifecycle.
+
+The Participant wallet, Rabbit VRF DKG transport key and P2P node key remain
 three distinct cryptographic roles.
 
 ## Working rules

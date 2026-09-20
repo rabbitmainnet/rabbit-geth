@@ -1634,3 +1634,92 @@ Still intentionally NOT frozen in this checkpoint:
 
 Raw private polynomial evaluations MUST NOT be broadcast or placed inside the
 public authenticated DKG envelope.
+
+## Frozen Rabbit VRF DKG encrypted private-evaluation transport foundation
+
+Rabbit VRF V1 now freezes the private-evaluation ciphertext protocol-object
+layer for Testnet implementation.
+
+Canonical plaintext:
+
+    DKGPolynomialEvaluationV1
+    exactly 32 canonical BLS12-381 Fr bytes
+
+Encrypted object version:
+
+    1
+
+The object binds:
+
+- SessionID;
+- dealer immutable ShareID;
+- dealer Participant wallet;
+- recipient immutable ShareID;
+- recipient Participant wallet;
+- dealer polynomial CommitmentRoot;
+- authenticated recipient TransportKeyRoot;
+- ciphertext;
+- dealer Participant-wallet signature.
+
+Encryption uses the recipient's authenticated session transport key and geth
+ECIES with the Rabbit VRF V1 secp256k1 AES-128 / SHA-256 profile.
+
+For the canonical 32-byte plaintext, Rabbit VRF V1 freezes the ciphertext size
+at 145 bytes.
+
+Exact domain separation:
+
+    RABBIT-VRF-DKG-EVAL-ECIES-KDF-V1
+    RABBIT-VRF-DKG-EVAL-ECIES-MAC-V1
+    RABBIT-VRF-DKG-EVAL-CIPHERTEXT-SLOT-V1
+    RABBIT-VRF-DKG-EVAL-CIPHERTEXT-ID-V1
+    RABBIT-VRF-DKG-EVAL-CIPHERTEXT-SIGN-V1
+
+The dealer Participant wallet signs canonical RLP metadata plus the exact
+ciphertext hash.
+
+Neither the P2P node key nor the recipient transport key may authenticate the
+dealer.
+
+ECIES randomness is intentionally not treated as semantic equivocation.
+
+For the same semantic dealer-to-recipient delivery:
+
+- SlotID is stable;
+- independent encryptions may have different ciphertexts;
+- MessageID changes with ciphertext hash;
+- signature bytes do not alter MessageID.
+
+Recipient processing verifies:
+
+- canonical session;
+- canonical dealer;
+- dealer Participant-wallet signature;
+- canonical recipient;
+- authenticated transport-key binding;
+- exact local transport private key;
+- ECIES authentication;
+- canonical Fr plaintext;
+- Feldman polynomial-evaluation equation.
+
+Deterministic vectors freeze:
+
+- ECIES s1 context hash;
+- ECIES s2 context hash;
+- encrypted-evaluation SlotID;
+- encrypted-evaluation MessageID.
+
+Still OPEN after this foundation:
+
+- encrypted crash-safe transport-private-key persistence;
+- restart recovery of the exact previously bound transport key;
+- confidential point-to-point DKG delivery;
+- replay / duplicate state;
+- complaint evidence;
+- qualification / disqualification;
+- canonical transcript;
+- final secret-share aggregation;
+- full DKG state recovery;
+- Rabbit VRF keyset activation lifecycle.
+
+Raw private polynomial evaluations MUST NOT be broadcast in public DKG gossip.

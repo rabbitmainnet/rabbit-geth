@@ -837,3 +837,137 @@ func TestRabbitVRFDKGTransportKeyV1ECIESRoundTrip(
 		)
 	}
 }
+
+func TestRabbitVRFDKGTransportKeyV1RejectsVersionAndScheme(
+	t *testing.T,
+) {
+	context,
+		member,
+		_,
+		_,
+		binding,
+		_ :=
+		rabbitVRFDKGTransportKeyFixtureV1(t)
+
+	wrongVersion := binding
+	wrongVersion.Version++
+
+	if _, err :=
+		VerifyRabbitVRFDKGTransportKeyBindingV1(
+			context,
+			member,
+			wrongVersion,
+		); !errors.Is(
+		err,
+		ErrInvalidRabbitVRFDKGTransportKeyV1,
+	) {
+		t.Fatalf(
+			"wrong version error=%v",
+			err,
+		)
+	}
+
+	wrongScheme := binding
+	wrongScheme.Scheme++
+
+	if _, err :=
+		VerifyRabbitVRFDKGTransportKeyBindingV1(
+			context,
+			member,
+			wrongScheme,
+		); !errors.Is(
+		err,
+		ErrInvalidRabbitVRFDKGTransportKeyV1,
+	) {
+		t.Fatalf(
+			"wrong scheme error=%v",
+			err,
+		)
+	}
+}
+
+func TestRabbitVRFDKGTransportKeyV1DeterministicRootVector(
+	t *testing.T,
+) {
+	context :=
+		rabbitVRFDKGTestSessionContextV1(
+			t,
+			9280,
+			11,
+		)
+
+	participantKey, err :=
+		crypto.HexToECDSA(
+			"0000000000000000000000000000000000000000000000000000000000000001",
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transportKey, err :=
+		crypto.HexToECDSA(
+			"0000000000000000000000000000000000000000000000000000000000000002",
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	member := RabbitVRFCommitteeMemberV1{
+		ShareID: 7,
+		TicketHash: crypto.Keccak256Hash(
+			[]byte(
+				"rabbit-vrf-dkg-transport-root-vector-v1",
+			),
+		),
+		Participant: crypto.PubkeyToAddress(
+			participantKey.PublicKey,
+		),
+	}
+
+	publicKey, err :=
+		RabbitVRFDKGTransportPublicKeyV1FromBytes(
+			crypto.CompressPubkey(
+				&transportKey.PublicKey,
+			),
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	binding, root, err :=
+		NewRabbitVRFDKGTransportKeyBindingV1(
+			context,
+			member,
+			publicKey,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if binding.Version !=
+		RabbitVRFDKGTransportKeyVersionV1 {
+		t.Fatal(
+			"deterministic binding version mismatch",
+		)
+	}
+
+	if binding.Scheme !=
+		RabbitVRFDKGTransportSchemeECIESSecp256k1AES128SHA256V1 {
+		t.Fatal(
+			"deterministic binding scheme mismatch",
+		)
+	}
+
+	want :=
+		common.HexToHash(
+			"0x7c7ea4701b84be4961b6f7b45f5155ead9385f802869906db61ef1b362a30537",
+		)
+
+	if root != want {
+		t.Fatalf(
+			"transport root vector mismatch: have=%s want=%s",
+			root.Hex(),
+			want.Hex(),
+		)
+	}
+}
