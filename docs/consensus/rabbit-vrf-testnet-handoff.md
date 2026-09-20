@@ -925,114 +925,44 @@ Raw private polynomial evaluations are NOT carried in this public envelope.
 
 ## Exact next implementation step
 
+**Recipient-bound encrypted private polynomial evaluation transport.**
+
 Do NOT activate Rabbit VRF yet.
 
-Current committed checkpoint:
+Do NOT broadcast raw private polynomial evaluations.
 
-    5641470fb feat(rabbitvrf): verify private dkg evaluations
+Before any P2P transport is enabled, freeze and implement the exact V1 private
+ciphertext protocol:
 
-The current uncommitted protocol slice has implemented and tested:
+- sender SessionID;
+- sender immutable ShareID;
+- recipient immutable ShareID;
+- sender Participant identity;
+- recipient authenticated transport public key;
+- exact private polynomial-evaluation plaintext representation;
+- ECIES encryption using the recipient's authenticated session transport key;
+- exact domain-separated `s1` and `s2` semantics;
+- ciphertext identity / replay protection;
+- sender-to-recipient binding;
+- ciphertext tamper rejection;
+- wrong-recipient rejection;
+- wrong-session and cross-chain rejection;
+- no plaintext private evaluation in public gossip or generic consensus state.
 
-    Participant-authenticated public DKG envelope
-    canonical Wallet.SignData signing bytes
-    secp256k1 Participant recovery
-    ShareID -> Participant binding
-    polynomial commitment payload binding
-    deterministic SlotID
-    deterministic EnvelopeID
-    same-slot equivocation identity
-    cross-session replay rejection
-    cross-chain replay rejection
-    real keystore Wallet.SignData compatibility
+After the ciphertext protocol is frozen and tested, implement:
 
-The next protocol slice is:
+1. encrypted transport-private-key persistence and restart recovery;
+2. point-to-point DKG delivery;
+3. replay / duplicate handling;
+4. complaint evidence;
+5. dealer qualification;
+6. transcript commitment;
+7. final secret-share aggregation;
+8. crash-safe DKG state recovery;
+9. final Rabbit VRF keyset lifecycle.
 
-    transport encryption key binding
-
-Do NOT transport private polynomial evaluations yet.
-
-First freeze how each immutable DKG Participant advertises and authenticates an
-ephemeral/session-scoped encryption public key.
-
-Important architectural rule:
-
-    Participant wallet identity != P2P node key
-
-The encryption key MUST therefore be independently generated for DKG transport
-and cryptographically bound to:
-
-    canonical DKG SessionID
-    immutable ShareID
-    canonical Participant
-    encryption scheme/version
-    encryption public key
-
-The Participant wallet MUST authenticate this binding.
-
-Before selecting or implementing the encryption scheme, inspect the repository
-for existing:
-
-    ECIES
-    ECDH
-    secp256k1 encryption helpers
-    RLPx key-agreement primitives
-    secure randomness APIs
-    encrypted local secret-storage patterns
-
-Do NOT automatically reuse the node's P2P private key.
-
-The next slice must freeze:
-
-1. Encryption key algorithm.
-
-2. Canonical public-key encoding.
-
-3. Canonical binding message/domain.
-
-4. Participant Wallet.SignData authentication.
-
-5. Session scoping.
-
-6. ShareID and Participant binding.
-
-7. Invalid-key rejection.
-
-8. Duplicate/conflicting transport-key behavior.
-
-9. Whether transport keys are ephemeral per DKG session.
-
-10. What private transport key material must survive restart.
-
-Security requirement:
-
-    private transport secret keys MUST NOT be written plaintext into generic
-    chain database state.
-
-After transport-key binding is frozen and tested, continue with:
-
-    recipient-bound encrypted private evaluation message
-    authenticated ciphertext
-    confidential point-to-point P2P delivery
-    replay/deduplication rules
-    complaint evidence
-    qualification/disqualification state machine
-    canonical DKG transcript
-    final share aggregation
-    crash-safe secret persistence
-    restart/reorg recovery
-    keyset activation lifecycle
-    canonical VRF round message
-
-Do NOT yet implement:
-
-    complaint state transitions
-    qualification/disqualification
-    DKG transcript finalization
-    keyset activation
-    public Testnet activation
-
-VRFProtocolBlock MUST remain disabled in the public Testnet configuration until
-the complete activation gate is satisfied.
+The Participant wallet, Rabbit VRF DKG transport key, and P2P node key remain
+three distinct cryptographic roles.
 
 ## Working rules
 
@@ -1054,3 +984,32 @@ Before any future Testnet fork, discover and test the full activation surface.
 
 One eligible wallet, one fair chance remains a Rabbit Chain consensus design
 goal.
+
+## Rabbit VRF DKG transport-key binding checkpoint
+
+Previous committed checkpoint before this slice:
+
+`333c031bc feat(rabbitvrf): add authenticated dkg envelope`
+
+Current transport-key slice:
+
+- envelope message type `2` added for transport-key bindings;
+- canonical 33-byte compressed secp256k1 transport public key;
+- transport scheme V1 bound to geth secp256k1 ECIES AES-128 / SHA-256;
+- transport binding commits SessionID, ShareID, Participant, scheme and key;
+- Participant-wallet authenticated through the existing DKG envelope;
+- Participant wallet-key reuse rejected;
+- P2P node key explicitly remains a different runtime identity and MUST NOT be
+  reused as the Rabbit VRF DKG transport private key;
+- conflicting authenticated transport keys retain the same singleton SlotID
+  and different EnvelopeIDs for equivocation evidence;
+- ECIES compatibility is tested with a real encryption/decryption round-trip;
+- raw private polynomial evaluations remain disabled.
+
+The session transport private key must eventually survive node restart for the
+active DKG session. It MUST NOT be silently regenerated after its authenticated
+public binding has been published, because publishing a different key in the
+same singleton slot is equivocation.
+
+The private transport secret MUST NOT be stored as plaintext in a generic chain
+database. Encrypted crash-safe persistence is still pending.

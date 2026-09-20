@@ -1568,3 +1568,69 @@ Still OPEN:
 - crash-safe secret persistence;
 - restart/reorg recovery;
 - keyset activation lifecycle.
+
+## Frozen Rabbit VRF DKG transport-key binding foundation
+
+The Rabbit VRF DKG transport-encryption public-key binding is now frozen for
+the Testnet implementation slice.
+
+Protocol semantics:
+
+- authenticated DKG envelope message type `2` is the transport-key binding;
+- transport-key binding version is `1`;
+- transport scheme identifier `1` means the Rabbit VRF V1 transport profile:
+  secp256k1 public key with geth ECIES using its secp256k1 default
+  AES-128 / SHA-256 profile;
+- the canonical public-key encoding is exactly 33-byte compressed secp256k1;
+- the key is scoped to one DKG session and one immutable committee ShareID;
+- the binding commits to:
+  - domain;
+  - version;
+  - SessionID;
+  - ShareID;
+  - Participant wallet;
+  - transport scheme;
+  - canonical transport public key;
+- the Participant wallet authenticates the binding through the existing
+  Rabbit VRF DKG envelope;
+- the transport private key is separate from the Participant wallet key;
+- the transport private key must also remain separate from the P2P node key;
+- direct reuse of the Participant wallet public key as the transport key is
+  rejected by consensus validation;
+- the same `(SessionID, message type, ShareID)` singleton envelope slot is used
+  for transport-key publication, so two different authenticated transport keys
+  for the same slot form objective equivocation evidence.
+
+Validation coverage includes:
+
+- canonical 33-byte public-key parsing;
+- malformed, short and oversized public-key rejection;
+- Participant wallet-key reuse rejection;
+- deterministic transport-key commitment root;
+- Participant / ShareID binding;
+- SessionID and chain replay rejection;
+- authenticated envelope verification;
+- transport-key tampering rejection;
+- signed transport-key equivocation identity;
+- real `accounts.Wallet.SignData` compatibility;
+- real geth ECIES encrypt/decrypt round-trip with the bound transport key;
+- rejection of decryption using an unrelated transport private key.
+
+The ECIES round-trip test proves compatibility between the canonical transport
+public-key representation and geth's ECIES implementation. It does NOT yet
+freeze the private-evaluation ciphertext protocol.
+
+Still intentionally NOT frozen in this checkpoint:
+
+- private polynomial-evaluation ciphertext object;
+- recipient binding;
+- exact ECIES `s1` / `s2` shared-information values;
+- ciphertext payload domain;
+- ciphertext replay / dedup identity;
+- complaint evidence for failed private delivery;
+- encrypted transport-key private-secret persistence;
+- restart recovery semantics;
+- point-to-point DKG P2P messages.
+
+Raw private polynomial evaluations MUST NOT be broadcast or placed inside the
+public authenticated DKG envelope.

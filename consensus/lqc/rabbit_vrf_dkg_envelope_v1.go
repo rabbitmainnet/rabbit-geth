@@ -13,6 +13,7 @@ const (
 	RabbitVRFDKGEnvelopeVersionV1 uint8 = 1
 
 	RabbitVRFDKGMessagePolynomialCommitmentV1 uint8 = 1
+	RabbitVRFDKGMessageTransportKeyBindingV1  uint8 = 2
 )
 
 var (
@@ -43,7 +44,8 @@ var (
 // canonical Participant wallet controlling one immutable VRF committee
 // ShareID.
 //
-// V1 currently permits only the public polynomial commitment message type.
+// V1 currently permits public polynomial commitments and authenticated
+// transport-encryption public-key bindings.
 //
 // Raw private polynomial evaluations MUST NOT be placed in this public
 // envelope. Their later transport requires recipient binding and encryption.
@@ -86,7 +88,9 @@ func validRabbitVRFDKGMessageTypeV1(
 	messageType uint8,
 ) bool {
 	return messageType ==
-		RabbitVRFDKGMessagePolynomialCommitmentV1
+		RabbitVRFDKGMessagePolynomialCommitmentV1 ||
+		messageType ==
+			RabbitVRFDKGMessageTransportKeyBindingV1
 }
 
 func validateRabbitVRFDKGEnvelopeContextV1(
