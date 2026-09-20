@@ -1723,3 +1723,59 @@ Still OPEN after this foundation:
 - Rabbit VRF keyset activation lifecycle.
 
 Raw private polynomial evaluations MUST NOT be broadcast in public DKG gossip.
+
+## Frozen Rabbit VRF DKG transport-key persistence foundation
+
+Rabbit VRF V1 now includes an isolated encrypted persistence layer for the
+session-scoped DKG transport private key.
+
+The persisted record binds:
+
+- canonical DKG SessionID;
+- immutable ShareID;
+- Participant wallet address;
+- transport scheme;
+- canonical compressed transport public key;
+- exact encrypted private scalar.
+
+The secret is encrypted using geth CryptoJSON V3 / scrypt primitives.
+
+The storage layer provides:
+
+- encrypted at-rest persistence;
+- exact restart recovery;
+- no silent overwrite;
+- concurrent create-without-replacement protection;
+- 0700 private directory permissions where supported;
+- 0600 private file permissions where supported;
+- temporary-file fsync;
+- directory synchronization around publication;
+- fail-closed wrong-password handling;
+- fail-closed corruption handling;
+- fail-closed metadata mismatch handling;
+- fail-closed missing-state handling;
+- rejection of Participant-wallet key reuse;
+- rejection of inconsistent ECDSA private/public key pairs;
+- Linux/Unix runtime tests;
+- Go race-detector validation;
+- Windows amd64 compile validation;
+- full LQC regression validation.
+
+The persistence package does not itself decide the Rabbit Core credential source
+and does not announce DKG transport bindings.
+
+Still OPEN:
+
+- Rabbit Core runtime wiring;
+- explicit runtime credential source;
+- P2P node-key separation check;
+- lifecycle ownership;
+- restart behavior after an already-announced binding;
+- confidential DKG P2P delivery;
+- replay/duplicate handling;
+- complaint evidence;
+- dealer qualification;
+- transcript aggregation;
+- final keyset lifecycle.
+
+Rabbit VRF remains disabled until the full lifecycle is implemented and tested.

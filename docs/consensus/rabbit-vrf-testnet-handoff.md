@@ -1024,58 +1024,139 @@ Raw private polynomial evaluations remain forbidden from public DKG gossip.
 
 No production P2P delivery is enabled by this foundation.
 
+## Frozen encrypted DKG transport-key persistence foundation
+
+Rabbit VRF now has an isolated crash-safe persistence layer for each
+session-scoped DKG transport private key.
+
+Implementation:
+
+    internal/rabbitvrfstate/dkg_transport_key_store_v1.go
+    internal/rabbitvrfstate/dkg_transport_key_store_sync_unix.go
+    internal/rabbitvrfstate/dkg_transport_key_store_sync_windows.go
+    internal/rabbitvrfstate/dkg_transport_key_store_v1_test.go
+
+The persistence layer is deliberately outside consensus/lqc.
+
+The persisted secret is one dedicated secp256k1 DKG transport private key.
+
+It is NOT:
+
+- the Participant wallet private key;
+- the P2P node private key;
+- raw plaintext chain state;
+- a generic SaveECDSA plaintext file.
+
+The store binds encrypted secret state to:
+
+- store version;
+- DKG transport binding version;
+- canonical SessionID;
+- immutable ShareID;
+- Participant wallet address;
+- transport Scheme;
+- exact canonical compressed transport PublicKey;
+- exact 32-byte secp256k1 private scalar.
+
+Encryption uses the existing geth keystore CryptoJSON V3 machinery through:
+
+    keystore.EncryptDataV3
+    keystore.DecryptDataV3
+
+Production construction uses the standard geth scrypt parameters.
+
+The password/credential is supplied to the store by its caller.
+
+The storage layer deliberately does NOT yet decide whether Rabbit Core runtime
+will reuse an existing local credential or introduce a Rabbit-VRF-specific
+credential source.
+
+Security properties now tested:
+
+- create a new independent transport key once;
+- encrypt private key at rest;
+- no raw private-key bytes in the persisted JSON;
+- no hex-encoded private key in the persisted JSON;
+- reload after simulated restart returns the exact same private key;
+- reload reproduces the exact same authenticated public binding;
+- wrong password fails closed;
+- corrupted ciphertext fails closed;
+- tampered public metadata fails closed;
+- metadata is duplicated inside authenticated encrypted plaintext and must
+  exactly match the outer record;
+- missing state fails closed;
+- cross-session lookup does not silently reuse another session's key;
+- Participant-wallet key reuse is rejected;
+- inconsistent ECDSA D/PublicKey pairs are rejected;
+- nil store use fails closed;
+- an existing persisted transport key is never silently overwritten;
+- concurrent independent store instances cannot both replace the same
+  session/share key;
+- private directory is restricted to 0700 where supported;
+- private file is restricted to 0600 where supported;
+- temporary secret file is fsynced before publication;
+- directory entries are synced around publication/removal;
+- final publication uses create-without-replacement semantics;
+- Linux/Unix tests pass;
+- Go race detector passes;
+- Windows amd64 compilation passes;
+- full consensus/lqc regression passes.
+
+This foundation alone does NOT announce a transport binding and does NOT start
+DKG P2P transport.
+
+Rabbit VRF remains disabled on public Testnet.
+
 ## Exact next implementation step
 
-**Encrypted crash-safe persistence and restart recovery for the session transport private key.**
+**Wire the persisted DKG transport-key lifecycle into Rabbit Core runtime before
+enabling private DKG P2P delivery.**
+
+The runtime integration must enforce this exact order:
+
+1. resolve the canonical DKG session and local immutable committee ShareID;
+2. resolve the local Participant wallet identity;
+3. resolve the secure Rabbit VRF transport-key state directory from the node
+   datadir;
+4. obtain the storage credential through an explicit runtime credential flow;
+5. if persisted state already exists, load it and reproduce the exact same
+   transport public key;
+6. if no persisted state exists and no authenticated transport binding has ever
+   been announced for this local slot, generate and persist one independent
+   transport key;
+7. verify that the transport key is distinct from the Participant wallet key;
+8. verify at runtime that the transport key is also distinct from the local P2P
+   node key;
+9. construct the canonical transport-key binding from the persisted public key;
+10. authenticate that binding with the Participant wallet;
+11. only after persistence succeeds may the binding be announced.
+
+Fail closed requirements:
+
+- never silently regenerate after an authenticated binding was announced;
+- missing persisted state after an existing binding is known is fatal for that
+  DKG participation;
+- corrupted state is fatal for that DKG participation;
+- wrong credential is fatal for that DKG participation;
+- public-key mismatch between persisted secret and announced binding is fatal;
+- Participant/P2P key reuse is fatal;
+- do not fall back to plaintext key storage;
+- do not derive a transport key from a wallet signature.
+
+Before changing startup code, inspect the exact Rabbit Core / geth runtime
+objects available for:
+
+- canonical datadir resolution;
+- Participant wallet/backend access;
+- password/credential availability;
+- local P2P node private/public key access;
+- DKG lifecycle start/stop ownership.
+
+After runtime persistence lifecycle integration is frozen and restart-tested,
+continue with confidential point-to-point DKG delivery, replay/duplicate state,
+complaint evidence and dealer qualification.
 
 Do NOT activate Rabbit VRF yet.
-
-Do NOT enable private-evaluation P2P delivery until the transport private key can
-survive a crash/restart without changing its already authenticated public
-binding.
-
-The persistence layer must enforce:
-
-- generate the dedicated transport key independently once per DKG session,
-  before its authenticated public binding is announced;
-- encrypt the transport private key at rest;
-- never store the raw transport private key in generic chain state;
-- persist enough metadata to bind the secret to:
-  - SessionID;
-  - immutable ShareID;
-  - Participant wallet;
-  - transport Scheme;
-  - expected canonical transport public key;
-- after restart, reload the exact same private key and reproduce the previously
-  announced transport public key;
-- never silently generate a replacement after a binding has been published;
-- missing, corrupted or undecryptable persisted state must fail closed;
-- wrong credentials must fail closed;
-- writes must be crash-safe / atomic;
-- secret files must use restrictive permissions;
-- the transport key must remain different from both:
-  - Participant wallet key;
-  - P2P node key;
-- retention and secure erasure occur only after DKG finalization plus the
-  complaint-evidence retention window; the exact retention window remains to be
-  frozen later.
-
-Before implementing persistence, inspect the existing Rabbit Core credential
-flow, keystore integration, node datadir lifecycle and atomic-file helpers.
-
-After transport-key persistence is frozen and tested, continue with:
-
-1. confidential point-to-point DKG delivery;
-2. replay / duplicate handling;
-3. complaint evidence;
-4. dealer qualification / disqualification;
-5. canonical transcript commitment;
-6. final secret-share aggregation;
-7. crash-safe full DKG state recovery;
-8. final Rabbit VRF keyset lifecycle.
-
-The Participant wallet, Rabbit VRF DKG transport key and P2P node key remain
-three distinct cryptographic roles.
 
 ## Working rules
 
