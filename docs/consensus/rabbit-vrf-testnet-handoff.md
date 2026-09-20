@@ -775,89 +775,157 @@ Dealer authentication is NOT yet supplied by this structure itself. Future DKG
 messages must bind the dealer ShareID to the canonical WorkSeat Participant
 wallet identity.
 
+## Frozen private evaluation verification foundation
+
+The pure private polynomial evaluation verification layer is now implemented
+and tested.
+
+Implementation files:
+
+    crypto/rabbitvrf/dkg_evaluation_v1.go
+    crypto/rabbitvrf/dkg_evaluation_v1_test.go
+    consensus/lqc/rabbit_vrf_dkg_evaluation_v1.go
+    consensus/lqc/rabbit_vrf_dkg_evaluation_v1_test.go
+
+Canonical dealer evaluation representation:
+
+    BLS12-381 Fr
+    32 canonical bytes
+
+Individual dealer evaluations MAY be zero.
+
+Final aggregated secret shares remain subject to the existing non-zero
+SecretShare requirement.
+
+For recipient ShareID x:
+
+    G1 * evaluation
+        ==
+    C[0] + x*C[1] + x^2*C[2] + ... + x^(t-1)*C[t-1]
+
+The implementation verifies this equation directly against the dealer's ordered
+public polynomial commitments.
+
+The consensus wrapper additionally binds verification to:
+
+    canonical DKG session
+    valid dealer polynomial commitment
+    recipient ShareID != 0
+    recipient ShareID <= original committee size
+
+Tests cover:
+
+    canonical scalar parsing
+    zero individual dealer contribution
+    multiple recipient ShareIDs
+    altered private evaluation
+    altered public commitment
+    wrong recipient ShareID
+    recipient bounds
+    cross-session rejection
+
+No network transport, sender authentication or encryption is implemented by
+this layer.
+
 ## Exact next implementation step
 
 Do NOT activate Rabbit VRF yet.
 
 Current committed checkpoint:
 
-    3b411d0cc feat(rabbitvrf): add deterministic dkg session
+    3e3f5e5f5 feat(rabbitvrf): add public dkg polynomial commitments
 
-The current uncommitted protocol slice has implemented and tested:
+The current uncommitted protocol slice has now implemented and tested:
 
-    canonical 48-byte BLS12-381 G1 coefficient commitments
-    exact threshold-1 polynomial commitment shape
-    RABBIT-VRF-DKG-POLY-COMMITMENT-V1
-    deterministic per-dealer commitment hash
-    canonical dealer ordering
-    duplicate DealerShareID rejection
-    network-arrival-order independence
+    canonical 32-byte private dealer evaluation scalar
+    zero individual dealer contribution support
+    Feldman evaluation verification equation
+    recipient ShareID bounds
+    dealer commitment validation
+    DKG session binding
+    tamper rejection
 
 The next protocol slice is:
 
-    private polynomial evaluation share verification foundation
+    authenticated DKG message envelope
 
-Do NOT implement P2P transport or encryption yet.
+Do NOT implement encrypted private-share transport yet.
 
-First freeze the pure cryptographic rule by which recipient ShareID `x`
-validates one dealer's private polynomial evaluation `s` against that dealer's
-public commitments:
+First freeze a canonical, domain-separated envelope that authenticates every
+public DKG protocol message to the canonical WorkSeat Participant wallet.
 
-    G1 * s
-        ==
-    C[0] + x*C[1] + x^2*C[2] + ... + x^(t-1)*C[t-1]
+The envelope MUST bind at least:
 
-The next slice must determine and test:
+    protocol/envelope version
+    canonical DKG session ID
+    DKG phase/message type
+    sender immutable ShareID
+    sender canonical Participant address
+    payload hash
+    deterministic replay/equivocation identity
 
-1. Canonical scalar encoding for a private dealer evaluation contribution.
+The sender signature MUST use the existing Rabbit wallet identity model:
 
-2. Whether zero dealer contributions are permitted.
+    accounts.Wallet.SignData
 
-   Important: an individual dealer evaluation MAY mathematically be zero even
-   though the recipient's final aggregated secret share must later be non-zero.
+and verification MUST recover the secp256k1 signer and require:
 
-3. Recipient ShareID validation:
+    recovered address == canonical committee Participant
 
-       ShareID != 0
-       ShareID <= original committee size
+The P2P node key MUST NOT be accepted as a substitute for the Participant
+wallet identity.
 
-4. Exact evaluation arithmetic in Fr.
+Before implementation, inspect and freeze:
 
-5. Exact G1 verification equation against the ordered public commitments.
+1. Existing CommitteeParticipationV1 signing payload/domain and verification.
 
-6. Rejection of:
+2. Exact domain/version pattern to reuse without creating signature-domain
+   collisions.
 
-       wrong recipient ShareID
-       malformed/non-canonical scalar bytes
-       scalar outside Fr
-       wrong dealer commitment
-       wrong DKG session
-       altered coefficient commitment
-       altered private evaluation
+3. Canonical mapping:
 
-7. Tests proving that valid polynomial evaluations verify for multiple
-   recipient ShareIDs and that tampering fails.
+       ShareID -> WorkSeat Participant
 
-This slice MUST remain pure/local cryptographic verification.
+4. Message phase/type numbering.
+
+5. Replay identity.
+
+   It must distinguish legitimate messages while making same-session
+   equivocation provable.
+
+6. Whether a monotonic per-sender sequence number is needed, or whether
+   phase/type plus object identity is sufficient.
+
+7. Payload hashing rules.
+
+The first authenticated-envelope slice SHOULD cover public protocol objects
+only.
+
+Do NOT put raw private evaluation bytes into a broadcast authenticated envelope.
+
+Private dealer evaluations will later require:
+
+    recipient binding
+    transport encryption public-key binding
+    authenticated ciphertext
+    confidential point-to-point delivery
 
 Do NOT yet implement:
 
-    private-share encryption
-    private-share P2P messages
-    Participant-signed DKG envelope
+    encryption
+    private evaluation P2P delivery
+    transport key generation
     complaints
     qualification/disqualification
     transcript finalization
-    local secret-share persistence
+    secret-share persistence
     keyset activation
     public Testnet activation
 
-After the evaluation verification foundation passes deterministic and
-adversarial tests, continue with:
+After the authenticated envelope is frozen and tested, continue with:
 
-    authenticated DKG message envelope
     transport encryption key binding
-    encrypted private share transport
+    encrypted private evaluation transport
     complaint evidence
     qualification/disqualification state machine
     canonical transcript root

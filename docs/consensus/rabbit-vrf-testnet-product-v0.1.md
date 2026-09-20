@@ -1327,3 +1327,93 @@ Still OPEN after this foundation:
 - canonical DKG transcript;
 - DKG persistence and restart recovery;
 - keyset activation lifecycle.
+### Frozen Rabbit VRF private evaluation verification foundation
+
+Rabbit VRF V1 now freezes the local cryptographic verification of one dealer's
+private polynomial evaluation for one recipient ShareID.
+
+The canonical private dealer evaluation type is:
+
+    DKGPolynomialEvaluationV1
+
+Its encoding is exactly:
+
+    32 bytes
+
+representing one canonical BLS12-381 Fr scalar.
+
+Parsing uses canonical Fr decoding. Values outside the scalar field or
+non-canonical encodings are rejected.
+
+An individual dealer evaluation MAY be zero.
+
+This is intentional.
+
+A zero contribution from one dealer does not imply that the recipient's final
+aggregated DKG secret share may be zero. The final aggregate secret-share rule
+remains separate and MUST reject an unusable zero final secret share.
+
+For immutable recipient ShareID `x` and dealer coefficient commitments:
+
+    C[j] = G1 * a[j]
+
+the private evaluation:
+
+    s = f(x)
+
+is valid exactly when:
+
+    G1 * s
+        ==
+    C[0] + x*C[1] + x^2*C[2] + ... + x^(t-1)*C[t-1]
+
+All scalar arithmetic is over the BLS12-381 Fr field.
+
+The pure cryptographic verifier rejects:
+
+- recipient ShareID zero;
+- empty coefficient commitment list;
+- non-canonical evaluation scalar encoding;
+- malformed coefficient commitments;
+- an evaluation that does not satisfy the public commitment equation.
+
+The consensus wrapper additionally requires:
+
+- a valid canonical DKG session context;
+- recipient ShareID <= original deterministic committee size;
+- a valid dealer polynomial commitment bound to that DKG session.
+
+Therefore a private evaluation from another chain, epoch or DKG session cannot
+be accepted simply by reusing its scalar bytes.
+
+The implementation currently remains LOCAL and PURE.
+
+It does NOT yet define:
+
+- a network message;
+- sender authentication;
+- recipient authentication;
+- encryption;
+- replay protection;
+- complaint evidence;
+- persistence.
+
+Implementation files:
+
+    crypto/rabbitvrf/dkg_evaluation_v1.go
+    crypto/rabbitvrf/dkg_evaluation_v1_test.go
+    consensus/lqc/rabbit_vrf_dkg_evaluation_v1.go
+    consensus/lqc/rabbit_vrf_dkg_evaluation_v1_test.go
+
+Still OPEN after this foundation:
+
+- authenticated DKG message envelope;
+- Participant-wallet binding of DKG senders;
+- transport encryption public-key binding;
+- encrypted private evaluation transport;
+- complaint/evidence format;
+- qualification/disqualification state machine;
+- canonical DKG transcript;
+- crash-safe secret persistence;
+- restart/reorg recovery;
+- keyset activation lifecycle.
