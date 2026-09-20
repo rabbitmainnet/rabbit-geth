@@ -964,6 +964,35 @@ Product / UX:
 
 A product-layer component MUST NOT override consensus state.
 
+### Frozen VRF committee derivation foundation
+
+Testnet V0.1 freezes the deterministic committee-candidate foundation as
+follows:
+
+- The source MUST be a validated CLOSED `WorkEpochSnapshotV1`.
+- The source epoch, canonical `SelectionRoot`, canonical WorkSeats and the
+  already-derived closed-epoch RandomX selection entropy are consensus input.
+- Rabbit VRF derives its own committee seed under the domain
+  `RABBIT-VRF-COMMITTEE-SEED-V1`.
+- The seed binds the Rabbit VRF committee version, chain ID, closed source
+  epoch, canonical selection root and canonical closed-epoch entropy.
+- Block number, parent hash, producer identity, heartbeat state, jail state and
+  other mutable per-block liveness state MUST NOT be inputs to the VRF
+  committee seed.
+- VRF committee sizing reuses Rabbit's existing dynamic committee-size rule and
+  caps the result to the canonical seats actually available.
+- VRF committee derivation does NOT reserve producer or fallback positions.
+- Committee seats are selected deterministically from the canonical closed
+  WorkSeat snapshot.
+- No owner, administrator, requester or block producer may choose or replace
+  committee members.
+
+This derivation produces a deterministic VRF committee candidate only.
+
+The mapping from a source committee candidate to a live VRF epoch, DKG
+ceremony, threshold keyset and keyset activation epoch remains OPEN and MUST be
+frozen separately before public activation.
+
 ## 16. Testnet adversarial product tests
 
 Before public activation, Testnet testing MUST cover at least:

@@ -414,6 +414,42 @@ PreExecution is executed before normal block transactions.
 Rabbit VRF should reuse this infrastructure instead of creating an external
 keeper or parallel execution mechanism.
 
+## Frozen VRF committee derivation foundation
+
+The first native Rabbit VRF consensus foundation is now defined separately from
+per-block LCQ liveness selection.
+
+Canonical committee-candidate derivation:
+
+    validated CLOSED WorkEpochSnapshotV1
+        -> canonical closed-epoch RandomX selection entropy
+        -> RABBIT-VRF-COMMITTEE-SEED-V1
+        -> deterministic WorkSeat committee candidate
+
+The Rabbit VRF committee seed binds:
+
+    committee version
+    chain ID
+    source epoch
+    SelectionRoot
+    closed-epoch entropy
+
+It deliberately excludes:
+
+    block number
+    parent hash
+    current producer
+    heartbeat/liveness state
+    per-block jail/availability filtering
+
+Committee sizing reuses `ComputeCommitteeSizeWithBounds` and is capped to the
+number of canonical WorkSeats present. Rabbit VRF does not reserve producer or
+fallback slots.
+
+This is only the deterministic committee-candidate foundation. DKG timing,
+threshold choice, keyset binding, live VRF epoch assignment and keyset
+activation remain OPEN.
+
 ## Critical work still open
 
 Implementation:
