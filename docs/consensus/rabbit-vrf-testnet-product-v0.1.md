@@ -1028,6 +1028,48 @@ The committee commitment intentionally does NOT contain the VRF epoch number,
 threshold, threshold public key, verification shares or DKG transcript. Those
 belong to the future keyset commitment and remain OPEN.
 
+
+### Frozen VRF keyset commitment foundation
+
+Testnet V0.1 freezes the public keyset commitment primitive:
+
+    RABBIT-VRF-KEYSET-ROOT-V1
+
+A keyset commitment binds:
+
+- Rabbit VRF keyset version;
+- chain ID;
+- VRF epoch;
+- canonical VRF committee root;
+- original committee size;
+- declared threshold;
+- threshold public key;
+- canonical DKG transcript root;
+- canonical public verification shares.
+
+Verification shares use the immutable committee ShareIDs. They are canonicalized
+by ascending ShareID, so network arrival order cannot change the keyset root.
+
+Missing committee ShareIDs are preserved as gaps and MUST NOT cause
+renumbering. For example, qualified ShareIDs `1,3,4` remain `1,3,4`.
+
+The structural keyset primitive rejects:
+
+- ShareID zero;
+- ShareID greater than the original committee size;
+- duplicate ShareIDs;
+- invalid public verification keys;
+- invalid threshold public key;
+- zero threshold;
+- zero transcript root;
+- threshold larger than the number of committed verification shares.
+
+This primitive does NOT prove that a DKG transcript is valid and does NOT decide
+which participants are qualified. It also does NOT freeze the threshold formula,
+DKG construction, complaint/disqualification rules, VRF epoch schedule or keyset
+activation policy. Those remain separate consensus rules that MUST be frozen
+before public activation.
+
 ## 16. Testnet adversarial product tests
 
 Before public activation, Testnet testing MUST cover at least:

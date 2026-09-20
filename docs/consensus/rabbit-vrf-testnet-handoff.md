@@ -485,6 +485,34 @@ The commitment deliberately excludes threshold, threshold public key,
 verification shares, DKG transcript and live VRF epoch assignment. Those belong
 to the future keyset layer.
 
+
+## Frozen VRF keyset commitment foundation
+
+The public threshold-key material now has a deterministic commitment primitive:
+
+    RABBIT-VRF-KEYSET-ROOT-V1
+
+It binds:
+
+    keyset version
+    chain ID
+    VRF epoch
+    committee root
+    original committee size
+    declared threshold
+    threshold public key
+    DKG transcript root
+    canonical verification shares
+
+Verification shares are ordered by their immutable committee ShareID. Arrival
+order is irrelevant. Missing ShareIDs are not renumbered.
+
+The primitive performs structural validation only. It does not decide whether a
+DKG transcript is valid, which members qualify, what threshold formula Rabbit
+VRF uses, when a keyset activates or which VRF epoch schedule is canonical.
+
+Those DKG and lifecycle rules remain OPEN.
+
 ## Critical work still open
 
 Implementation:
