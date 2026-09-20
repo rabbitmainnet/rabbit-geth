@@ -508,10 +508,13 @@ Verification shares are ordered by their immutable committee ShareID. Arrival
 order is irrelevant. Missing ShareIDs are not renumbered.
 
 The primitive performs structural validation only. It does not decide whether a
-DKG transcript is valid, which members qualify, what threshold formula Rabbit
-VRF uses, when a keyset activates or which VRF epoch schedule is canonical.
+DKG transcript is valid, which members qualify, when a keyset activates or
+which VRF epoch schedule is canonical.
 
-Those DKG and lifecycle rules remain OPEN.
+The Rabbit VRF V1 threshold formula is now frozen separately by the DKG session
+foundation.
+
+The remaining DKG qualification and lifecycle rules remain OPEN.
 
 ## Critical work still open
 
@@ -555,6 +558,67 @@ Product:
     developer documentation
     release packaging
     multinode testing
+
+## Frozen threshold policy and DKG session foundation
+
+Threshold policy is now deterministic before DKG begins.
+
+For original deterministic committee size N:
+
+    f = floor((N - 1) / 3)
+    threshold = N - f
+
+The committee size used here is the ORIGINAL committee size committed by
+RABBIT-VRF-COMMITTEE-ROOT-V1.
+
+It is not the later qualified-set size.
+
+Examples:
+
+    N=32  -> threshold=22, maxFaults=10
+    N=64  -> threshold=43, maxFaults=21
+    N=100 -> threshold=67, maxFaults=33
+    N=128 -> threshold=86, maxFaults=42
+
+Complaint, absence, timeout or disqualification MUST NOT lower threshold after
+the DKG session begins.
+
+If the final qualified population is below threshold, the ceremony is not
+eligible to produce an activatable V1 keyset.
+
+Canonical DKG session domain:
+
+    RABBIT-VRF-DKG-SESSION-V1
+
+RabbitVRFDKGSessionContextV1 binds:
+
+    version
+    chain ID
+    target VRF epoch
+    committee root
+    original committee size
+    threshold
+    max fault budget
+
+RabbitVRFDKGSessionIDV1 is derived deterministically from the canonical RLP
+payload and Keccak256.
+
+The session deliberately excludes:
+
+    block producer
+    mutable heartbeat state
+    mutable liveness ordering
+    network arrival order
+    local peer order
+    administrator input
+
+Implementation files:
+
+    consensus/lqc/rabbit_vrf_dkg_session_v1.go
+    consensus/lqc/rabbit_vrf_dkg_session_v1_test.go
+
+This foundation does NOT yet implement polynomial generation, share exchange,
+complaints, qualification, transcript generation, networking or activation.
 
 ## DKG implementation inspection checkpoint
 
@@ -645,79 +709,77 @@ foundation.
 
 Do NOT activate Rabbit VRF yet.
 
-Current clean protocol checkpoint before the next slice:
+Current committed recovery checkpoint:
 
-    4c3a39a26 feat(rabbitvrf): add canonical keyset commitment
+    058df1c57 docs(rabbitvrf): update dkg implementation handoff
 
-Already implemented and checkpointed:
+The current uncommitted protocol slice has now implemented and tested:
 
-    deterministic closed-epoch VRF committee derivation
-    immutable ShareID assignment
-    RABBIT-VRF-COMMITTEE-ROOT-V1
-    RABBIT-VRF-KEYSET-ROOT-V1
-    threshold partial verification/reconstruction primitives
-    coordinator predeploy plumbing
-    deterministic TWAP protocol fee quoting
-    preactivation request path
-
-The next work is NOT another coordinator/predeploy slice.
+    RabbitVRFThresholdPolicyV1
+    RabbitVRFDKGSessionContextV1
+    RabbitVRFDKGSessionIDV1
+    RABBIT-VRF-DKG-SESSION-V1
 
 The next protocol slice is:
 
-    threshold security policy
-    +
-    deterministic DKG session context
+    public polynomial commitment format
 
-Before implementing polynomial commitments or private-share exchange, freeze:
+Do NOT implement private-share transport yet.
 
-1. The exact Rabbit VRF threshold formula as a function of qualified committee
-   size.
+The next slice must define the public commitment to each DKG dealer/member's
+polynomial before any private evaluation shares are accepted.
 
-2. The malicious/offline participant assumption that the threshold formula is
-   intended to tolerate.
+The design must determine and freeze:
 
-3. The canonical DKG session identity.
+1. Exact polynomial degree:
 
-The DKG session identity MUST be domain-separated and MUST bind at least:
+       threshold - 1
 
-    protocol version
-    chain ID
-    target VRF epoch
-    canonical committee root
-    original committee size
-    threshold
+2. Exact BLS12-381 group used for coefficient commitments.
 
-It MUST NOT depend on:
+3. Canonical serialized representation of every coefficient commitment.
 
-    block producer
-    mutable heartbeat state
-    mutable per-block liveness ordering
-    network message arrival order
-    process-local peer order
-    administrator input
+4. Domain-separated commitment message binding at least:
 
-After those rules are frozen, implement the smallest pure consensus slice:
+       DKG session ID
+       dealer immutable ShareID
+       ordered coefficient commitments
 
-    Rabbit VRF threshold-policy function
-    +
-    RABBIT-VRF-DKG-SESSION-V1 context/session ID
-    +
-    deterministic tests
+5. Validation rules for:
+
+       wrong number of coefficients
+       point at infinity where forbidden
+       malformed/non-canonical point encoding
+       wrong session
+       zero or out-of-range dealer ShareID
+       duplicate dealer commitment
+       reordered coefficients
+       cross-chain replay
+       cross-epoch replay
+
+6. Exact deterministic commitment root/hash used later by complaint evidence and
+   the canonical DKG transcript.
+
+The public polynomial commitment layer MUST NOT contain the dealer's secret
+polynomial coefficients.
+
+It MUST be possible for a recipient later to verify a private evaluation share
+against the dealer's public coefficient commitments.
 
 Do NOT yet implement:
 
-    centralized dealer
-    production polynomial generation
-    private share transport
+    production private-share encryption
+    private-share P2P messages
     complaints
-    disqualification
-    DKG networking
+    qualification/disqualification
+    transcript finalization
+    secret-share persistence
     keyset activation
     public Testnet activation
 
-After the session foundation passes tests, continue in this order:
+After the public commitment foundation passes deterministic and adversarial
+tests, continue with:
 
-    public polynomial commitment format
     private share transport/authentication
     complaint evidence
     qualification/disqualification state machine

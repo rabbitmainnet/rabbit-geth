@@ -1065,10 +1065,86 @@ The structural keyset primitive rejects:
 - threshold larger than the number of committed verification shares.
 
 This primitive does NOT prove that a DKG transcript is valid and does NOT decide
-which participants are qualified. It also does NOT freeze the threshold formula,
-DKG construction, complaint/disqualification rules, VRF epoch schedule or keyset
-activation policy. Those remain separate consensus rules that MUST be frozen
+which participants are qualified.
+
+The threshold formula is frozen separately by the Rabbit VRF DKG session
+foundation below.
+
+DKG construction, complaint/disqualification rules, VRF epoch schedule and
+keyset activation policy remain separate consensus rules that MUST be frozen
 before public activation.
+
+
+### Frozen Rabbit VRF threshold policy and DKG session
+
+The Rabbit VRF threshold is fixed BEFORE a DKG ceremony begins.
+
+Let:
+
+    N = original deterministic VRF committee size
+    f = floor((N - 1) / 3)
+
+Then:
+
+    threshold = N - f
+
+The threshold is derived from the ORIGINAL deterministic committee size, not
+from the number of members that later survive DKG qualification.
+
+Examples:
+
+    N=32  -> f=10 -> threshold=22
+    N=64  -> f=21 -> threshold=43
+    N=100 -> f=33 -> threshold=67
+    N=128 -> f=42 -> threshold=86
+
+The V1 policy is designed around the assumption that at most `f` members may be
+Byzantine, unavailable or otherwise unusable during the ceremony.
+
+Complaints, absence, timeout or disqualification MUST NOT lower the threshold
+after the DKG session begins.
+
+If fewer than `threshold` valid qualified share holders remain, that DKG
+ceremony cannot produce an activatable V1 keyset. The protocol MUST NOT reduce
+the quorum to rescue that ceremony.
+
+The deterministic DKG session domain is:
+
+    RABBIT-VRF-DKG-SESSION-V1
+
+The session context binds:
+
+- DKG session version;
+- chain ID;
+- target VRF epoch;
+- canonical committee root;
+- original committee size;
+- deterministic threshold;
+- deterministic maximum fault budget.
+
+The DKG session ID is Keccak256 over the canonical RLP session payload.
+
+The session context deliberately excludes:
+
+- block producer;
+- heartbeat state;
+- mutable per-block liveness ordering;
+- network message arrival order;
+- process-local peer order;
+- administrator input.
+
+This freezes only threshold policy and immutable DKG session identity.
+
+Still OPEN:
+
+- public polynomial commitment format;
+- polynomial generation;
+- private share encryption and transport;
+- complaint evidence;
+- qualification/disqualification state machine;
+- transcript construction;
+- DKG persistence/recovery;
+- keyset activation lifecycle.
 
 ## 16. Testnet adversarial product tests
 
