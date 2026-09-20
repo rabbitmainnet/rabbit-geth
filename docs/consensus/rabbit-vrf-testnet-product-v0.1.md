@@ -993,6 +993,41 @@ The mapping from a source committee candidate to a live VRF epoch, DKG
 ceremony, threshold keyset and keyset activation epoch remains OPEN and MUST be
 frozen separately before public activation.
 
+
+### Frozen VRF committee ShareID and commitment
+
+Testnet V0.1 also freezes the committee identity layer:
+
+- The deterministic VRF committee ordering is consensus input.
+- Each committee member receives one immutable ShareID derived only from its
+  canonical committee position.
+- ShareID assignment is:
+
+      ShareID = committee_position + 1
+
+- ShareID zero is invalid by construction.
+- ShareIDs MUST NOT be renumbered because of liveness, absence, DKG complaints,
+  disqualification or later qualification decisions.
+- The ordered committee is committed under the domain
+  `RABBIT-VRF-COMMITTEE-ROOT-V1`.
+- The committee commitment binds:
+  - Rabbit VRF committee version;
+  - chain ID;
+  - source Work epoch;
+  - canonical source SelectionRoot;
+  - deterministic committee seed;
+  - every ordered member;
+  - each member TicketHash;
+  - each member Participant address;
+  - each member immutable ShareID.
+- Reordering the same members MUST change the committee commitment.
+- Callers MUST NOT provide an arbitrary committee ordering when deriving the
+  canonical snapshot commitment.
+
+The committee commitment intentionally does NOT contain the VRF epoch number,
+threshold, threshold public key, verification shares or DKG transcript. Those
+belong to the future keyset commitment and remain OPEN.
+
 ## 16. Testnet adversarial product tests
 
 Before public activation, Testnet testing MUST cover at least:

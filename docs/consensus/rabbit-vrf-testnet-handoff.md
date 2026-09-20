@@ -450,6 +450,41 @@ This is only the deterministic committee-candidate foundation. DKG timing,
 threshold choice, keyset binding, live VRF epoch assignment and keyset
 activation remain OPEN.
 
+
+## Frozen VRF committee ShareID and commitment
+
+The deterministic committee identity layer is now also frozen.
+
+For a canonically ordered VRF committee:
+
+    committee position 0 -> ShareID 1
+    committee position 1 -> ShareID 2
+    committee position 2 -> ShareID 3
+    ...
+
+ShareID zero is invalid and ShareIDs are never renumbered because of later DKG
+participation, qualification, complaint, liveness or disqualification state.
+
+Canonical committee commitment:
+
+    RABBIT-VRF-COMMITTEE-ROOT-V1
+
+The commitment binds:
+
+    committee version
+    chain ID
+    source Work epoch
+    SelectionRoot
+    committee seed
+    ordered committee members
+    TicketHash
+    Participant
+    immutable ShareID
+
+The commitment deliberately excludes threshold, threshold public key,
+verification shares, DKG transcript and live VRF epoch assignment. Those belong
+to the future keyset layer.
+
 ## Critical work still open
 
 Implementation:
