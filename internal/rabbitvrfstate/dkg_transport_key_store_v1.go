@@ -3,6 +3,7 @@ package rabbitvrfstate
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,15 +59,46 @@ type DKGTransportKeyStoreV1 struct {
 	mu      sync.Mutex
 }
 
+type dkgTransportKeyStorePublicKeyV1 lqc.RabbitVRFDKGTransportPublicKeyV1
+
+func (key dkgTransportKeyStorePublicKeyV1) MarshalText() ([]byte, error) {
+	encoded := make([]byte, 2+hex.EncodedLen(len(key)))
+	copy(encoded, "0x")
+	hex.Encode(encoded[2:], key[:])
+	return encoded, nil
+}
+
+func (key *dkgTransportKeyStorePublicKeyV1) UnmarshalText(text []byte) error {
+	if len(text) != 68 || string(text[:2]) != "0x" {
+		return ErrInvalidDKGTransportKeyStoreV1
+	}
+
+	decoded, err := hex.DecodeString(string(text[2:]))
+	if err != nil {
+		return ErrInvalidDKGTransportKeyStoreV1
+	}
+
+	publicKey, err :=
+		lqc.RabbitVRFDKGTransportPublicKeyV1FromBytes(
+			decoded,
+		)
+	if err != nil {
+		return ErrInvalidDKGTransportKeyStoreV1
+	}
+
+	*key = dkgTransportKeyStorePublicKeyV1(publicKey)
+	return nil
+}
+
 type dkgTransportKeyStoreFileV1 struct {
-	StoreVersion   uint8                                `json:"storeVersion"`
-	BindingVersion uint8                                `json:"bindingVersion"`
-	SessionID      common.Hash                          `json:"sessionId"`
-	ShareID        uint64                               `json:"shareId"`
-	Participant    common.Address                       `json:"participant"`
-	Scheme         uint8                                `json:"scheme"`
-	PublicKey      lqc.RabbitVRFDKGTransportPublicKeyV1 `json:"publicKey"`
-	Crypto         keystore.CryptoJSON                  `json:"crypto"`
+	StoreVersion   uint8                           `json:"storeVersion"`
+	BindingVersion uint8                           `json:"bindingVersion"`
+	SessionID      common.Hash                     `json:"sessionId"`
+	ShareID        uint64                          `json:"shareId"`
+	Participant    common.Address                  `json:"participant"`
+	Scheme         uint8                           `json:"scheme"`
+	PublicKey      dkgTransportKeyStorePublicKeyV1 `json:"publicKey"`
+	Crypto         keystore.CryptoJSON             `json:"crypto"`
 }
 
 type dkgTransportKeySecretV1 struct {
@@ -368,7 +400,7 @@ func (store *DKGTransportKeyStoreV1) saveLocked(
 		ShareID:        binding.ShareID,
 		Participant:    binding.Participant,
 		Scheme:         binding.Scheme,
-		PublicKey:      binding.PublicKey,
+		PublicKey:      dkgTransportKeyStorePublicKeyV1(binding.PublicKey),
 		Crypto:         encrypted,
 	}
 
@@ -476,7 +508,7 @@ func (store *DKGTransportKeyStoreV1) Load(
 		ShareID:     record.ShareID,
 		Participant: record.Participant,
 		Scheme:      record.Scheme,
-		PublicKey:   record.PublicKey,
+		PublicKey:   lqc.RabbitVRFDKGTransportPublicKeyV1(record.PublicKey),
 	}
 
 	if _, err :=
@@ -492,6 +524,10 @@ func (store *DKGTransportKeyStoreV1) Load(
 				ErrDKGTransportKeyStoreMetadataMismatchV1,
 				err,
 			)
+	}
+
+	if err := validateDKGTransportKeyKDFV1(store, record.Crypto); err != nil {
+		return nil, empty, err
 	}
 
 	plaintext, err :=
@@ -544,7 +580,7 @@ func (store *DKGTransportKeyStoreV1) Load(
 		secret.Scheme !=
 			record.Scheme ||
 		secret.PublicKey !=
-			record.PublicKey {
+			lqc.RabbitVRFDKGTransportPublicKeyV1(record.PublicKey) {
 		return nil,
 			empty,
 			ErrDKGTransportKeyStoreMetadataMismatchV1
@@ -577,7 +613,7 @@ func (store *DKGTransportKeyStoreV1) Load(
 			),
 		)
 	if err != nil ||
-		publicKey != record.PublicKey {
+		publicKey != lqc.RabbitVRFDKGTransportPublicKeyV1(record.PublicKey) {
 		if privateKey.D != nil {
 			privateKey.D.SetInt64(0)
 		}
@@ -911,6 +947,56 @@ func decodeTransportKeyStoreFileV1(
 	var trailing interface{}
 
 	if err := decoder.Decode(&trailing); err != io.EOF {
+		return ErrInvalidDKGTransportKeyStoreV1
+	}
+
+	return nil
+}
+
+func validateDKGTransportKeyKDFV1(
+	store *DKGTransportKeyStoreV1,
+	value keystore.CryptoJSON,
+) error {
+	if store == nil ||
+		value.Cipher != "aes-128-ctr" ||
+		value.KDF != "scrypt" ||
+		len(value.KDFParams) != 5 {
+		return ErrInvalidDKGTransportKeyStoreV1
+	}
+
+	exactInt := func(value interface{}, expected int) bool {
+		switch typed := value.(type) {
+		case int:
+			return typed == expected
+		case float64:
+			return typed == float64(expected)
+		default:
+			return false
+		}
+	}
+
+	if !exactInt(value.KDFParams["n"], store.scryptN) ||
+		!exactInt(value.KDFParams["r"], 8) ||
+		!exactInt(value.KDFParams["p"], store.scryptP) ||
+		!exactInt(value.KDFParams["dklen"], 32) {
+		return ErrInvalidDKGTransportKeyStoreV1
+	}
+
+	exactHex := func(value string, size int) bool {
+		decoded, err := hex.DecodeString(value)
+		return err == nil && len(decoded) == size
+	}
+
+	salt, ok := value.KDFParams["salt"].(string)
+	if !ok ||
+		!exactHex(salt, 32) ||
+		!exactHex(value.CipherParams.IV, 16) ||
+		!exactHex(value.MAC, 32) {
+		return ErrInvalidDKGTransportKeyStoreV1
+	}
+
+	ciphertext, err := hex.DecodeString(value.CipherText)
+	if err != nil || len(ciphertext) == 0 {
 		return ErrInvalidDKGTransportKeyStoreV1
 	}
 

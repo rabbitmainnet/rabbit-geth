@@ -236,6 +236,245 @@ func TestDKGTransportKeyStoreV1RestartRecovery(
 	}
 }
 
+func TestDKGTransportKeyStoreV1RejectsTamperedScryptNBeforeDecrypt(
+	t *testing.T,
+) {
+	context, member :=
+		dkgTransportKeyStoreFixtureV1(t)
+
+	store :=
+		newTestDKGTransportKeyStoreV1(
+			t,
+			t.TempDir(),
+		)
+
+	_, _, err :=
+		store.Create(
+			context,
+			member,
+			"correct-password",
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path, err :=
+		store.Path(
+			context,
+			member,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	record :=
+		readTestStoreRecordV1(
+			t,
+			path,
+		)
+
+	record.Crypto.KDFParams["n"] =
+		testScryptN * 2
+
+	writeTestStoreRecordV1(
+		t,
+		path,
+		record,
+	)
+
+	_, _, err =
+		store.Load(
+			context,
+			member,
+			"wrong-password",
+		)
+
+	if !errors.Is(
+		err,
+		ErrInvalidDKGTransportKeyStoreV1,
+	) {
+		t.Fatalf(
+			"tampered scrypt n error=%v",
+			err,
+		)
+	}
+
+	if errors.Is(
+		err,
+		ErrDKGTransportKeyStoreDecryptV1,
+	) {
+		t.Fatalf(
+			"tampered scrypt n reached decrypt path: %v",
+			err,
+		)
+	}
+}
+
+func TestDKGTransportKeyStoreV1RejectsMalformedCryptoMetadataBeforeDecrypt(
+	t *testing.T,
+) {
+	cases := []struct {
+		name   string
+		mutate func(*dkgTransportKeyStoreFileV1)
+	}{
+		{
+			name: "salt",
+			mutate: func(record *dkgTransportKeyStoreFileV1) {
+				record.Crypto.KDFParams["salt"] = "zz"
+			},
+		},
+		{
+			name: "iv",
+			mutate: func(record *dkgTransportKeyStoreFileV1) {
+				record.Crypto.CipherParams.IV = "00"
+			},
+		},
+		{
+			name: "mac",
+			mutate: func(record *dkgTransportKeyStoreFileV1) {
+				record.Crypto.MAC = "00"
+			},
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			context, member :=
+				dkgTransportKeyStoreFixtureV1(t)
+
+			store :=
+				newTestDKGTransportKeyStoreV1(
+					t,
+					t.TempDir(),
+				)
+
+			_, _, err :=
+				store.Create(
+					context,
+					member,
+					"correct-password",
+				)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			path, err :=
+				store.Path(
+					context,
+					member,
+				)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			record :=
+				readTestStoreRecordV1(
+					t,
+					path,
+				)
+
+			test.mutate(&record)
+
+			writeTestStoreRecordV1(
+				t,
+				path,
+				record,
+			)
+
+			_, _, err =
+				store.Load(
+					context,
+					member,
+					"wrong-password",
+				)
+
+			if !errors.Is(
+				err,
+				ErrInvalidDKGTransportKeyStoreV1,
+			) {
+				t.Fatalf(
+					"malformed crypto metadata error=%v",
+					err,
+				)
+			}
+
+			if errors.Is(
+				err,
+				ErrDKGTransportKeyStoreDecryptV1,
+			) {
+				t.Fatalf(
+					"malformed crypto metadata reached decrypt: %v",
+					err,
+				)
+			}
+		})
+	}
+}
+
+func TestDKGTransportKeyStoreV1PersistsCanonicalHexPublicKey(
+	t *testing.T,
+) {
+	context, member :=
+		dkgTransportKeyStoreFixtureV1(t)
+
+	store :=
+		newTestDKGTransportKeyStoreV1(
+			t,
+			t.TempDir(),
+		)
+
+	_, binding, err :=
+		store.Create(
+			context,
+			member,
+			"test-password",
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path, err :=
+		store.Path(
+			context,
+			member,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var raw struct {
+		PublicKey json.RawMessage `json:"publicKey"`
+	}
+
+	if err := json.Unmarshal(encoded, &raw); err != nil {
+		t.Fatal(err)
+	}
+
+	var publicKey string
+	if err := json.Unmarshal(raw.PublicKey, &publicKey); err != nil {
+		t.Fatalf(
+			"publicKey is not a JSON string: %v",
+			err,
+		)
+	}
+
+	expected :=
+		"0x" + hex.EncodeToString(binding.PublicKey[:])
+
+	if publicKey != expected {
+		t.Fatalf(
+			"publicKey=%q want=%q",
+			publicKey,
+			expected,
+		)
+	}
+}
+
 func TestDKGTransportKeyStoreV1RejectsWrongPassword(
 	t *testing.T,
 ) {
@@ -470,7 +709,7 @@ func TestDKGTransportKeyStoreV1AuthenticatesPublicKeyMetadata(
 	}
 
 	record.PublicKey =
-		otherPublic
+		dkgTransportKeyStorePublicKeyV1(otherPublic)
 
 	writeTestStoreRecordV1(
 		t,

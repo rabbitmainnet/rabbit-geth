@@ -1293,3 +1293,27 @@ Still OPEN at this layer:
 - old-key continuity if the intended next keyset is unavailable;
 - exact public activation fork block;
 - P2P DKG transport runtime.
+
+
+## DKG transport key-store hardening checkpoint
+
+Completed after `f9c9e0c2f`:
+
+- DKG transport key-store CryptoJSON metadata is validated before `DecryptDataV3`.
+- Cipher must be `aes-128-ctr`.
+- KDF must be `scrypt`.
+- Persisted scrypt `n`, `r`, `p`, and `dklen` must match the store profile.
+- Salt, IV, MAC, and ciphertext are structurally validated before decrypt/scrypt.
+- Malformed or attacker-edited KDF metadata returns `ErrInvalidDKGTransportKeyStoreV1` before the expensive decrypt path.
+- Wrong passwords continue to use `ErrDKGTransportKeyStoreDecryptV1`.
+- The outer persisted DKG transport public key is now canonical `0x` hex instead of a JSON integer array.
+- The inner authenticated secret remains the fixed 33-byte transport public key representation.
+- Tests cover tampered scrypt parameters, malformed crypto metadata, and canonical public-key JSON persistence.
+- `go test -race ./internal/rabbitvrfstate -count=1` passes.
+- `go vet ./internal/rabbitvrfstate` passes.
+- Windows amd64 compile check passes.
+- `go test ./consensus/lqc -count=1` passes.
+
+Exact next implementation step:
+
+Build the canonical Work-state -> Rabbit VRF committee -> DKG session bridge. Resolve the exact production Work selection DatasetKey/entropy path before wiring it; do not assume a DatasetKey source. Rabbit VRF activation remains disabled.
