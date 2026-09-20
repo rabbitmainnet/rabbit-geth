@@ -556,29 +556,178 @@ Product:
     release packaging
     multinode testing
 
+## DKG implementation inspection checkpoint
+
+The repository inspection after the canonical keyset foundation established the
+following implementation facts.
+
+Participant authentication already has a Rabbit-native model.
+
+LCQ/Work participation signs domain-separated canonical payloads with the wallet
+controlling the canonical WorkSeat Participant address. Verification recovers
+the secp256k1 public key and requires:
+
+    crypto.PubkeyToAddress(recoveredKey) == Participant
+
+The Rabbit VRF DKG SHOULD reuse this Participant identity model. It MUST NOT
+introduce an administrator-controlled DKG identity.
+
+Existing signing patterns include:
+
+    accounts.Wallet.SignData
+    crypto.SigToPub
+    crypto.PubkeyToAddress
+
+The P2P node key is a separate identity. It MUST NOT silently replace the
+canonical WorkSeat Participant wallet identity.
+
+Rabbit already has dedicated bounded subprotocol patterns that can be reused as
+implementation references:
+
+    lqct
+    lqcw
+
+They already demonstrate:
+
+    p2p.Protocol
+    protocol status handshake
+    ReadMsg
+    p2p.Send
+    peer tracking
+    validation
+    relay/deduplication
+
+Rabbit VRF may eventually use a dedicated versioned DKG subprotocol, but DKG
+traffic MUST remain isolated so it cannot stall normal LCQ block production.
+
+Confidential cryptographic transport primitives are already available in:
+
+    crypto/ecies
+
+Available primitives include:
+
+    GenerateShared
+    Encrypt
+    Decrypt
+
+RLPx also already uses ECDH/ECIES internally.
+
+This does NOT yet freeze the Rabbit VRF private-share encryption construction.
+The exact encryption format, authenticated context and replay protection remain
+protocol work.
+
+LQC already owns an ethdb.Database and has deterministic persistence patterns,
+including:
+
+    StoreWorkTicketSnapshot / LoadWorkTicketSnapshot
+    StoreRegistrySnapshot / LoadRegistrySnapshot
+    WorkCommitPoolPersistenceV1
+    LQC recovery checkpoints using l.db.Put / l.db.Get
+
+Rabbit VRF DKG persistence should follow versioned crash-safe storage patterns.
+
+Secret DKG shares MUST NOT be written to logs.
+
+Secret-share-at-rest encryption, atomic write boundaries and restore behavior
+remain OPEN.
+
+Current cryptographic dependencies already include:
+
+    github.com/consensys/gnark-crypto v0.18.1
+    github.com/protolambda/bls12-381-util v0.1.0
+    github.com/supranational/blst v0.3.16
+    github.com/kilic/bls12-381 v0.1.0 indirect
+
+No production drand or kyber dependency is currently required by the Rabbit VRF
+foundation.
+
 ## Exact next implementation step
 
 Do NOT activate Rabbit VRF yet.
 
-Next step:
+Current clean protocol checkpoint before the next slice:
 
-Inspect how this repository packages and installs EVM system predeploy bytecode
-and how fork-time state transitions install new system contracts.
+    4c3a39a26 feat(rabbitvrf): add canonical keyset commitment
 
-Then implement the smallest first slice:
+Already implemented and checkpointed:
 
-    RabbitVRFCoordinatorV1 predeploy skeleton
+    deterministic closed-epoch VRF committee derivation
+    immutable ShareID assignment
+    RABBIT-VRF-COMMITTEE-ROOT-V1
+    RABBIT-VRF-KEYSET-ROOT-V1
+    threshold partial verification/reconstruction primitives
+    coordinator predeploy plumbing
+    deterministic TWAP protocol fee quoting
+    preactivation request path
+
+The next work is NOT another coordinator/predeploy slice.
+
+The next protocol slice is:
+
+    threshold security policy
     +
-    deterministic PreExecution system call
+    deterministic DKG session context
+
+Before implementing polynomial commitments or private-share exchange, freeze:
+
+1. The exact Rabbit VRF threshold formula as a function of qualified committee
+   size.
+
+2. The malicious/offline participant assumption that the threshold formula is
+   intended to tolerate.
+
+3. The canonical DKG session identity.
+
+The DKG session identity MUST be domain-separated and MUST bind at least:
+
+    protocol version
+    chain ID
+    target VRF epoch
+    canonical committee root
+    original committee size
+    threshold
+
+It MUST NOT depend on:
+
+    block producer
+    mutable heartbeat state
+    mutable per-block liveness ordering
+    network message arrival order
+    process-local peer order
+    administrator input
+
+After those rules are frozen, implement the smallest pure consensus slice:
+
+    Rabbit VRF threshold-policy function
     +
-    tests
+    RABBIT-VRF-DKG-SESSION-V1 context/session ID
+    +
+    deterministic tests
 
-The first implementation slice should only establish coordinator/predeploy and
-TWAP observation plumbing.
+Do NOT yet implement:
 
-It must NOT yet enable public Testnet VRF requests.
+    centralized dealer
+    production polynomial generation
+    private share transport
+    complaints
+    disqualification
+    DKG networking
+    keyset activation
+    public Testnet activation
 
-VRFProtocolBlock must remain disabled in the public Testnet configuration until
+After the session foundation passes tests, continue in this order:
+
+    public polynomial commitment format
+    private share transport/authentication
+    complaint evidence
+    qualification/disqualification state machine
+    canonical transcript root
+    crash-safe persistence
+    restart/reorg recovery
+    keyset activation lifecycle
+    canonical VRF round message
+
+VRFProtocolBlock MUST remain disabled in the public Testnet configuration until
 the complete activation gate is satisfied.
 
 ## Working rules
