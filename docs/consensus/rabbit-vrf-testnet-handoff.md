@@ -446,9 +446,10 @@ Committee sizing reuses `ComputeCommitteeSizeWithBounds` and is capped to the
 number of canonical WorkSeats present. Rabbit VRF does not reserve producer or
 fallback slots.
 
-This is only the deterministic committee-candidate foundation. DKG timing,
-threshold choice, keyset binding, live VRF epoch assignment and keyset
-activation remain OPEN.
+The deterministic committee candidate remains independent from per-block
+liveness state. The source-to-target DKG epoch schedule and threshold policy are
+frozen separately below. Final keyset qualification, failed-ceremony behavior
+and live keyset activation remain separate lifecycle rules.
 
 
 ## Frozen VRF committee ShareID and commitment
@@ -508,13 +509,15 @@ Verification shares are ordered by their immutable committee ShareID. Arrival
 order is irrelevant. Missing ShareIDs are not renumbered.
 
 The primitive performs structural validation only. It does not decide whether a
-DKG transcript is valid, which members qualify, when a keyset activates or
-which VRF epoch schedule is canonical.
+DKG transcript is valid, which members qualify, or whether and when a qualified
+keyset becomes live.
 
-The Rabbit VRF V1 threshold formula is now frozen separately by the DKG session
-foundation.
+The Rabbit VRF V1 threshold formula and deterministic source-to-target epoch
+schedule are frozen separately by the DKG session and epoch-schedule
+foundations.
 
-The remaining DKG qualification and lifecycle rules remain OPEN.
+The remaining complaint, qualification, transcript, failed-ceremony and live
+keyset activation lifecycle rules remain OPEN.
 
 ## Critical work still open
 
@@ -1109,54 +1112,100 @@ Rabbit VRF remains disabled on public Testnet.
 
 ## Exact next implementation step
 
-**Wire the persisted DKG transport-key lifecycle into Rabbit Core runtime before
-enabling private DKG P2P delivery.**
+**Implement the canonical Work-state -> Rabbit VRF committee -> DKG session
+bridge before wiring transport-key persistence into Rabbit Core runtime.**
 
-The runtime integration must enforce this exact order:
+The deterministic foundation now already defines:
 
-1. resolve the canonical DKG session and local immutable committee ShareID;
-2. resolve the local Participant wallet identity;
-3. resolve the secure Rabbit VRF transport-key state directory from the node
-   datadir;
-4. obtain the storage credential through an explicit runtime credential flow;
-5. if persisted state already exists, load it and reproduce the exact same
-   transport public key;
-6. if no persisted state exists and no authenticated transport binding has ever
-   been announced for this local slot, generate and persist one independent
-   transport key;
-7. verify that the transport key is distinct from the Participant wallet key;
-8. verify at runtime that the transport key is also distinct from the local P2P
-   node key;
-9. construct the canonical transport-key binding from the persisted public key;
-10. authenticate that binding with the Participant wallet;
-11. only after persistence succeeds may the binding be announced.
+    CLOSED WorkEpochSnapshotV1
+        -> Rabbit VRF committee candidate
+        -> immutable ShareIDs
+        -> committee root
+        -> threshold/maxFaults
+        -> source Work epoch N
+        -> DKG preparation epoch N+2
+        -> TargetVRFEpoch N+3
+        -> deterministic DKG SessionID
 
-Fail closed requirements:
+What is still missing is the production bridge from the live canonical LQC Work
+state to those pure foundations.
+
+The next implementation slice MUST enforce this order:
+
+1. start from the canonical LQC Work runtime state at a canonical chain head;
+2. obtain the validated CLOSED `WorkEpochSnapshotV1` through the existing Work
+   snapshot machinery;
+3. derive the exact RandomX dataset/cache key for that CLOSED source epoch from
+   existing Work V1 consensus rules;
+4. perform the selection-beacon RandomX evaluation through the existing
+   `crypto/rabbitx` implementation;
+5. nodes SHOULD use the bounded-memory `rabbitx.LightHasher` for this consensus
+   recomputation;
+6. feed that result into `DeriveWorkSelectionEntropyV1`;
+7. derive the deterministic Rabbit VRF committee using
+   `RabbitVRFCommitteeForSnapshotV1`;
+8. preserve the committee's canonical ordering and immutable ShareIDs;
+9. derive the canonical committee root;
+10. derive `TargetVRFEpoch` through
+    `RabbitVRFTargetEpochForSourceWorkEpochV1`;
+11. construct `RabbitVRFDKGSessionContextV1`;
+12. derive and verify the canonical DKG SessionID;
+13. resolve whether a local Participant wallet is a member and, if so, its exact
+    immutable ShareID.
+
+Architecture requirements:
+
+- do NOT implement a second RandomX engine;
+- do NOT move RandomX CGo ownership into the pure committee primitives;
+- the runtime layer may own `rabbitx.LightHasher` and provide its `Hash` method
+  as the `WorkSelectionBeaconHasherV1`;
+- pure consensus derivation must remain independently testable with an injected
+  deterministic hasher;
+- do NOT use per-block liveness ordering, producer identity, heartbeat state or
+  arrival order in VRF committee derivation;
+- do NOT generate a DKG transport private key until the local node has resolved
+  one canonical DKG SessionID and local ShareID;
+- do NOT persist or announce a transport binding for a wallet which is not a
+  member of that canonical committee;
+- reorg handling must derive from the new canonical Work state rather than from
+  stale process-local state;
+- no caller may choose SourceWorkEpoch, TargetVRFEpoch, committee members,
+  ShareIDs or SessionID manually.
+
+After this bridge is implemented and tested, wire the persisted transport-key
+lifecycle into the Rabbit Core runtime in this order:
+
+1. resolve canonical DKG SessionID and local immutable ShareID;
+2. resolve Participant wallet identity;
+3. resolve the secure Rabbit VRF state directory from the node datadir;
+4. obtain the explicit storage credential;
+5. load an existing transport key when persisted state exists;
+6. create one only when no prior authenticated binding exists for that
+   session/share slot;
+7. reject Participant-wallet key reuse;
+8. reject local P2P node-key reuse;
+9. construct and authenticate the canonical transport-key binding;
+10. announce the binding only after persistence succeeds.
+
+Fail closed requirements remain:
 
 - never silently regenerate after an authenticated binding was announced;
 - missing persisted state after an existing binding is known is fatal for that
   DKG participation;
 - corrupted state is fatal for that DKG participation;
 - wrong credential is fatal for that DKG participation;
-- public-key mismatch between persisted secret and announced binding is fatal;
-- Participant/P2P key reuse is fatal;
-- do not fall back to plaintext key storage;
-- do not derive a transport key from a wallet signature.
-
-Before changing startup code, inspect the exact Rabbit Core / geth runtime
-objects available for:
-
-- canonical datadir resolution;
-- Participant wallet/backend access;
-- password/credential availability;
-- local P2P node private/public key access;
-- DKG lifecycle start/stop ownership.
+- persisted/public-key mismatch is fatal;
+- Participant/P2P transport-key reuse is fatal;
+- never fall back to plaintext secret storage;
+- never derive the transport key from a wallet signature;
+- never silently retarget a failed DKG session to another VRF epoch.
 
 After runtime persistence lifecycle integration is frozen and restart-tested,
 continue with confidential point-to-point DKG delivery, replay/duplicate state,
-complaint evidence and dealer qualification.
+complaint evidence, qualification, transcript aggregation and keyset lifecycle.
 
-Do NOT activate Rabbit VRF yet.
+Rabbit VRF MUST remain disabled on public Testnet until the complete lifecycle
+and multinode activation tests are finished.
 
 ## Working rules
 
@@ -1206,4 +1255,41 @@ public binding has been published, because publishing a different key in the
 same singleton slot is equivocation.
 
 The private transport secret MUST NOT be stored as plaintext in a generic chain
-database. Encrypted crash-safe persistence is still pending.
+database. Encrypted crash-safe persistence is implemented in
+`internal/rabbitvrfstate`; Rabbit Core runtime lifecycle wiring remains pending.
+
+## Frozen Rabbit VRF epoch and DKG preparation schedule
+
+Rabbit VRF V1 now has a deterministic source Work epoch -> DKG -> target VRF
+epoch mapping.
+
+For source Work epoch N:
+
+    source Work epoch          N
+    delayed selection epoch    N + 2
+    DKG preparation epoch      N + 2
+    target VRF epoch           N + 3
+
+Canonical formula:
+
+    TargetVRFEpoch = SourceWorkEpoch + 3
+
+The source Work snapshot is already canonical and available at the first block
+of N+2. The entire N+2 epoch is reserved as the DKG preparation window. The
+session is intended for the VRF epoch beginning at N+3.
+
+For epochLength=128 and source N=1:
+
+    preparation starts at block 257
+    target epoch 4 starts at block 385
+
+The target is immutable session identity. A failed DKG does not silently retarget
+the same session.
+
+Still OPEN at this layer:
+
+- final qualified-keyset activation state machine;
+- failed-ceremony rollover behavior;
+- old-key continuity if the intended next keyset is unavailable;
+- exact public activation fork block;
+- P2P DKG transport runtime.

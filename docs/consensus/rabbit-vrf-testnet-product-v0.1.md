@@ -989,9 +989,9 @@ follows:
 
 This derivation produces a deterministic VRF committee candidate only.
 
-The mapping from a source committee candidate to a live VRF epoch, DKG
-ceremony, threshold keyset and keyset activation epoch remains OPEN and MUST be
-frozen separately before public activation.
+The deterministic source-to-target epoch schedule is frozen separately below.
+Keyset qualification, successful activation and failure behavior remain separate
+lifecycle rules.
 
 
 ### Frozen VRF committee ShareID and commitment
@@ -1133,18 +1133,22 @@ The session context deliberately excludes:
 - process-local peer order;
 - administrator input.
 
-This freezes only threshold policy and immutable DKG session identity.
+This section freezes threshold policy and immutable DKG session identity.
 
-Still OPEN:
+Later frozen sections now define the public polynomial commitment format,
+private evaluation verification, authenticated encrypted private evaluations,
+session-scoped transport-key binding, encrypted crash-safe transport-key
+persistence, and the deterministic source-to-target VRF epoch schedule.
 
-- public polynomial commitment format;
-- polynomial generation;
-- private share encryption and transport;
+Still OPEN at this lifecycle layer:
+
+- polynomial-generation runtime lifecycle;
+- confidential point-to-point DKG delivery;
 - complaint evidence;
 - qualification/disqualification state machine;
-- transcript construction;
-- DKG persistence/recovery;
-- keyset activation lifecycle.
+- transcript aggregation;
+- failed-ceremony rollover behavior;
+- final qualified-keyset activation lifecycle.
 
 ## 16. Testnet adversarial product tests
 
@@ -1779,3 +1783,41 @@ Still OPEN:
 - final keyset lifecycle.
 
 Rabbit VRF remains disabled until the full lifecycle is implemented and tested.
+
+### Frozen Rabbit VRF epoch and DKG preparation schedule
+
+Rabbit VRF V1 aligns VRF epoch numbering one-for-one with Rabbit Work V1 epoch
+boundaries. This numbering does not imply Rabbit VRF was active in historical
+epochs before its protocol fork.
+
+For a canonical CLOSED source Work epoch `N`:
+
+    source Work epoch              = N
+    committed/closed during        = N + 1
+    committee source available     = N + 2
+    DKG preparation epoch          = N + 2
+    intended target VRF epoch      = N + 3
+
+Therefore:
+
+    TargetVRFEpoch = SourceWorkEpoch + 3
+
+The `N + 2` interval provides exactly one complete Work epoch for DKG before the
+intended target epoch begins.
+
+With the current Work V1 epoch length of 128 blocks, source epoch 1 produces:
+
+    DKG preparation epoch  = 3
+    preparation start      = block 257
+    target VRF epoch       = 4
+    target start           = block 385
+
+The DKG session remains permanently bound to its original `TargetVRFEpoch`.
+
+A failed or unqualified ceremony MUST NOT silently mutate its target epoch and
+MUST NOT lower its threshold to rescue activation.
+
+This schedule freezes deterministic DKG session timing only. It does not by
+itself activate a keyset. Qualification, failed-ceremony rollover, old-key
+continuity and final live-keyset activation remain lifecycle rules that must be
+frozen before public activation.
