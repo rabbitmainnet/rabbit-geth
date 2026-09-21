@@ -224,14 +224,35 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	work.bal.Merge(bal)
 
 	// Apply the consensus-specific post-transaction changes
+	log.Warn("LQC-SEAL-TRACE before-finalize",
+		"number", work.header.Number,
+		"extraLen", len(work.header.Extra),
+		"coinbase", work.header.Coinbase,
+	)
 	miner.engine.Finalize(miner.chain, work.header, work.state, &body, uint32(work.tcount+1), work.bal)
+	log.Warn("LQC-SEAL-TRACE after-finalize",
+		"number", work.header.Number,
+		"extraLen", len(work.header.Extra),
+		"coinbase", work.header.Coinbase,
+	)
 
 	// Assemble the block for delivery.
 	_, _, assembleSpanEnd := telemetry.StartSpan(ctx, "miner.AssembleBlock")
 	block := core.AssembleBlock(miner.chain, work.header, work.state, &body, work.receipts, work.bal)
 	assembleSpanEnd(nil)
+	assembledHeader := block.Header()
+	log.Warn("LQC-SEAL-TRACE after-assemble",
+		"number", assembledHeader.Number,
+		"extraLen", len(assembledHeader.Extra),
+		"coinbase", assembledHeader.Coinbase,
+	)
 	if sealer, ok := miner.engine.(consensus.HeaderSealer); ok {
-		sealedHeader, err := sealer.SealHeader(miner.chainConfig.ChainID, block.Header(), miner.signConsensusHeader)
+		log.Warn("LQC-SEAL-TRACE before-seal",
+			"number", assembledHeader.Number,
+			"extraLen", len(assembledHeader.Extra),
+			"coinbase", assembledHeader.Coinbase,
+		)
+		sealedHeader, err := sealer.SealHeader(miner.chainConfig.ChainID, assembledHeader, miner.signConsensusHeader)
 		if err != nil {
 			return &newPayloadResult{err: fmt.Errorf("seal header: %w", err)}
 		}
@@ -315,6 +336,11 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 		log.Error("Failed to prepare header for sealing", "err", err)
 		return nil, err
 	}
+	log.Warn("LQC-SEAL-TRACE after-prepare",
+		"number", header.Number,
+		"extraLen", len(header.Extra),
+		"coinbase", header.Coinbase,
+	)
 	// Apply EIP-4844, EIP-4788.
 	if miner.chainConfig.IsCancun(header.Number, header.Time) {
 		var excessBlobGas uint64
