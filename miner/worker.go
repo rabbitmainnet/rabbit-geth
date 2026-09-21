@@ -153,7 +153,7 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	}()
 	work, err := miner.prepareWork(ctx, genParam, witness)
 	if err != nil {
-		return &newPayloadResult{err: err}
+		return &newPayloadResult{err: fmt.Errorf("prepare work: %w", err)}
 	}
 	defer work.discard()
 
@@ -233,7 +233,7 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	if sealer, ok := miner.engine.(consensus.HeaderSealer); ok {
 		sealedHeader, err := sealer.SealHeader(miner.chainConfig.ChainID, block.Header(), miner.signConsensusHeader)
 		if err != nil {
-			return &newPayloadResult{err: err}
+			return &newPayloadResult{err: fmt.Errorf("seal header: %w", err)}
 		}
 		block = block.WithSeal(sealedHeader)
 	}
