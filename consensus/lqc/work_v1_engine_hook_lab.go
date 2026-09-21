@@ -862,13 +862,13 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 				return err
 			}
 		}
-		v4ctx, err := l.workV1EngineLabV4Context(
+		v4ctx, v4Err := l.workV1EngineLabV4Context(
 			chain,
 			ctx,
 			header.ParentHash,
 		)
-		if err != nil {
-			return err
+		if v4Err != nil {
+			return v4Err
 		}
 		extra, _, _, err = BuildLQCHeaderExtraV4WithCanonicalRuntimeV1(
 			v4ctx,
