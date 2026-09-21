@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $RandomXRepository = if ($env:RANDOMX_REPOSITORY) { $env:RANDOMX_REPOSITORY } else { "https://github.com/tevador/RandomX.git" }
 $RandomXCommit = if ($env:RANDOMX_COMMIT) { $env:RANDOMX_COMMIT } else { "7c761cf007c758056dcb6eb438a32f780f81bdbd" }
-$ExpectedGenesis = if ($env:TESTNET_GENESIS_SHA256) { $env:TESTNET_GENESIS_SHA256 } else { "1e3dbb01317c0f89f7865576caca906cd29a6afd9a726639ea1452cb92ab1a61" }
+$ExpectedGenesis = if ($env:TESTNET_GENESIS_SHA256) { $env:TESTNET_GENESIS_SHA256 } else { "80d1b9f19f2487b447327162accf62a6b6d92f871c6e94232a72a6f12d42716d" }
 $Target = $env:RABBIT_TARGET
 $SourceCommit = (git rev-parse HEAD).Trim()
 
@@ -75,7 +75,7 @@ Write-Host "RABBIT_RANDOMX_GCC_PATH=$RandomXForGcc"
 Write-Host "RABBIT_CGO_CFLAGS=$env:CGO_CFLAGS"
 Write-Host "RABBIT_CGO_LDFLAGS=$env:CGO_LDFLAGS"
 
-go test -tags "rabbit_workv1 rabbit_randomx" ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
+go test -tags "rabbit_workv1 rabbit_randomx" ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc -count=1
 if ($LASTEXITCODE -ne 0) { throw "Rabbit Windows tests failed" }
 
 go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-node.exe" ./cmd/geth

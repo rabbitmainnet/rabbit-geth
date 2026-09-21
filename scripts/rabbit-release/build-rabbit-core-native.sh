@@ -81,7 +81,7 @@ export CGO_ENABLED=1
 export CGO_CFLAGS="-O2 -D__BLST_PORTABLE__ -I$work/RandomX/src"
 export CGO_LDFLAGS="-L$work/RandomX/build -lrandomx"
 
-go test -tags 'rabbit_workv1 rabbit_randomx' ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
+go test -tags 'rabbit_workv1 rabbit_randomx' ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc -count=1
 
 package="rabbit-core-testnet-v2.3.4-$TARGET"
 stage="$work/$package"
