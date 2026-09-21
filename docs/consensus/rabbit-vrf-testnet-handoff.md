@@ -1314,6 +1314,76 @@ Completed after `f9c9e0c2f`:
 - Windows amd64 compile check passes.
 - `go test ./consensus/lqc -count=1` passes.
 
+## Work -> Rabbit VRF -> DKG session bridge checkpoint
+
+Completed at:
+
+`5b4130b42 feat(rabbitvrf): bridge work state to dkg session`
+
+The canonical bridge is now implemented in:
+
+- `consensus/lqc/rabbit_vrf_dkg_bridge_v1.go`
+- `consensus/lqc/rabbit_vrf_dkg_bridge_v1_test.go`
+
+The production Work entropy path was resolved before wiring:
+
+- `WorkEpochSnapshotV1.Anchor` is the Work challenge/commit anchor.
+- It MUST NOT be treated as the RandomX dataset anchor.
+- The canonical dataset anchor block is derived with
+  `WorkDatasetAnchorBlockV1(sourceEpoch, epochLength)`.
+- The runtime must resolve the canonical ancestor header at that block.
+- `RandomXWorkDatasetKeyV1(chainID, sourceEpoch, datasetHeader.Hash())`
+  derives the DatasetKey.
+- `DeriveWorkSelectionEntropyV1` performs the single deterministic RandomX
+  evaluation used by the bridge.
+
+`RabbitVRFDKGBridgeForSnapshotV1` composes only existing frozen rules:
+
+- validated CLOSED Work snapshot;
+- canonical Work selection entropy;
+- deterministic Rabbit VRF committee commitment;
+- immutable ShareID assignment;
+- source Work epoch -> DKG preparation -> target VRF epoch schedule;
+- deterministic DKG threshold/fault policy;
+- canonical DKG SessionID.
+
+For source Work epoch N:
+
+    preparation epoch = N + 2
+    target VRF epoch  = N + 3
+
+Bridge tests cover:
+
+- deterministic repeated construction;
+- exact epoch mapping;
+- immutable sequential ShareIDs;
+- DKG session binding to the resulting committee;
+- invalid snapshot / DatasetKey / hasher rejection;
+- DatasetKey binding through entropy, committee seed, committee root and SessionID.
+
+Validation passed:
+
+- `go test ./consensus/lqc -count=1`
+- targeted Rabbit VRF bridge tests
+- targeted `go test -race ./consensus/lqc`
+- `go vet ./consensus/lqc`
+- `git diff --check`
+
+Rabbit VRF activation remains disabled.
+
 Exact next implementation step:
 
-Build the canonical Work-state -> Rabbit VRF committee -> DKG session bridge. Resolve the exact production Work selection DatasetKey/entropy path before wiring it; do not assume a DatasetKey source. Rabbit VRF activation remains disabled.
+Wire the bridge into the canonical production runtime without introducing a second
+DatasetKey path. Resolve the source Work snapshot and the canonical dataset-anchor
+header from the existing Work runtime/chain context, derive the DatasetKey with
+`RandomXWorkDatasetKeyV1`, and invoke `RabbitVRFDKGBridgeForSnapshotV1` through
+the existing deterministic selection-beacon hasher path.
+
+Before editing runtime code, inspect the exact production call sites that already
+resolve `WorkDatasetAnchorBlockV1`, canonical ancestor headers, cached selection
+beacon hashing, and `SelectionSnapshotV1`. Do not derive DatasetKey from
+`WorkEpochSnapshotV1.Anchor`.
+
+While Rabbit VRF remains disabled, this wiring MUST NOT create transport keys,
+read VRF credentials, publish DKG messages, or introduce any P2P/runtime side
+effects.
