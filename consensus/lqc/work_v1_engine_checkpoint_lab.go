@@ -186,6 +186,16 @@ func (l *LQC) workV1EngineLabRestoreCheckpoint(
 	}
 	state.mu.Unlock()
 
+	registrySnapshot, registryErr := LoadRegistrySnapshot(l.db, hash)
+	if registryErr != nil || registrySnapshot == nil ||
+		registrySnapshot.Number != number || registrySnapshot.Hash != hash {
+		return false, nil
+	}
+	if _, registryErr = registrySnapshot.Registry(); registryErr != nil {
+		return false, nil
+	}
+	l.rememberRegistrySnapshot(registrySnapshot)
+
 	log.Info("Restored canonical LQC recovery checkpoint",
 		"number", number, "hash", hash)
 	return true, nil

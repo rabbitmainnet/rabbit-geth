@@ -39,7 +39,8 @@
       "maxMissedTurns": 3,
       "minorSlashBps": 500,
       "majorSlashBps": 2000,
-      "consensusLivenessV3Block": 77000
+      "consensusLivenessV3Block": 77000,
+      "consensusLivenessV4Block": 97991
     }
   },
   "nonce": "0x0",

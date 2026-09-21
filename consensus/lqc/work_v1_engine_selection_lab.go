@@ -164,6 +164,36 @@ func workV1EngineLabSeatAvailableAt(
 	return ok && blockNumber <= availableUntil
 }
 
+func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4(
+	registry *CanonicalRegistry,
+	ordered []WorkSeatV1,
+	blockNumber uint64,
+) ([]WorkSeatV1, error) {
+	if registry == nil {
+		return nil, ErrParticipantNotActive
+	}
+	rules := l.registryRules()
+	ready := make([]WorkSeatV1, 0, len(ordered))
+	penalized := make([]WorkSeatV1, 0, len(ordered))
+	for _, seat := range ordered {
+		participant, exists := registry.Participant(seat.Participant)
+		if !exists || participant.LastHeartbeat == 0 || participant.JailedUntil > blockNumber {
+			penalized = append(penalized, seat)
+			continue
+		}
+		availableUntil, ok := checkedRegistryBlockAdd(participant.LastHeartbeat, rules.HeartbeatWindow, rules.HeartbeatGrace)
+		if ok && blockNumber <= availableUntil {
+			ready = append(ready, seat)
+		} else {
+			penalized = append(penalized, seat)
+		}
+	}
+	final := make([]WorkSeatV1, 0, len(ordered))
+	final = append(final, ready...)
+	final = append(final, penalized...)
+	return final, nil
+}
+
 func (l *LQC) workV1EngineLabSelectRolesV3(
 	registry *CanonicalRegistry,
 	seats []WorkSeatV1,
@@ -365,7 +395,19 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 	)
 
 	var orderedSeats []WorkSeatV1
-	if l.consensusLivenessV3Active(blockNumber) {
+	if l.consensusLivenessV4Active(blockNumber) {
+		orderedSeats, err = DeterministicallyOrderWorkSeatsV1(
+			eligibleSeats,
+			selectionSeed,
+		)
+		if err == nil {
+			orderedSeats, err = l.workV1EngineLabOrderSeatsByLivenessV4(
+				registry,
+				orderedSeats,
+				blockNumber,
+			)
+		}
+	} else if l.consensusLivenessV3Active(blockNumber) {
 		roleLimit := uint64(1) + fallbackCount + committeeSize
 		orderedSeats, err = l.workV1EngineLabSelectRolesV3(
 			registry,
@@ -665,7 +707,7 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 		); err != nil {
 			return err
 		}
-	} else if !l.consensusFairnessActive(blockNumber) {
+	} else if l.consensusLivenessV4Active(blockNumber) || !l.consensusFairnessActive(blockNumber) {
 		for index := 0; index < queuePos; index++ {
 			if err := registry.ApplyWorkSeatMissedTurn(
 				selection.Ordered[index].Address,
