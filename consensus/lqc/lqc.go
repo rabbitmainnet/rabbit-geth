@@ -595,6 +595,19 @@ func (l *LQC) Prepare(chain consensus.ChainHeaderReader, header *types.Header) e
 		return errors.New("missing block number")
 	}
 
+	log.Warn("LQC-PREPARE-INTERNAL enter",
+		"number", header.Number,
+		"extraLen", len(header.Extra),
+		"registry", l.registryProtocolEnabled(header.Number),
+	)
+	defer func() {
+		log.Warn("LQC-PREPARE-INTERNAL leave",
+			"number", header.Number,
+			"extraLen", len(header.Extra),
+			"coinbase", header.Coinbase,
+		)
+	}()
+
 	header.Difficulty = big.NewInt(0)
 	header.Nonce = types.BlockNonce{}
 	header.MixDigest = common.Hash{}
@@ -621,10 +634,12 @@ func (l *LQC) Prepare(chain consensus.ChainHeaderReader, header *types.Header) e
 
 			if l.registryProtocolEnabled(header.Number) {
 				var err error
+				log.Warn("LQC-PREPARE-INTERNAL before-workv2", "number", header.Number, "extraLen", len(header.Extra))
 				sel, err = l.prepareCanonicalRegistryExtraMaybeWorkV1Lab(
 					chain,
 					header,
 				)
+				log.Warn("LQC-PREPARE-INTERNAL after-workv2", "number", header.Number, "extraLen", len(header.Extra), "err", err, "ordered", len(sel.Ordered))
 				if err != nil {
 					return err
 				}
@@ -641,10 +656,12 @@ func (l *LQC) Prepare(chain consensus.ChainHeaderReader, header *types.Header) e
 			sel.Producer = &sel.Ordered[0]
 		} else if l.registryProtocolEnabled(header.Number) {
 			var err error
+			log.Warn("LQC-PREPARE-INTERNAL before-workv2", "number", header.Number, "extraLen", len(header.Extra))
 			sel, err = l.prepareCanonicalRegistryExtraMaybeWorkV1Lab(
 				chain,
 				header,
 			)
+			log.Warn("LQC-PREPARE-INTERNAL after-workv2", "number", header.Number, "extraLen", len(header.Extra), "err", err, "ordered", len(sel.Ordered))
 			if err != nil {
 				return err
 			}
