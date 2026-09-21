@@ -411,6 +411,18 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 		return err
 	}
 
+	fallbackConfig := filepath.Join(opts.dataDir, "rabbit-p2p-fallback.toml")
+	staticNodes := make([]string, 0, 2)
+	for _, raw := range strings.Split(bootnodes, ",") {
+		if node := strings.TrimSpace(raw); node != "" {
+			staticNodes = append(staticNodes, fmt.Sprintf("%q", node))
+		}
+	}
+	configBody := "[Node.P2P]\nStaticNodes = [" + strings.Join(staticNodes, ", ") + "]\n"
+	if err := os.WriteFile(fallbackConfig, []byte(configBody), 0600); err != nil {
+		return fmt.Errorf("write P2P fallback config: %w", err)
+	}
+
 	nodeLog, err := os.OpenFile(
 		filepath.Join(logs, "rabbit-node.log"),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
@@ -422,6 +434,7 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 	defer nodeLog.Close()
 
 	nodeArgs := []string{
+		"--config", fallbackConfig,
 		"--datadir", opts.dataDir,
 		"--networkid", officialNetworkID,
 		"--syncmode", "full",
