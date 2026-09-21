@@ -172,25 +172,55 @@ func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4(
 	if registry == nil {
 		return nil, ErrParticipantNotActive
 	}
+
+	// The activation block is a deterministic liveness reset boundary.
+	// Keep the full canonical WorkSeat order for this one block so
+	// RestoreWorkSeatLiveness can recreate missing registry entries and
+	// clear legacy missed-turn/jail state without deleting WorkSeats.
+	if l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV4Block != 0 &&
+		blockNumber == l.config.ConsensusLivenessV4Block {
+		return append([]WorkSeatV1(nil), ordered...), nil
+	}
+
 	rules := l.registryRules()
 	ready := make([]WorkSeatV1, 0, len(ordered))
-	penalized := make([]WorkSeatV1, 0, len(ordered))
+	recovery := make([]WorkSeatV1, 0, len(ordered))
+
 	for _, seat := range ordered {
 		participant, exists := registry.Participant(seat.Participant)
-		if !exists || participant.LastHeartbeat == 0 || participant.JailedUntil > blockNumber {
-			penalized = append(penalized, seat)
+
+		// Missing/never-live registry identities cannot author a normal V4 block.
+		// Persistent WorkSeat ownership is not deleted.
+		if !exists || participant.LastHeartbeat == 0 {
 			continue
 		}
-		availableUntil, ok := checkedRegistryBlockAdd(participant.LastHeartbeat, rules.HeartbeatWindow, rules.HeartbeatGrace)
+
+		// Active jail is a hard authorization exclusion. V4 authorizes the
+		// whole Ordered queue, so jailed seats must not be present in Ordered.
+		if participant.JailedUntil > blockNumber {
+			continue
+		}
+
+		availableUntil, ok := checkedRegistryBlockAdd(
+			participant.LastHeartbeat,
+			rules.HeartbeatWindow,
+			rules.HeartbeatGrace,
+		)
 		if ok && blockNumber <= availableUntil {
 			ready = append(ready, seat)
-		} else {
-			penalized = append(penalized, seat)
+			continue
 		}
+
+		// A stale but non-jailed persistent seat remains a delayed recovery
+		// candidate. Successful production refreshes LastHeartbeat.
+		recovery = append(recovery, seat)
 	}
-	final := make([]WorkSeatV1, 0, len(ordered))
+
+	final := make([]WorkSeatV1, 0, len(ready)+len(recovery))
 	final = append(final, ready...)
-	final = append(final, penalized...)
+	final = append(final, recovery...)
 	return final, nil
 }
 
@@ -696,7 +726,9 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 
 	if blockNumber == l.config.ConsensusHardeningBlock ||
 		l.isConsensusStabilizationBlock(blockNumber) ||
-		l.isConsensusFairnessBlock(blockNumber) {
+		l.isConsensusFairnessBlock(blockNumber) ||
+		(l.config.ConsensusLivenessV4Block != 0 &&
+			blockNumber == l.config.ConsensusLivenessV4Block) {
 		addresses := make([]common.Address, 0, len(selection.Ordered))
 		for _, seat := range selection.Ordered {
 			addresses = append(addresses, seat.Address)
