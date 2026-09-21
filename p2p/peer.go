@@ -213,6 +213,12 @@ func (p *Peer) Disconnect(reason DiscReason) {
 	}
 }
 
+// Done returns a channel that is closed when the P2P peer begins shutting down.
+// Protocol handlers can use this to abort work before Peer.run waits for them.
+func (p *Peer) Done() <-chan struct{} {
+	return p.closed
+}
+
 // String implements fmt.Stringer.
 func (p *Peer) String() string {
 	id := p.ID()

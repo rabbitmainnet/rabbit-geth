@@ -146,7 +146,9 @@ func (p *Peer) dispatchResponse(res *Response, metadata func() interface{}) erro
 		fail: make(chan error),
 	}
 	res.recv = time.Now()
-	res.Done = make(chan error)
+	// Buffer the completion signal so the response consumer can finish even
+	// if the peer disconnects while dispatchResponse is unwinding.
+	res.Done = make(chan error, 1)
 
 	select {
 	case p.resDispatch <- resOp:
@@ -173,15 +175,30 @@ func (p *Peer) dispatchResponse(res *Response, metadata func() interface{}) erro
 			// for fresh cancellations too
 			select {
 			case res.Req.sink <- res:
-				return <-res.Done // Response delivered, return any errors
+				// The response is now owned by the sink. Do not wait forever for
+				// Done if the request is cancelled or the peer disconnects.
+				select {
+				case err := <-res.Done:
+					return err
+				case <-res.Req.cancel:
+					return nil
+				case <-p.term:
+					return errDisconnected
+				case <-p.Peer.Done():
+					return errDisconnected
+				}
 			case <-res.Req.cancel:
 				return nil // Request cancelled, silently discard response
 			case <-p.term:
+				return errDisconnected
+			case <-p.Peer.Done():
 				return errDisconnected
 			}
 		}
 
 	case <-p.term:
+		return errDisconnected
+	case <-p.Peer.Done():
 		return errDisconnected
 	}
 }
