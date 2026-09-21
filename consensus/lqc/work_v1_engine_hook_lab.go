@@ -4,7 +4,9 @@ package lqc
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/log"
 	"math/big"
+	"runtime"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -552,6 +554,25 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 	number uint64,
 	hash common.Hash,
 ) (*CanonicalWorkRuntimeStateV1, error) {
+	traceCaller := "unknown"
+	traceCallerFile := ""
+	traceCallerLine := 0
+	if pc, file, line, ok := runtime.Caller(1); ok {
+		traceCallerFile = file
+		traceCallerLine = line
+		if fn := runtime.FuncForPC(pc); fn != nil {
+			traceCaller = fn.Name()
+		}
+	}
+	if number >= 77000 {
+		log.Info("LQC-RUNTIMEAT-CALL",
+			"requestedNumber", number,
+			"requestedHash", hash,
+			"caller", traceCaller,
+			"callerFile", traceCallerFile,
+			"callerLine", traceCallerLine,
+		)
+	}
 	if chain == nil || hash == (common.Hash{}) {
 		return nil, ErrWorkV1EngineLabParentMissing
 	}
@@ -600,6 +621,13 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 				return nil, restoreErr
 			}
 			if restored {
+				if number >= 77000 {
+					log.Info("LQC-RUNTIMEAT-RESTORE",
+						"requestedNumber", number,
+						"checkpointNumber", currentNumber,
+						"caller", traceCaller,
+					)
+				}
 				cached, ok, err = l.workV1EngineLabCached(currentHash)
 				if err != nil {
 					return nil, err
