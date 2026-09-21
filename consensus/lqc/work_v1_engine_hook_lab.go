@@ -604,6 +604,20 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 				if err != nil {
 					return nil, err
 				}
+				// workV1EngineLabRestoreCheckpoint returns true only after the
+				// checkpoint runtime, canonical header, V4 claim ledger (when
+				// active), and persisted registry snapshot have all been
+				// validated and restored. Treat that checkpoint as the replay
+				// anchor immediately. Re-running the generic cache gate here can
+				// cause startup to walk every older 128-block checkpoint even
+				// though each checkpoint was already restored successfully.
+				if !ok || cached == nil || cached.Work == nil ||
+					cached.Work.Number != currentNumber ||
+					cached.Work.Hash != currentHash {
+					return nil, ErrWorkV1EngineLabUnavailable
+				}
+				runtime = cached
+				break
 			}
 		}
 		if ok && cached.Work.Number == currentNumber {
