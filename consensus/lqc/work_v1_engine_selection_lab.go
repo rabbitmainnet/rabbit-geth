@@ -955,8 +955,22 @@ func (l *LQC) workV1EngineLabApplyRegistryBySeats(
 		header.ParentHash != parent.Hash {
 		return nil, ErrRegistrySnapshotChainMismatch
 	}
-	allowed, _ := l.isAuthorAllowedAt(header.Number.Uint64(), selection, header.Coinbase)
-	if !allowed {
+	blockNumber := header.Number.Uint64()
+	allowed, _ := l.isAuthorAllowedAt(blockNumber, selection, header.Coinbase)
+
+	// Rabbit Testnet historical WorkSeat compatibility.
+	//
+	// Block 97996 on the surviving live branch predates the restart-safe
+	// registry replay fix. Preserve that already-produced block as a normal
+	// WorkSeat transition, not as an open-activation recovery block. The
+	// exception is restricted to the exact chain, height, producer and hash.
+	historicalCompat := chain.Config().ChainID.Uint64() == 9280 &&
+		blockNumber == 97996 &&
+		!l.consensusLivenessV4Active(blockNumber) &&
+		header.Coinbase == common.HexToAddress("0x5b207f3f991bab0bee906525d32a4da232326812") &&
+		header.Hash() == common.HexToHash("0x8414b7d3c6c2132c721056e1335cdbc75c7daae95000912fca4fc3efb9024633")
+
+	if !allowed && !historicalCompat {
 		return nil, ErrUnauthorizedRegistryProducer
 	}
 
@@ -965,8 +979,18 @@ func (l *LQC) workV1EngineLabApplyRegistryBySeats(
 		return nil, err
 	}
 	rules := l.registryRules()
-	blockNumber := header.Number.Uint64()
-	if err := l.workV1EngineLabApplySeatLiveness(
+
+	if historicalCompat && !allowed {
+		// At this historical V3 block the normal fairness transition only
+		// advances the accepted producer heartbeat. Do not reset/recover the
+		// registry, because the committed header belongs to normal WorkSeat mode.
+		if err := registry.MarkWorkSeatProducerHeartbeat(
+			header.Coinbase,
+			blockNumber,
+		); err != nil {
+			return nil, err
+		}
+	} else if err := l.workV1EngineLabApplySeatLiveness(
 		registry, blockNumber, selection, header.Coinbase, rules,
 	); err != nil {
 		return nil, err
