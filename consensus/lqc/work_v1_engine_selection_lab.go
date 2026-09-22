@@ -830,6 +830,18 @@ func (l *LQC) prepareCanonicalRegistryExtraMaybeWorkV1Lab(
 	header *types.Header,
 ) (HybridSelection, error) {
 	if l.openActivationForHeader(chain, header) {
+		// Header V4 registry roots include WorkSeat liveness transitions.
+		// Rebuild the parent Work runtime first so its lockstep registry
+		// snapshot is cached before recovery asks for the parent registry.
+		if l.consensusLivenessV3Active(header.Number.Uint64()) {
+			if _, err := l.workV1EngineLabRuntimeAt(
+				chain,
+				header.Number.Uint64()-1,
+				header.ParentHash,
+			); err != nil {
+				return HybridSelection{}, err
+			}
+		}
 		selection, err := l.prepareCanonicalRegistryExtra(chain, header)
 		if err != nil {
 			return HybridSelection{}, err

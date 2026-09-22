@@ -148,43 +148,12 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 		header.ParentHash != parent.Hash {
 		return nil, ErrRegistrySnapshotChainMismatch
 	}
-
-	// Registry replay only needs the registry commitment and operations.
-	// Header V4 extends V3 with Work/committee roots and claims, so project
-	// either canonical envelope into the same registry-only replay inputs.
-	var (
-		envelopeBlockNumber  uint64
-		envelopeRegistryRoot common.Hash
-		envelopeOperations   []RegistryOperation
-		workEnvelope         bool
-		v4Envelope           bool
-	)
-
-	if envelopeV4, err := DecodeLQCHeaderExtraV4(
+	if envelope, err := DecodeLQCHeaderExtraV3(
 		header.Extra,
 		MaxWorkTicketsPerBlockV1,
 	); err == nil {
-		envelopeBlockNumber = envelopeV4.BlockNumber
-		envelopeRegistryRoot = envelopeV4.RegistryRoot
-		envelopeOperations = envelopeV4.RegistryOperations
-		workEnvelope = true
-		v4Envelope = true
-	} else if envelopeV3, err := DecodeLQCHeaderExtraV3(
-		header.Extra,
-		MaxWorkTicketsPerBlockV1,
-	); err == nil {
-		envelopeBlockNumber = envelopeV3.BlockNumber
-		envelopeRegistryRoot = envelopeV3.RegistryRoot
-		envelopeOperations = envelopeV3.RegistryOperations
-		workEnvelope = true
-	}
-
-	if workEnvelope {
 		blockNumber := header.Number.Uint64()
-		if envelopeBlockNumber != blockNumber {
-			if v4Envelope {
-				return nil, ErrLQCHeaderBlockMismatchV4
-			}
+		if envelope.BlockNumber != blockNumber {
 			return nil, ErrLQCHeaderBlockMismatchV3
 		}
 		chainID, err := registryChainID(chain)
@@ -193,9 +162,9 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 		}
 		rules := l.registryRules()
 		v2Extra, err := EncodeRegistryHeaderExtra(
-			envelopeBlockNumber,
-			envelopeRegistryRoot,
-			envelopeOperations,
+			envelope.BlockNumber,
+			envelope.RegistryRoot,
+			envelope.RegistryOperations,
 		)
 		if err != nil {
 			return nil, err
@@ -210,9 +179,12 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 			return nil, err
 		}
 
-		// V3/V4 have the same registry-state semantics. Work and committee
-		// fields are verified by their own runtime; registry replay applies
-		// only committed registry operations and checks the committed root.
+		// Header V3 has two canonical registry-state modes. When Work V2
+		// seats are active, registry state changes only through committed
+		// operations. During zero-work/open-registry fallback, the legacy
+		// heartbeat/missed-turn transition is used. The committed registry
+		// root lets historical replay select the correct transition without
+		// requiring transient Work runtime caches.
 		registry, err := parent.Registry()
 		if err != nil {
 			return nil, err
@@ -227,14 +199,13 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 				return nil, err
 			}
 		}
-		if registry.Root() == envelopeRegistryRoot {
+		if registry.Root() == envelope.RegistryRoot {
 			return newRegistrySnapshot(blockNumber, header.Hash(), registry), nil
 		}
 
 		synthetic := types.CopyHeader(header)
 		synthetic.Extra = v2Extra
-		legacy, err := l.applyRegistryHeaderWithOpenActivation(
-			parent,
+		legacy, err := l.applyRegistryHeaderWithOpenActivation(parent,
 			chainID,
 			rules,
 			synthetic,
@@ -247,18 +218,16 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 		if err != nil {
 			return nil, err
 		}
-		if legacyRegistry.Root() != envelopeRegistryRoot {
+		if legacyRegistry.Root() != envelope.RegistryRoot {
 			return nil, ErrRegistryRootMismatch
 		}
 		return newRegistrySnapshot(blockNumber, header.Hash(), legacyRegistry), nil
 	}
-
 	chainID, err := registryChainID(chain)
 	if err != nil {
 		return nil, err
 	}
-	return l.applyRegistryHeaderWithOpenActivation(
-		parent,
+	return l.applyRegistryHeaderWithOpenActivation(parent,
 		chainID,
 		l.registryRules(),
 		header,
