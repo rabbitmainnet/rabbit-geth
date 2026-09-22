@@ -76,7 +76,7 @@ jobs:
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.3.4-${{ matrix.target }}
+          name: rabbit-core-testnet-v2.3.5-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -90,7 +90,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-v2.3.4-*
+          pattern: rabbit-core-testnet-v2.3.5-*
           path: releases
           merge-multiple: true
 
@@ -108,7 +108,7 @@ jobs:
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.3.4-release-bundle
+          name: rabbit-core-testnet-v2.3.5-release-bundle
           path: releases/*
           if-no-files-found: error
           retention-days: 30
