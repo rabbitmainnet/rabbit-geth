@@ -887,27 +887,6 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 
 		peers := s.handler.peers.len()
 		if peers <= 0 {
-			// DIAGNOSTIC ONLY: permit the existing isolated E: lab to exercise
-			// the real LQC Prepare -> Extra -> Seal path without creating a
-			// second multi-gigabyte datadir or connecting to the public testnet.
-			// This bypass is inert unless the explicit environment variable is set.
-			if lqcDiagnosticZeroPeerAllowed() {
-				if producerRunning {
-					continue
-				}
-				head := s.blockchain.CurrentBlock()
-				if head == nil || head.Number == nil {
-					continue
-				}
-				if markReady("diagnostic zero-peer lab bypass") {
-					log.Warn(
-						"LQC DIAGNOSTIC zero-peer producer bypass enabled",
-						"head", head.Number,
-						"hash", head.Hash(),
-					)
-				}
-				continue
-			}
 			stopProducer("no peers")
 			startedAt = time.Now()
 			continue
