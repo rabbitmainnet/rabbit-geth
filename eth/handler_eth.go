@@ -391,7 +391,7 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 				}
 				break
 			}
-			if h.hasBetterPendingLQCSyncTarget(target) || time.Now().After(deadline) {
+			if time.Now().After(deadline) {
 				break
 			}
 			select {

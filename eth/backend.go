@@ -143,6 +143,49 @@ func isFrozenRabbitPublicNetwork(
 		isFrozenRabbitTestnet(chainConfig, genesis)
 }
 
+const rabbitTestnetLivenessV4Block uint64 = 97991
+
+func migrateRabbitTestnetLivenessV4Config(
+	chainDb ethdb.Database,
+	genesisHash common.Hash,
+	chainConfig *params.ChainConfig,
+) bool {
+	if chainDb == nil ||
+		chainConfig == nil ||
+		chainConfig.ChainID == nil ||
+		chainConfig.LQC == nil {
+		return false
+	}
+
+	cfg := chainConfig.LQC
+
+	if chainConfig.ChainID.Cmp(big.NewInt(9280)) != 0 ||
+		cfg.RegistryProtocolBlock != 1 ||
+		cfg.ConsensusHardeningBlock != 50000 ||
+		cfg.ConsensusStabilizationBlock != 50500 ||
+		cfg.ConsensusFairnessBlock != 73000 ||
+		cfg.ConsensusLivenessV3Block != 77000 ||
+		cfg.ConsensusLivenessV4Block != 0 {
+		return false
+	}
+
+	cfg.ConsensusLivenessV4Block = rabbitTestnetLivenessV4Block
+
+	rawdb.WriteChainConfig(
+		chainDb,
+		genesisHash,
+		chainConfig,
+	)
+
+	log.Warn(
+		"Migrated Rabbit Testnet stored chain config",
+		"consensusLivenessV4Block",
+		rabbitTestnetLivenessV4Block,
+	)
+
+	return true
+}
+
 func validateLQCWorkTicketLabTransport(config *ethconfig.Config, chainConfig *params.ChainConfig, genesis *types.Block) error {
 	if config == nil || !config.WorkTicketLabTransport {
 		return nil
@@ -308,6 +351,13 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	migrateRabbitTestnetLivenessV4Config(
+		chainDb,
+		genesisHash,
+		chainConfig,
+	)
+
 	if enforceLQCFullSync(config, chainConfig) {
 		log.Info(
 			"Rabbit LQC forced full sync",

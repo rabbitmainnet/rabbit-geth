@@ -247,10 +247,6 @@ func (l *LQC) registrySnapshotAt(chain consensus.ChainHeaderReader, number uint6
 		return snapshot, nil
 	}
 
-	if snapshot, handled, err := l.registrySnapshotAtMaybeWorkV1Lab(chain, number, hash); handled {
-		return snapshot, err
-	}
-
 	currentNumber, currentHash := number, hash
 	pending := make([]*types.Header, 0, l.registryCheckpointInterval())
 	var base *RegistrySnapshot
