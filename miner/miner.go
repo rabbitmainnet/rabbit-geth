@@ -313,7 +313,7 @@ func (miner *Miner) lqcDevnetLoop() {
 		case <-miner.lqcStop:
 			return
 		case <-ticker.C:
-			if !lqcHasConnectedPeer(miner.backend) {
+			if !lqcHasConnectedPeer(miner.backend) && !lqcDiagnosticZeroPeerAllowed() {
 				log.Debug("LQC production blocked: no peers")
 				continue
 			}
