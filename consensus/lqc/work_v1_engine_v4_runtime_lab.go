@@ -149,24 +149,33 @@ func (l *LQC) workV1EngineLabClaimResolver(
 					ErrInvalidCommitteeParticipationVerificationV1
 			}
 			epochEnd := targetEpoch * selectionRuntime.Work.EpochLength
-			if epochEnd == 0 || epochEnd > fromNumber {
+			if epochEnd == 0 {
 				return CommitteeParticipationVerificationContextV1{},
 					ErrWorkV1EngineLabSelectionUnavailable
 			}
-			epochEndHeader := workV1EngineLabAncestorHeader(
+			// The runtime AT epochEnd has already closed targetEpoch and advanced
+			// SelectionEpoch to the next source. Claims for blocks inside targetEpoch
+			// must use the last pre-close runtime, where that epoch's selection is
+			// still canonical and stable.
+			selectionCarrierNumber := epochEnd - 1
+			if selectionCarrierNumber > fromNumber {
+				return CommitteeParticipationVerificationContextV1{},
+					ErrWorkV1EngineLabSelectionUnavailable
+			}
+			selectionCarrierHeader := workV1EngineLabAncestorHeader(
 				chain,
 				fromNumber,
 				fromHash,
-				epochEnd,
+				selectionCarrierNumber,
 			)
-			if epochEndHeader == nil {
+			if selectionCarrierHeader == nil {
 				return CommitteeParticipationVerificationContextV1{},
 					ErrWorkV1EngineLabParentMissing
 			}
 			selectionRuntime, err = l.workV1EngineLabRuntimeAt(
 				chain,
-				epochEnd,
-				epochEndHeader.Hash(),
+				selectionCarrierNumber,
+				selectionCarrierHeader.Hash(),
 			)
 			if err != nil {
 				return CommitteeParticipationVerificationContextV1{}, err
