@@ -283,6 +283,23 @@ func (l *LQC) openActivationForHeader(chain consensus.ChainHeaderReader, header 
 	if header.Number.Uint64() == 1 {
 		return l == nil || l.config == nil || len(l.config.BootstrapParticipants) == 0
 	}
+
+	// Rabbit Testnet historical recovery compatibility.
+	//
+	// The live chain contains this already-produced recovery header at block
+	// 97996. Its integer-second timestamps differ by 119 seconds while the
+	// configured recovery timeout is 120 seconds. Scope the compatibility to
+	// the exact testnet chain and exact historical header so future recovery
+	// rules remain unchanged.
+	if chain != nil &&
+		chain.Config() != nil &&
+		chain.Config().ChainID != nil &&
+		chain.Config().ChainID.Uint64() == 9280 &&
+		header.Number.Uint64() == 97996 &&
+		header.Hash() == common.HexToHash("0x8414b7d3c6c2132c721056e1335cdbc75c7daae95000912fca4fc3efb9024633") {
+		return true
+	}
+
 	if chain == nil {
 		return false
 	}
