@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -40,11 +42,13 @@ type rabbitVRFDKGRuntime struct {
 	backend *Ethereum
 	engine  *lqc.LQC
 
-	mu      sync.RWMutex
-	started bool
-	stop    chan struct{}
-	done    chan struct{}
-	current rabbitVRFDKGLocalContextV1
+	mu          sync.RWMutex
+	started     bool
+	syncing     bool
+	secretReady bool
+	stop        chan struct{}
+	done        chan struct{}
+	current     rabbitVRFDKGLocalContextV1
 }
 
 func newRabbitVRFDKGRuntimeMaybeLab(
@@ -179,6 +183,74 @@ func (runtime *rabbitVRFDKGRuntime) currentContext() rabbitVRFDKGLocalContextV1 
 	return context
 }
 
+func (runtime *rabbitVRFDKGRuntime) setSyncingV1(syncing bool) {
+	if runtime == nil {
+		return
+	}
+
+	runtime.mu.Lock()
+	runtime.syncing = syncing
+	if syncing {
+		runtime.secretReady = false
+	}
+	runtime.mu.Unlock()
+}
+
+func (runtime *rabbitVRFDKGRuntime) secretReadyV1() bool {
+	if runtime == nil {
+		return false
+	}
+
+	runtime.mu.RLock()
+	ready := runtime.secretReady
+	runtime.mu.RUnlock()
+
+	return ready
+}
+
+// refreshSecretReadyV1 returns true only when the runtime transitions from
+// not-ready to ready. Synced() is intentionally not sufficient by itself
+// because it is sticky after the first successful synchronization.
+func (runtime *rabbitVRFDKGRuntime) refreshSecretReadyV1() bool {
+	if runtime == nil ||
+		runtime.backend == nil ||
+		runtime.backend.blockchain == nil {
+		return false
+	}
+
+	runtime.mu.RLock()
+	syncing := runtime.syncing
+	previous := runtime.secretReady
+	runtime.mu.RUnlock()
+
+	ready := false
+
+	if !syncing && runtime.backend.Synced() {
+		header := runtime.backend.blockchain.CurrentHeader()
+
+		if header != nil &&
+			header.Number != nil &&
+			header.Number.IsUint64() &&
+			runtime.backend.lqcHeadStateAvailable(header) {
+			ready = true
+		}
+	}
+
+	runtime.mu.Lock()
+
+	// A SyncStarted event may have arrived while canonical state was checked.
+	if runtime.syncing {
+		ready = false
+	}
+
+	previous = runtime.secretReady
+	runtime.secretReady = ready
+
+	runtime.mu.Unlock()
+
+	return ready && !previous
+}
+
 func (runtime *rabbitVRFDKGRuntime) processCurrentHead() error {
 	if runtime == nil ||
 		runtime.backend == nil ||
@@ -227,14 +299,10 @@ func (runtime *rabbitVRFDKGRuntime) processCurrentHead() error {
 		)
 	}
 
-	if lifecycle == nil ||
-		lifecycle.Phase !=
-			lqc.RabbitVRFDKGLifecyclePhasePreparedV1 ||
-		lifecycle.SessionID != bridge.SessionID ||
-		lifecycle.SourceWorkEpoch != bridge.SourceWorkEpoch ||
-		lifecycle.PreparationEpoch != bridge.PreparationEpoch ||
-		lifecycle.TargetVRFEpoch != bridge.TargetVRFEpoch ||
-		lifecycle.CommitteeRoot != bridge.CommitteeRoot {
+	if !lqc.RabbitVRFDKGLifecycleMatchesBridgeV1(
+		lifecycle,
+		bridge,
+	) {
 		runtime.clearCurrent()
 		return errRabbitVRFDKGRuntimeV1
 	}
@@ -304,14 +372,30 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 	runtime.mu.Unlock()
 
 	headCh := make(chan core.ChainHeadEvent, 16)
-	sub :=
+	headSub :=
 		runtime.backend.blockchain.SubscribeChainHeadEvent(
 			headCh,
 		)
 
+	if runtime.backend.handler == nil ||
+		runtime.backend.handler.downloader == nil {
+		headSub.Unsubscribe()
+		return errRabbitVRFDKGRuntimeV1
+	}
+
+	syncCh := make(chan downloader.SyncEvent, 16)
+	syncSub :=
+		runtime.backend.handler.downloader.SubscribeSyncEvents(
+			syncCh,
+		)
+
 	go func() {
 		defer close(runtime.done)
-		defer sub.Unsubscribe()
+		defer headSub.Unsubscribe()
+		defer syncSub.Unsubscribe()
+
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
 
 		process := func() {
 			if err := runtime.processCurrentHead(); err != nil {
@@ -322,16 +406,54 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 			}
 		}
 
+		refresh := func() {
+			if runtime.refreshSecretReadyV1() {
+				log.Info(
+					"Rabbit VRF DKG secret runtime ready",
+				)
+				process()
+			}
+		}
+
 		process()
+		refresh()
 
 		for {
 			select {
 			case <-runtime.stop:
 				return
-			case <-sub.Err():
+
+			case <-headSub.Err():
 				return
+
+			case <-syncSub.Err():
+				return
+
 			case <-headCh:
 				process()
+				refresh()
+
+			case ev, ok := <-syncCh:
+				if !ok {
+					return
+				}
+
+				switch ev.Type {
+				case downloader.SyncStarted:
+					runtime.setSyncingV1(true)
+
+				case downloader.SyncFailed:
+					// Failed synchronization remains fail-closed until a
+					// later successful downloader cycle.
+					runtime.setSyncingV1(true)
+
+				case downloader.SyncCompleted:
+					runtime.setSyncingV1(false)
+					refresh()
+				}
+
+			case <-ticker.C:
+				refresh()
 			}
 		}
 	}()

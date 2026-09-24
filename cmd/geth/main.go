@@ -137,6 +137,7 @@ var (
 		utils.VMStatelessSelfValidationFlag,
 		utils.NetworkIdFlag,
 		utils.LQCWorkTicketLabTransportFlag,
+		utils.RabbitVRFDKGPasswordFileFlag,
 		utils.EthStatsURLFlag,
 		utils.GpoBlocksFlag,
 		utils.GpoPercentileFlag,

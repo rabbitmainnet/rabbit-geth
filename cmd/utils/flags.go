@@ -147,6 +147,11 @@ var (
 		Usage:    "Enable the isolated LQC work-ticket RPC/P2P transport (laboratory genesis only; rejected on Rabbit mainnet)",
 		Category: flags.DevCategory,
 	}
+	RabbitVRFDKGPasswordFileFlag = &cli.PathFlag{
+		Name:     "rabbitvrf.dkg.password-file",
+		Usage:    "Path to the dedicated Rabbit VRF DKG transport-key password file; never reuses the wallet password",
+		Category: flags.AccountCategory,
+	}
 	MainnetFlag = &cli.BoolFlag{
 		Name:     "mainnet",
 		Usage:    "Ethereum mainnet",
@@ -1790,6 +1795,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	flags.CheckExclusive(ctx, MainnetFlag, DeveloperFlag, SepoliaFlag, HoleskyFlag, HoodiFlag, OverrideGenesisFlag)
 	flags.CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 	cfg.WorkTicketLabTransport = ctx.Bool(LQCWorkTicketLabTransportFlag.Name)
+	cfg.RabbitVRFDKGPasswordFile = ctx.Path(
+		RabbitVRFDKGPasswordFileFlag.Name,
+	)
 
 	// Set configurations from CLI flags
 	setEtherbase(ctx, cfg)

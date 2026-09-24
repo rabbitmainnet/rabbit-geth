@@ -291,6 +291,19 @@ func rabbitVRFDKGLifecycleMatchesBridgeV1(
 			bridge.Session.MaxFaults
 }
 
+// RabbitVRFDKGLifecycleMatchesBridgeV1 verifies that persisted public DKG
+// lifecycle state exactly matches the canonical bridge context used by the
+// operational runtime.
+func RabbitVRFDKGLifecycleMatchesBridgeV1(
+	state *RabbitVRFDKGLifecycleV1,
+	bridge RabbitVRFDKGBridgeV1,
+) bool {
+	return rabbitVRFDKGLifecycleMatchesBridgeV1(
+		state,
+		bridge,
+	)
+}
+
 func encodeRabbitVRFDKGLifecycleV1(
 	state *RabbitVRFDKGLifecycleV1,
 ) ([]byte, error) {

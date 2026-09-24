@@ -222,6 +222,7 @@ type Ethereum struct {
 	workTicketTransport *lqcWorkTicketTransport
 	workV1Transport     *lqcWorkV1Transport
 	vrfDKGRuntime       *rabbitVRFDKGRuntime
+	vrfDKGInstanceDir   string
 	discmix             *enode.FairMix
 	dropper             *dropper
 
@@ -327,17 +328,18 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Assemble the Ethereum object.
 	eth := &Ethereum{
-		config:          config,
-		chainDb:         chainDb,
-		accountManager:  stack.AccountManager(),
-		engine:          engine,
-		networkID:       networkID,
-		gasPrice:        config.Miner.GasPrice,
-		p2pServer:       stack.Server(),
-		discmix:         enode.NewFairMix(discmixTimeout),
-		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
-		fmHeadEventCh:   make(chan core.ChainEvent, 10),
-		fmBlockProcCh:   make(chan bool, 10),
+		config:            config,
+		chainDb:           chainDb,
+		accountManager:    stack.AccountManager(),
+		engine:            engine,
+		networkID:         networkID,
+		gasPrice:          config.Miner.GasPrice,
+		p2pServer:         stack.Server(),
+		vrfDKGInstanceDir: stack.InstanceDir(),
+		discmix:           enode.NewFairMix(discmixTimeout),
+		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
+		fmHeadEventCh:     make(chan core.ChainEvent, 10),
+		fmBlockProcCh:     make(chan bool, 10),
 	}
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
 	var dbVer = "<nil>"
@@ -711,14 +713,16 @@ func (s *Ethereum) Start() error {
 		lqcSyncSub = s.handler.downloader.SubscribeSyncEvents(lqcSyncCh)
 	}
 
-	// Start the networking layer
-	s.handler.Start(s.p2pServer.MaxPeers)
-
+	// Start the Rabbit VRF DKG observer before networking so the secret
+	// readiness gate cannot miss the initial downloader SyncStarted event.
 	if s.vrfDKGRuntime != nil {
 		if err := s.vrfDKGRuntime.Start(); err != nil {
 			return err
 		}
 	}
+
+	// Start the networking layer.
+	s.handler.Start(s.p2pServer.MaxPeers)
 
 	// Start the connection manager with inclusion-based peer protection.
 	s.dropper.Start(s.p2pServer, func() bool { return !s.Synced() }, s.handler.txTracker.GetAllPeerStats)

@@ -101,6 +101,11 @@ type Config struct {
 	// mainnet genesis by the Ethereum backend.
 	WorkTicketLabTransport bool `toml:"-"`
 
+	// RabbitVRFDKGPasswordFile is an explicit, non-persistent path to the
+	// dedicated password file used only for Rabbit VRF DKG transport keys.
+	// It MUST NOT silently reuse the participant wallet password.
+	RabbitVRFDKGPasswordFile string `toml:"-"`
+
 	// HistoryMode configures chain history retention.
 	HistoryMode history.HistoryMode
 
