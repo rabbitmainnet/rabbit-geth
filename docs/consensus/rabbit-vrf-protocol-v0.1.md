@@ -566,7 +566,7 @@ claimable without requiring a global recipient loop.
 Reward withdrawal is pull-based and MUST remain independent from consensus
 liveness.
 
-No 50/30/20 fulfillment reward is created for a request that never reaches a
+No 30/50/20 fulfillment reward is created for a request that never reaches a
 canonical valid fulfillment.
 
 The canonical producer reward recipient is the Rabbit producer of the
@@ -813,7 +813,7 @@ and Rabbit Mainnet.
 
 Canonical service price:
 
-    VRF_SERVICE_PRICE_QUOTE = 0.01 quote units per request
+    VRF_SERVICE_PRICE_QUOTE = 0.001 quote units per request
 
 Canonical TWAP policy:
 
@@ -824,8 +824,8 @@ Canonical TWAP policy:
 
 Canonical Rabbit VRF protocol-fee distribution:
 
-    VRF_PRODUCER_BPS = 5000
-    VRF_COMMITTEE_BPS = 3000
+    VRF_PRODUCER_BPS = 3000
+    VRF_COMMITTEE_BPS = 5000
     VRF_RABBIT_BPS = 2000
     VRF_TOTAL_BPS = 10000
 
@@ -839,8 +839,8 @@ Testnet binding:
 
     quote asset = tRUSD
     quote decimals = 6
-    VRF_BASE_FEE_TRUSD_BASE_UNITS = 10000
-    10000 base units = 0.01 tRUSD
+    VRF_BASE_FEE_TRUSD_BASE_UNITS = 1000
+    1000 base units = 0.001 tRUSD
 
 The Mainnet quote asset, decimals and canonical RabbitSwap pair address MUST be
 explicitly frozen before Mainnet Rabbit VRF activation.
@@ -853,9 +853,9 @@ Mainnet MUST NOT silently reuse:
 - any Testnet-specific pricing binding.
 
 If the Mainnet quote asset uses a decimal scale different from Testnet, its
-immutable base-unit encoding MUST represent exactly 0.01 quote units.
+immutable base-unit encoding MUST represent exactly 0.001 quote units.
 
-The numeric service price remains 0.01 quote units.
+The numeric service price remains 0.001 quote units.
 
 The coordinator MUST expose no owner/admin/privileged setter capable of changing:
 
@@ -864,14 +864,79 @@ The coordinator MUST expose no owner/admin/privileged setter capable of changing
 - observation cadence;
 - maximum observation age;
 - observation ring size;
-- 50/30/20 reward split;
+- 30/50/20 reward split;
 - settlement period.
 
 Changing any of these protocol-economic values after activation requires an
 explicit protocol fork.
 
 Callback execution funding remains separate from the Rabbit VRF protocol fee
-and MUST NOT modify the 50/30/20 split.
+and MUST NOT modify the 30/50/20 split.
 
 No Mainnet Rabbit VRF activation may occur until its quote asset and canonical
 RabbitSwap pricing pair are explicitly bound and tested.
+
+## Testnet and Mainnet network separation
+
+Rabbit Testnet and Rabbit Mainnet are independent networks.
+
+Rabbit Testnet:
+
+    Chain ID = 9280
+
+Rabbit Mainnet:
+
+    Chain ID = 928
+
+Mainnet MUST NOT be created by converting the Testnet chain.
+
+Mainnet has its own:
+
+- genesis;
+- chain state;
+- native RAB balances;
+- production stable reference asset;
+- wrapped RAB asset;
+- RabbitSwap pricing pair;
+- Rabbit VRF activation block;
+- production protocol addresses where network-specific.
+
+Testnet balances, tRAB, tRUSD, token addresses, RabbitSwap pair addresses and
+Testnet state MUST NOT become Mainnet state.
+
+The Rabbit VRF V1 economic target is:
+
+    base protocol fee = 0.001 stable quote units per VRF request
+    Producer = 30%
+    VRF Committee = 50%
+    Rabbit Allocation = 20%
+
+Transaction gas is separate.
+
+Callback execution funding is separate.
+
+There is no owner/admin setter for the Rabbit VRF base price or reward split.
+
+After activation, changing these protocol-economic constants requires an
+explicit protocol fork.
+
+Rabbit VRF V1 MUST support a batching architecture in which multiple
+pre-committed application results may be derived from a threshold-verifiable
+VRF operation without allowing an operator to learn future results before the
+corresponding requests are committed.
+
+The maximum batch size is intentionally NOT frozen yet.
+
+It must be selected only after measuring:
+
+- block gas;
+- BLS verification cost;
+- state growth;
+- bandwidth;
+- DKG/threshold signing load;
+- spam and denial-of-service limits;
+- reorg and replay behavior.
+
+Testnet is the validation environment.
+
+Mainnet is a separate production network.

@@ -231,11 +231,11 @@ Payment asset:
 
 Base VRF protocol fee:
 
-    0.01 tRUSD
+    0.001 tRUSD
 
 Equivalent base units:
 
-    VRF_BASE_FEE_TRUSD_BASE_UNITS = 10_000
+    VRF_BASE_FEE_TRUSD_BASE_UNITS = 1_000
 
 Canonical conversion source:
 
@@ -332,21 +332,21 @@ The Rabbit VRF protocol fee is separate from the normal Rabbit block reward.
 
 For a successfully fulfilled VRF request:
 
-    producer = 50%
-    VRF committee = 30%
+    producer = 30%
+    VRF committee = 50%
     Rabbit allocation = 20%
 
 Basis points:
 
-    VRF_PRODUCER_BPS = 5000
-    VRF_COMMITTEE_BPS = 3000
+    VRF_PRODUCER_BPS = 3000
+    VRF_COMMITTEE_BPS = 5000
     VRF_RABBIT_BPS = 2000
 
 The integer remainder belongs to the Rabbit allocation.
 
 This split applies only to the VRF protocol fee.
 
-Callback execution funding is separate and MUST NOT change the 50/30/20 split.
+Callback execution funding is separate and MUST NOT change the 30/50/20 split.
 
 The internal destination/policy of the Rabbit 20% allocation is not yet frozen.
 
@@ -390,7 +390,7 @@ Maturation is intended to be lazy and bounded so a participant may aggregate
 multiple rewards before claiming.
 
 Expired or failed requests without canonical valid fulfillment create no
-50/30/20 fulfillment rewards. Exact refund economics remain OPEN.
+30/50/20 fulfillment rewards. Exact refund economics remain OPEN.
 
 Callback escrow is independent from this reward ledger.
 
@@ -1843,7 +1843,7 @@ Do not delete datadirs, blockchain state, keystores, WorkSeats or backups.
 Rabbit VRF V1 now treats the following numeric economics as common frozen
 protocol policy for both Testnet and Mainnet:
 
-    service price = 0.01 quote units per request
+    service price = 0.001 quote units per request
     TWAP minimum window = 1800 seconds
     TWAP observation cadence = 300 seconds
     TWAP maximum age = 3600 seconds
@@ -1855,7 +1855,7 @@ protocol policy for both Testnet and Mainnet:
 
 Testnet encoding remains:
 
-    0.01 tRUSD
+    0.001 tRUSD
     10000 tRUSD base units
     tRUSD decimals = 6
 
@@ -1868,3 +1868,45 @@ Never reuse the Testnet pair/address blindly on Mainnet.
 There is no admin setter for these economic parameters.
 
 Any post-activation change requires an explicit protocol fork.
+
+### Economic correction before Coordinator rebuild
+
+The intended Rabbit VRF V1 economics are now:
+
+    base service price = 0.001 stable quote units per request
+    Testnet encoding = 1,000 tRUSD base units
+    Producer = 30%
+    VRF Committee = 50%
+    Rabbit Allocation = 20%
+
+Mainnet and Testnet remain completely separate networks.
+
+Mainnet MUST use its own genesis, native RAB state, production stable asset,
+wrapped RAB asset, RabbitSwap pair and activation configuration.
+
+No Testnet balance, tRAB, tRUSD, pair address or chain state is migrated into
+Mainnet.
+
+IMPORTANT IMPLEMENTATION NOTE:
+
+The currently compiled RabbitVRFCoordinatorV1 source/bytecode still contains
+the previous Testnet base fee of 10,000 tRUSD base units.
+
+The next implementation step MUST rebuild the Coordinator with:
+
+    VRF_BASE_FEE_TRUSD_BASE_UNITS = 1_000
+
+and then update:
+
+- compiled ABI/bin artifacts as needed;
+- params.RabbitVRFCoordinatorV1Code;
+- pricing tests;
+- request-fee tests;
+- bytecode/install tests;
+- documentation consistency checks.
+
+Do not activate Rabbit VRF on the public Testnet until this correction and the
+remaining VRF lifecycle are validated.
+
+Batching is a V1 architecture requirement, but maximum batch size remains open
+until gas/state/throughput/adversarial measurements are complete.

@@ -396,21 +396,21 @@ The VRF protocol fee is separate from ordinary transaction gas.
 
 Callback execution funding is also separate from the VRF protocol fee.
 
-The 50/30/20 Rabbit VRF reward split applies only to the VRF protocol fee.
+The 30/50/20 Rabbit VRF reward split applies only to the VRF protocol fee.
 Callback gas funding MUST NOT alter that split.
 
 Frozen Testnet V0.1 pricing parameters:
 
-    VRF_BASE_FEE_TRUSD_BASE_UNITS = 10_000
+    VRF_BASE_FEE_TRUSD_BASE_UNITS = 1_000
     TWAP_MIN_WINDOW_SECONDS = 1_800
     TWAP_OBSERVATION_CADENCE_SECONDS = 300
     TWAP_MAX_AGE_SECONDS = 3_600
 
 `tRUSD` has 6 decimals, therefore:
 
-    10_000 tRUSD base units = 0.01 tRUSD
+    1_000 tRUSD base units = 0.001 tRUSD
 
-The canonical Testnet V0.1 VRF service price is therefore 0.01 tRUSD per
+The canonical Testnet V0.1 VRF service price is therefore 0.001 tRUSD per
 request, converted to native tRAB using the canonical RabbitSwap TWAP.
 
 The TWAP observation used for billing MUST span at least 1,800 seconds.
@@ -610,14 +610,14 @@ DECIDED FOR TESTNET V0.1:
 The Rabbit VRF protocol fee is split independently from the normal Rabbit block
 reward:
 
-    50% = Producer
-    30% = VRF Committee
+    30% = Producer
+    50% = VRF Committee
     20% = Rabbit Allocation
 
 Canonical basis-point constants:
 
-    VRF_PRODUCER_BPS = 5000
-    VRF_COMMITTEE_BPS = 3000
+    VRF_PRODUCER_BPS = 3000
+    VRF_COMMITTEE_BPS = 5000
     VRF_RABBIT_BPS = 2000
     VRF_TOTAL_BPS = 10000
 
@@ -652,7 +652,7 @@ The Rabbit Allocation is a protocol-defined allocation and MUST NOT be
 controlled by the RabbitVRFCoordinatorV1 owner because V0.1 has no mutable
 owner/admin role.
 
-The Rabbit VRF 50/30/20 split is independent from the existing Rabbit block
+The Rabbit VRF 30/50/20 split is independent from the existing Rabbit block
 reward 70/30 split. The two reward systems MUST NOT be mixed implicitly.
 
 Frozen Testnet V0.1 reward-accounting architecture:
@@ -745,7 +745,7 @@ is not yet frozen. Until that rule is frozen, no production implementation may
 invent a committee distribution policy.
 
 A request that has not reached a canonical valid fulfillment MUST NOT create the
-50/30/20 fulfillment reward credits.
+30/50/20 fulfillment reward credits.
 
 The eventual refund amount for an expired or failed request remains a separate
 rule and is not defined by this reward-accounting section.
