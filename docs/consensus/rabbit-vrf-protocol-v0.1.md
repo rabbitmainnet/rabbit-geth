@@ -833,7 +833,18 @@ Canonical reward settlement period:
 
     VRF_SETTLEMENT_PERIOD_BLOCKS = 128
 
-These numeric protocol economics are common to Testnet and Mainnet V1.
+The Testnet V1 numeric protocol economics are frozen.
+
+The current Mainnet launch target uses the same numeric economics, but Mainnet
+economics are NOT irrevocably frozen before Mainnet genesis and activation.
+
+Before Mainnet activation, Rabbit Chain MUST perform a final production-market
+review covering competitor pricing, RAB economics, committee operating cost,
+expected request volume, batching efficiency, transaction gas and callback
+costs.
+
+Mainnet launch parameters MAY be adjusted before activation if that review
+shows a materially better production configuration.
 
 Testnet binding:
 
@@ -855,7 +866,13 @@ Mainnet MUST NOT silently reuse:
 If the Mainnet quote asset uses a decimal scale different from Testnet, its
 immutable base-unit encoding MUST represent exactly 0.001 quote units.
 
-The numeric service price remains 0.001 quote units.
+The current Mainnet launch target is 0.001 quote units per request.
+
+This value may be changed before Mainnet activation as part of the final
+production-market review.
+
+After Mainnet activation, changing the service price requires an explicit
+protocol fork.
 
 The coordinator MUST expose no owner/admin/privileged setter capable of changing:
 

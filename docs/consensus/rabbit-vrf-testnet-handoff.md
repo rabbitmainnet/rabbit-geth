@@ -1840,8 +1840,10 @@ Do not delete datadirs, blockchain state, keystores, WorkSeats or backups.
 
 ### Testnet and Mainnet economic values frozen
 
-Rabbit VRF V1 now treats the following numeric economics as common frozen
-protocol policy for both Testnet and Mainnet:
+Rabbit VRF Testnet V1 freezes the following economics.
+
+They are also the current Mainnet launch target, but Mainnet MUST receive a
+final market/economic review before genesis and activation:
 
     service price = 0.001 quote units per request
     TWAP minimum window = 1800 seconds
