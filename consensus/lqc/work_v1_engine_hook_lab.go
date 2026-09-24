@@ -242,9 +242,10 @@ func (l *LQC) WorkV1EngineLabRelayContext(
 // RabbitVRFDKGBridgeContextV1 resolves the canonical read-only Rabbit VRF DKG
 // bridge for blockNumber.
 //
-// The Rabbit VRF fork gate is checked before resolving Work runtime state so a
-// disabled VRF configuration performs no RandomX work and creates no VRF
-// lifecycle side effects.
+// The Rabbit VRF DKG preparation gate is checked before resolving Work runtime
+// state. This permits preparation during the single pre-activation Work epoch
+// while a disabled VRF configuration still performs no RandomX work and creates
+// no VRF lifecycle side effects.
 func (l *LQC) RabbitVRFDKGBridgeContextV1(
 	chain consensus.ChainHeaderReader,
 	parentNumber uint64,
@@ -265,7 +266,7 @@ func (l *LQC) RabbitVRFDKGBridgeContextV1(
 		return out, false, ErrWorkV1EngineLabUnavailable
 	}
 
-	if !chain.Config().IsRabbitVRF(
+	if !chain.Config().IsRabbitVRFDKGPreparation(
 		new(big.Int).SetUint64(blockNumber),
 	) {
 		return out, false, nil

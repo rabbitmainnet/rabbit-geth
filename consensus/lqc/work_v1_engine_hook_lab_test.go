@@ -175,7 +175,7 @@ func TestRabbitVRFDKGBridgeContextV1UsesCanonicalWorkRuntime(
 	config.EpochLength = WorkProtocolEpochLengthV1
 	config.ProofDifficulty = 17
 	config.RegistryProtocolBlock = 0
-	config.VRFProtocolBlock = 257
+	config.VRFProtocolBlock = 385
 
 	engine := New(config, rawdb.NewMemoryDatabase())
 	genesis := &types.Header{
@@ -348,7 +348,7 @@ func TestRabbitVRFDKGBridgeContextV1UsesParentBranchDatasetAnchor(
 	config.RegistryProtocolBlock = 0
 	config.EpochLength = WorkProtocolEpochLengthV1
 	config.ProofDifficulty = 17
-	config.VRFProtocolBlock = 513
+	config.VRFProtocolBlock = 641
 
 	engine := New(config, rawdb.NewMemoryDatabase())
 

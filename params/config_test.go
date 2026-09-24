@@ -460,3 +460,73 @@ func TestRabbitVRFProtocolConfigCompatibility(t *testing.T) {
 		t.Fatalf("disabled Rabbit VRF fork incompatible with itself: %v", err)
 	}
 }
+
+func TestRabbitVRFProtocolEpochAlignment(t *testing.T) {
+	config := func(activation, epochLength uint64) *ChainConfig {
+		return &ChainConfig{
+			LQC: &LQCConfig{
+				VRFProtocolBlock: activation,
+				EpochLength:      epochLength,
+			},
+		}
+	}
+
+	if err := config(0, 0).CheckConfigForkOrder(); err != nil {
+		t.Fatalf("disabled Rabbit VRF rejected: %v", err)
+	}
+	if err := config(385, 128).CheckConfigForkOrder(); err != nil {
+		t.Fatalf("aligned Rabbit VRF epoch 4 rejected: %v", err)
+	}
+	if err := config(386, 128).CheckConfigForkOrder(); err == nil {
+		t.Fatal("misaligned Rabbit VRF activation accepted")
+	}
+	if err := config(257, 128).CheckConfigForkOrder(); err == nil {
+		t.Fatal("Rabbit VRF activation before target epoch 4 accepted")
+	}
+	if err := config(385, 0).CheckConfigForkOrder(); err == nil {
+		t.Fatal("Rabbit VRF activation without epochLength accepted")
+	}
+}
+
+func TestRabbitVRFDKGPreparationGate(t *testing.T) {
+	config := func(activation, epochLength uint64) *ChainConfig {
+		return &ChainConfig{
+			LQC: &LQCConfig{
+				VRFProtocolBlock: activation,
+				EpochLength:      epochLength,
+			},
+		}
+	}
+
+	fork := config(385, 128)
+
+	if fork.IsRabbitVRFDKGPreparation(big.NewInt(256)) {
+		t.Fatal("Rabbit VRF DKG preparation active before block 257")
+	}
+	if !fork.IsRabbitVRFDKGPreparation(big.NewInt(257)) {
+		t.Fatal("Rabbit VRF DKG preparation inactive at block 257")
+	}
+	if !fork.IsRabbitVRFDKGPreparation(big.NewInt(384)) {
+		t.Fatal("Rabbit VRF DKG preparation inactive at block 384")
+	}
+
+	if fork.IsRabbitVRF(big.NewInt(384)) {
+		t.Fatal("Rabbit VRF protocol active during pre-fork DKG preparation")
+	}
+	if !fork.IsRabbitVRF(big.NewInt(385)) {
+		t.Fatal("Rabbit VRF protocol inactive at block 385")
+	}
+	if !fork.IsRabbitVRFDKGPreparation(big.NewInt(385)) {
+		t.Fatal("Rabbit VRF DKG preparation gate stopped at activation")
+	}
+
+	disabled := config(0, 128)
+	if disabled.IsRabbitVRFDKGPreparation(big.NewInt(1_000_000)) {
+		t.Fatal("disabled Rabbit VRF unexpectedly enabled DKG preparation")
+	}
+
+	malformed := config(385, 0)
+	if malformed.IsRabbitVRFDKGPreparation(big.NewInt(257)) {
+		t.Fatal("DKG preparation enabled without epochLength")
+	}
+}

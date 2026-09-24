@@ -691,12 +691,53 @@ func (c *LQCConfig) vrfProtocolForkBlock() *big.Int {
 	return new(big.Int).SetUint64(c.VRFProtocolBlock)
 }
 
+// vrfDKGPreparationForkBlock derives the first block where preparation for
+// the initial Rabbit VRF DKG may begin. It is exactly one Work epoch before
+// VRFProtocolBlock and does not itself activate the Rabbit VRF protocol.
+func (c *LQCConfig) vrfDKGPreparationForkBlock() *big.Int {
+	if c == nil ||
+		c.VRFProtocolBlock == 0 ||
+		c.EpochLength == 0 ||
+		c.VRFProtocolBlock <= c.EpochLength {
+		return nil
+	}
+	return new(big.Int).SetUint64(
+		c.VRFProtocolBlock - c.EpochLength,
+	)
+}
+
 func (c *LQCConfig) validateConsensusLivenessV3() error {
 	if c == nil || c.ConsensusLivenessV3Block == 0 || c.ConsensusFairnessBlock == 0 {
 		return nil
 	}
 	if c.ConsensusLivenessV3Block < c.ConsensusFairnessBlock {
 		return fmt.Errorf("consensusLivenessV3Block %d precedes consensusFairnessBlock %d", c.ConsensusLivenessV3Block, c.ConsensusFairnessBlock)
+	}
+	return nil
+}
+
+func (c *LQCConfig) validateRabbitVRFProtocol() error {
+	if c == nil || c.VRFProtocolBlock == 0 {
+		return nil
+	}
+	if c.EpochLength == 0 {
+		return errors.New("vrfProtocolBlock requires non-zero epochLength")
+	}
+	if (c.VRFProtocolBlock-1)%c.EpochLength != 0 {
+		return fmt.Errorf(
+			"vrfProtocolBlock %d is not aligned to an epoch boundary of %d blocks",
+			c.VRFProtocolBlock,
+			c.EpochLength,
+		)
+	}
+
+	targetEpoch := ((c.VRFProtocolBlock - 1) / c.EpochLength) + 1
+	if targetEpoch < 4 {
+		return fmt.Errorf(
+			"vrfProtocolBlock %d activates VRF epoch %d before the first valid target epoch 4",
+			c.VRFProtocolBlock,
+			targetEpoch,
+		)
 	}
 	return nil
 }
@@ -1045,6 +1086,18 @@ func (c *ChainConfig) IsRabbitVRF(num *big.Int) bool {
 	return c != nil && c.LQC != nil && isBlockForked(c.LQC.vrfProtocolForkBlock(), num)
 }
 
+// IsRabbitVRFDKGPreparation reports whether deterministic Rabbit VRF DKG
+// preparation may run. This begins one Work epoch before VRFProtocolBlock.
+// It does not mean the Rabbit VRF protocol itself is active.
+func (c *ChainConfig) IsRabbitVRFDKGPreparation(num *big.Int) bool {
+	return c != nil &&
+		c.LQC != nil &&
+		isBlockForked(
+			c.LQC.vrfDKGPreparationForkBlock(),
+			num,
+		)
+}
+
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	return isBlockForked(c.HomesteadBlock, num)
 }
@@ -1246,6 +1299,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	}
 	if err := c.LQC.validateConsensusLivenessV3(); err != nil {
 		return fmt.Errorf("invalid LQC consensus configuration: %v", err)
+	}
+	if err := c.LQC.validateRabbitVRFProtocol(); err != nil {
+		return fmt.Errorf("invalid LQC Rabbit VRF configuration: %v", err)
 	}
 	type fork struct {
 		name      string
