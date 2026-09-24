@@ -1497,3 +1497,189 @@ Still required after this lifecycle slice:
 - restart, sync, reorg and multinode testing;
 - callbacks, economics, observability, documentation and release validation;
 - final public Testnet activation block selection only after all of the above.
+
+## Runtime DKG lifecycle checkpoint 2026-09-24
+
+Current branch:
+
+    feat/rabbit-vrf-v0.1
+
+Latest committed checkpoints:
+
+    434baed85 feat(rabbitvrf): wire dkg lifecycle runtime
+    ba6b7bf64 feat(rabbitvrf): persist deterministic dkg lifecycle
+    b594be413 docs(rabbitvrf): checkpoint preactivation dkg runtime
+    d57bb77d7 feat(rabbitvrf): derive preactivation dkg window
+
+Worktree was clean immediately after commit `434baed85`.
+
+### What is now implemented
+
+Rabbit VRF remains disabled on the public Testnet unless `VRFProtocolBlock`
+is explicitly configured.
+
+There is still only ONE configured Rabbit VRF activation fork.
+
+For an activation aligned to Work epoch boundaries, DKG preparation is derived
+automatically one Work epoch before the target VRF epoch.
+
+Example with epoch length 128:
+
+    DKG preparation begins: block 257
+    Rabbit VRF activation:  block 385
+    target VRF epoch:       4
+
+The canonical runtime bridge can now derive:
+
+- closed source Work epoch;
+- canonical Work selection snapshot;
+- RandomX dataset key;
+- deterministic selection entropy;
+- deterministic VRF committee;
+- immutable ShareIDs;
+- committee root;
+- DKG session context;
+- canonical SessionID;
+- preparation epoch;
+- target VRF epoch.
+
+The public deterministic DKG lifecycle is now persisted by SessionID.
+
+Persistence properties implemented and tested:
+
+- deterministic create/resume;
+- restart recovery;
+- canonical RLP validation;
+- corruption rejection;
+- conflicting metadata rejection;
+- canonical committee-root recomputation;
+- concurrent Ensure serialization;
+- exactly one create result under concurrent callers;
+- no global mutable active-session pointer;
+- branch-derived SessionIDs may coexist without retargeting one another.
+
+Runtime wiring implemented in `434baed85`:
+
+    Finalize
+      -> maybeEnsureRabbitVRFDKGLifecycleV1
+      -> RabbitVRFDKGBridgeContextV1
+      -> preparation gate
+      -> canonical Work bridge
+      -> EnsureRabbitVRFDKGLifecycleV1
+
+Important safety property:
+
+A local persistence failure logs an error but does NOT make an otherwise valid
+consensus block invalid.
+
+The runtime path currently performs NO:
+
+- DKG transport-key generation;
+- password or credential access;
+- Participant-wallet signing;
+- P2P publication;
+- private evaluation delivery;
+- complaint processing;
+- dealer qualification;
+- keyset activation.
+
+Build separation is preserved:
+
+- Work/RandomX build contains the real lifecycle runtime hook;
+- ordinary build contains a no-op stub.
+
+Validation completed before checkpoint `434baed85`:
+
+- ordinary `go test ./consensus/lqc`;
+- official `rabbit_workv1 rabbit_randomx` targeted tests;
+- race detector targeted tests;
+- full official LQC suite;
+- official-tag `go vet`;
+- staged whitespace/diff checks.
+
+All passed.
+
+### Existing secret transport-key foundation
+
+The encrypted transport-key store already exists at:
+
+    internal/rabbitvrfstate/dkg_transport_key_store_v1.go
+
+It stores an independent Rabbit VRF DKG transport key, NOT the Participant
+wallet key and NOT the P2P node key.
+
+The persisted secret is bound to:
+
+- canonical SessionID;
+- immutable ShareID;
+- Participant address;
+- transport scheme;
+- canonical compressed transport public key.
+
+The private key is encrypted using geth keystore CryptoJSON V3 machinery.
+
+Transport-key creation is deliberately nondeterministic and MUST remain outside
+consensus replay and header verification.
+
+### Exact next implementation step
+
+Do NOT immediately generate transport keys from the LQC Finalize hook.
+
+First inspect and freeze the Rabbit Core runtime ownership needed for the secret
+side of the DKG lifecycle.
+
+Resolve the exact production objects/APIs for:
+
+1. local Participant wallet identity;
+2. determining whether that Participant is actually a member of the canonical
+   bridge committee and obtaining its immutable ShareID;
+3. canonical Rabbit Core/geth datadir;
+4. secure Rabbit VRF private-state directory;
+5. explicit storage credential/password source;
+6. Participant wallet signing/backend access;
+7. local P2P node public/private identity so transport-key reuse can be rejected;
+8. lifecycle start/stop ownership outside deterministic consensus replay.
+
+After those runtime ownership points are known, implement a separate local
+runtime service with this ordering:
+
+1. consume an already-persisted canonical DKG lifecycle;
+2. resolve the local Participant;
+3. find the Participant in the canonical committee;
+4. if not a committee member, perform no secret side effect;
+5. obtain the exact immutable ShareID;
+6. open the encrypted Rabbit VRF transport-key store beneath the canonical
+   datadir;
+7. obtain the explicit credential;
+8. load the existing session/share transport key when present;
+9. create exactly one new independent transport key only when safe to do so;
+10. reject Participant-wallet key reuse;
+11. reject local P2P node-key reuse;
+12. construct the canonical transport binding;
+13. authenticate it with the Participant wallet;
+14. only after persistence and authentication succeed may later P2P publication
+    be implemented.
+
+Fail closed:
+
+- never silently regenerate an already-announced session/share key;
+- wrong password is fatal for that DKG participation;
+- corrupted secret state is fatal for that DKG participation;
+- metadata/public-key mismatch is fatal;
+- never fall back to plaintext;
+- never derive the transport key from a wallet signature;
+- never create a transport key for a wallet outside the canonical committee;
+- never let VerifyHeader/replay create private DKG state.
+
+### Resume instruction for a new ChatGPT conversation
+
+Use this exact message:
+
+    Leia docs/consensus/rabbit-vrf-testnet-handoff.md, confira o HEAD e o git status sem apagar nenhuma alteração, e continue do "Exact next implementation step". Estamos no worktree ~/projects/rabbit-geth-vrf e Rabbit VRF continua desativado na Testnet pública.
+
+Do not delete datadirs, blockchain state, keystores, WorkSeats or untracked
+backups.
+
+Do not use `git clean`, `git reset --hard` or destructive repository recovery.
+
+Do not modify the original `~/projects/rabbit-geth` worktree casually.
