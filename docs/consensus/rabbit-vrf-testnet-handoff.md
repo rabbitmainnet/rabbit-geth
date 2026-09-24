@@ -1683,3 +1683,157 @@ backups.
 Do not use `git clean`, `git reset --hard` or destructive repository recovery.
 
 Do not modify the original `~/projects/rabbit-geth` worktree casually.
+
+## Local DKG runtime checkpoint e37583308
+
+Current implementation checkpoint:
+
+    e37583308 feat(rabbitvrf): resolve local dkg committee runtime
+    7daaf8bb3 docs(rabbitvrf): checkpoint dkg lifecycle runtime
+    434baed85 feat(rabbitvrf): wire dkg lifecycle runtime
+    ba6b7bf64 feat(rabbitvrf): persist deterministic dkg lifecycle
+
+Worktree was clean immediately after commit `e37583308`.
+
+### What e37583308 adds
+
+Rabbit Core now owns the local operational Rabbit VRF DKG observer.
+
+The implementation lives in:
+
+    eth/rabbit_vrf_dkg_runtime_lab.go
+    eth/rabbit_vrf_dkg_runtime_stub.go
+    eth/rabbit_vrf_dkg_runtime_lab_test.go
+
+`Ethereum` owns the runtime lifecycle.
+
+Production flow:
+
+    Ethereum.Start
+      -> rabbitVRFDKGRuntime.Start
+      -> canonical ChainHeadEvent
+      -> current canonical header
+      -> RabbitVRFDKGBridgeContextV1
+      -> LoadRabbitVRFDKGLifecycleV1
+      -> AccountManager local wallets
+      -> canonical committee match
+      -> immutable ShareID resolution
+
+Shutdown flow:
+
+    Ethereum.Stop
+      -> rabbitVRFDKGRuntime.Close
+
+The runtime is only constructed when Rabbit VRF is configured.
+
+A disabled VRF configuration creates no operational DKG runtime.
+
+### Security boundary now frozen
+
+The deterministic/public layer remains inside consensus/lqc.
+
+The local operational layer lives in eth.
+
+The rabbit-miner is NOT the owner of persistent DKG participation.
+
+The current local DKG runtime performs NO:
+
+- password reads;
+- DKG transport-key generation;
+- wallet DKG signing;
+- DKG private evaluation generation;
+- DKG P2P publication;
+- complaint processing;
+- qualification;
+- secret-share activation.
+
+Local committee matching preserves canonical committee ordering and immutable
+ShareIDs.
+
+A local wallet outside the canonical committee receives no local DKG member
+context.
+
+Malformed ShareIDs and duplicate committee participants are rejected.
+
+### Validation for e37583308
+
+Passed:
+
+    go test ./eth -count=1
+
+Passed with official tags:
+
+    go test -tags="rabbit_workv1 rabbit_randomx" ./consensus/lqc ./eth -count=1
+
+Passed race detector:
+
+    go test -race -tags="rabbit_workv1 rabbit_randomx" ./eth -run '^TestRabbitVRFDKGRuntimeV1' -count=1
+
+Passed vet:
+
+    go vet -tags="rabbit_workv1 rabbit_randomx" ./consensus/lqc ./eth
+
+Passed:
+
+    git diff --check
+    git diff --cached --check
+
+### Exact next implementation step
+
+Begin the SECRET local DKG layer, but do not publish anything over P2P yet.
+
+First inspect and freeze the exact existing APIs in:
+
+    internal/rabbitvrfstate/dkg_transport_key_store_v1.go
+    consensus/lqc/rabbit_vrf_dkg_transport_key_v1.go
+
+Resolve precisely:
+
+1. transport-key store constructor;
+2. canonical directory/path expectations;
+3. Create API;
+4. Load API;
+5. missing/already-exists/decrypt error behavior;
+6. password input contract;
+7. binding construction API;
+8. Participant wallet authentication API;
+9. how to compare the generated transport public key against:
+   - Participant wallet public key;
+   - local P2P node public key.
+
+Then implement the smallest local secret-runtime slice:
+
+    canonical local DKG member
+      -> local secret-state path
+      -> load existing transport key
+         OR safely create exactly one
+      -> bind SessionID + ShareID + Participant
+      -> reject key reuse with Participant wallet
+      -> reject key reuse with P2P node key
+      -> keep all state local
+      -> NO P2P publication yet
+
+Fail closed:
+
+- no transport key for non-members;
+- no transport key before canonical DKG preparation;
+- no secret creation from VerifyHeader, Finalize, replay or branch reconstruction;
+- no silent regeneration after an existing record;
+- wrong password must not create a replacement;
+- corrupt secret state must not create a replacement;
+- never persist plaintext private keys;
+- never log passwords or private key material;
+- never reuse Participant or P2P node keys as DKG transport keys.
+
+Public Testnet Rabbit VRF remains disabled until an activation block is
+explicitly configured.
+
+### Resume instruction
+
+If a new ChatGPT conversation is required, send:
+
+    Leia docs/consensus/rabbit-vrf-testnet-handoff.md, confira o HEAD e o git status sem apagar nenhuma alteração, e continue do "Exact next implementation step". Estamos no worktree ~/projects/rabbit-geth-vrf e Rabbit VRF continua desativado na Testnet pública.
+
+Do not use git clean or git reset --hard.
+
+Do not delete datadirs, blockchain state, keystores, WorkSeats or backups.
