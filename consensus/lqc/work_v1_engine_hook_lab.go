@@ -239,6 +239,124 @@ func (l *LQC) WorkV1EngineLabRelayContext(
 		nil
 }
 
+// RabbitVRFDKGBridgeContextV1 resolves the canonical read-only Rabbit VRF DKG
+// bridge for blockNumber.
+//
+// The Rabbit VRF fork gate is checked before resolving Work runtime state so a
+// disabled VRF configuration performs no RandomX work and creates no VRF
+// lifecycle side effects.
+func (l *LQC) RabbitVRFDKGBridgeContextV1(
+	chain consensus.ChainHeaderReader,
+	parentNumber uint64,
+	parentHash common.Hash,
+	blockNumber uint64,
+) (
+	RabbitVRFDKGBridgeV1,
+	bool,
+	error,
+) {
+	var out RabbitVRFDKGBridgeV1
+
+	if chain == nil ||
+		chain.Config() == nil ||
+		chain.Config().ChainID == nil ||
+		parentNumber == ^uint64(0) ||
+		blockNumber != parentNumber+1 {
+		return out, false, ErrWorkV1EngineLabUnavailable
+	}
+
+	if !chain.Config().IsRabbitVRF(
+		new(big.Int).SetUint64(blockNumber),
+	) {
+		return out, false, nil
+	}
+
+	parent, err := l.workV1EngineLabRuntimeAt(
+		chain,
+		parentNumber,
+		parentHash,
+	)
+	if err != nil {
+		return out, false, err
+	}
+
+	snapshot, hasSource, err :=
+		parent.Work.SelectionSnapshotV1(
+			chain.Config().ChainID,
+			blockNumber,
+		)
+	if err != nil {
+		return out, false, err
+	}
+	if !hasSource ||
+		snapshot == nil ||
+		len(snapshot.Seats) == 0 {
+		return out, false, nil
+	}
+
+	datasetNumber, err :=
+		WorkDatasetAnchorBlockV1(
+			snapshot.Epoch,
+			parent.Work.EpochLength,
+		)
+	if err != nil {
+		return out, false, err
+	}
+
+	datasetHeader := workV1EngineLabAncestorHeader(
+		chain,
+		parent.Work.Number,
+		parent.Work.Hash,
+		datasetNumber,
+	)
+	if datasetHeader == nil {
+		return out, false,
+			ErrWorkV1EngineLabParentMissing
+	}
+
+	datasetKey, err :=
+		RandomXWorkDatasetKeyV1(
+			chain.Config().ChainID,
+			snapshot.Epoch,
+			datasetHeader.Hash(),
+		)
+	if err != nil {
+		return out, false, err
+	}
+
+	committeeSize :=
+		l.workV1EngineLabCommitteeSize(
+			uint64(len(snapshot.Seats)),
+		)
+	if committeeSize == 0 {
+		return out, false, nil
+	}
+
+	state, err := workV1EngineLabRuntimeFor(l)
+	if err != nil {
+		return out, false, err
+	}
+
+	out, err =
+		RabbitVRFDKGBridgeForSnapshotV1(
+			chain.Config().ChainID,
+			snapshot,
+			datasetKey,
+			committeeSize,
+			committeeSize,
+			WorkSelectionBeaconHasherV1(
+				state.cachedSelectionBeaconHash,
+			),
+		)
+	if err != nil {
+		return RabbitVRFDKGBridgeV1{},
+			false,
+			err
+	}
+
+	return out, true, nil
+}
+
 // WorkV2ParticipantSeatStatus returns the canonical admission state at a
 // specific head. It is intentionally read-only and branch-aware so user-facing
 // software never mistakes a local relay acceptance for a consensus seat.

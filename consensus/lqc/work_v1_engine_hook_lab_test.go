@@ -121,6 +121,417 @@ func TestWorkV1EngineLabRuntimeReconstructsRequestedBranchByHash(
 	}
 }
 
+func TestRabbitVRFDKGBridgeContextV1DisabledHasNoRuntimeSideEffects(
+	t *testing.T,
+) {
+	config := canonicalRegistryEngineConfig(
+		testParticipants(t, 2),
+		1,
+	)
+	config.VRFProtocolBlock = 0
+
+	engine := New(config, rawdb.NewMemoryDatabase())
+	genesis := &types.Header{
+		Number:   big.NewInt(0),
+		Time:     100,
+		GasLimit: 30_000_000,
+	}
+	chain := canonicalRegistryTestChain(config, genesis)
+
+	if _, exists := workV1EngineLabRuntimes.Load(engine); exists {
+		t.Fatal("work runtime unexpectedly exists before disabled VRF call")
+	}
+
+	bridge, ok, err := engine.RabbitVRFDKGBridgeContextV1(
+		chain,
+		256,
+		common.HexToHash("0xdeadbeef"),
+		257,
+	)
+	if err != nil {
+		t.Fatalf("disabled VRF bridge returned error: %v", err)
+	}
+	if ok {
+		t.Fatal("disabled VRF bridge reported active context")
+	}
+	if bridge.SourceWorkEpoch != 0 ||
+		bridge.SessionID != (common.Hash{}) ||
+		len(bridge.Members) != 0 {
+		t.Fatalf("disabled VRF bridge returned non-zero context: %+v", bridge)
+	}
+
+	if _, exists := workV1EngineLabRuntimes.Load(engine); exists {
+		t.Fatal("disabled VRF bridge created Work/RandomX runtime side effect")
+	}
+}
+
+func TestRabbitVRFDKGBridgeContextV1UsesCanonicalWorkRuntime(
+	t *testing.T,
+) {
+	config := canonicalRegistryEngineConfig(
+		testParticipants(t, 2),
+		1,
+	)
+	config.EpochLength = WorkProtocolEpochLengthV1
+	config.ProofDifficulty = 17
+	config.RegistryProtocolBlock = 0
+	config.VRFProtocolBlock = 257
+
+	engine := New(config, rawdb.NewMemoryDatabase())
+	genesis := &types.Header{
+		Number:   big.NewInt(0),
+		Time:     100,
+		GasLimit: 30_000_000,
+	}
+	chain := canonicalRegistryTestChain(config, genesis)
+
+	runtime, err := NewCanonicalWorkRuntimeStateV1(
+		chain.Config().ChainID,
+		0,
+		genesis.Hash(),
+		WorkProtocolEpochLengthV1,
+		big.NewInt(17),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentHash := genesis.Hash()
+	for number := uint64(1); number <= 256; number++ {
+		header := &types.Header{
+			ParentHash: parentHash,
+			Number:     new(big.Int).SetUint64(number),
+			Time:       100 + number,
+			GasLimit:   30_000_000,
+		}
+
+		var challenge common.Hash
+		var verified []VerifiedRandomXWorkTicketV1
+		if number >= 129 {
+			challenge = genesis.Hash()
+		}
+		if number == 129 {
+			verified = []VerifiedRandomXWorkTicketV1{
+				runtimeVerifiedV1(1, 0),
+				runtimeVerifiedV1(1, 1),
+			}
+		}
+
+		runtime, err = runtime.ApplyVerifiedBlockV1(
+			chain.Config().ChainID,
+			number,
+			header.Hash(),
+			runtime.Work.Hash,
+			challenge,
+			verified,
+		)
+		if err != nil {
+			t.Fatalf("apply block %d: %v", number, err)
+		}
+
+		chain.headers[header.Hash()] = header
+		chain.current = header
+		parentHash = header.Hash()
+	}
+
+	if runtime.Work.SelectionEpoch != 1 {
+		t.Fatalf(
+			"selection epoch=%d want=1",
+			runtime.Work.SelectionEpoch,
+		)
+	}
+	if len(runtime.Work.SelectionSeats) != 2 {
+		t.Fatalf(
+			"selection seats=%d want=2",
+			len(runtime.Work.SelectionSeats),
+		)
+	}
+
+	if err := engine.workV1EngineLabRemember(
+		chain.current.Hash(),
+		runtime,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	bridge, ok, err := engine.RabbitVRFDKGBridgeContextV1(
+		chain,
+		256,
+		chain.current.Hash(),
+		257,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("active Rabbit VRF bridge context unavailable")
+	}
+
+	wantDatasetKey, err := RandomXWorkDatasetKeyV1(
+		chain.Config().ChainID,
+		1,
+		genesis.Hash(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bridge.SourceWorkEpoch != 1 ||
+		bridge.PreparationEpoch != 3 ||
+		bridge.TargetVRFEpoch != 4 {
+		t.Fatalf(
+			"epochs source/prep/target=%d/%d/%d want=1/3/4",
+			bridge.SourceWorkEpoch,
+			bridge.PreparationEpoch,
+			bridge.TargetVRFEpoch,
+		)
+	}
+	if bridge.SelectionRoot != runtime.Work.SelectionRoot {
+		t.Fatal("bridge selection root differs from canonical Work runtime")
+	}
+	if bridge.DatasetKey != wantDatasetKey {
+		t.Fatalf(
+			"dataset key=%s want=%s",
+			bridge.DatasetKey,
+			wantDatasetKey,
+		)
+	}
+	if len(bridge.Members) != 2 {
+		t.Fatalf("members=%d want=2", len(bridge.Members))
+	}
+	if bridge.Members[0].ShareID != 1 ||
+		bridge.Members[1].ShareID != 2 {
+		t.Fatalf(
+			"share ids=%d/%d want=1/2",
+			bridge.Members[0].ShareID,
+			bridge.Members[1].ShareID,
+		)
+	}
+	if bridge.Session.TargetVRFEpoch != 4 ||
+		bridge.Session.CommitteeSize != 2 ||
+		bridge.Session.CommitteeRoot != bridge.CommitteeRoot ||
+		bridge.SessionID == (common.Hash{}) {
+		t.Fatalf("unexpected DKG session: %+v", bridge.Session)
+	}
+
+	state, err := workV1EngineLabRuntimeFor(engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if actual, loaded := workV1EngineLabRuntimes.LoadAndDelete(engine); loaded {
+			runtimeState := actual.(*workV1EngineLabRuntime)
+			if runtimeState.close != nil {
+				runtimeState.close()
+			}
+		}
+	})
+
+	state.mu.Lock()
+	cacheEntries := len(state.selectionBeaconCache)
+	state.mu.Unlock()
+	if cacheEntries != 1 {
+		t.Fatalf(
+			"selection beacon cache entries=%d want=1",
+			cacheEntries,
+		)
+	}
+}
+
+func TestRabbitVRFDKGBridgeContextV1UsesParentBranchDatasetAnchor(
+	t *testing.T,
+) {
+	config := canonicalRegistryEngineConfig(
+		testParticipants(t, 2),
+		1,
+	)
+	config.RegistryProtocolBlock = 0
+	config.EpochLength = WorkProtocolEpochLengthV1
+	config.ProofDifficulty = 17
+	config.VRFProtocolBlock = 513
+
+	engine := New(config, rawdb.NewMemoryDatabase())
+
+	genesis := &types.Header{
+		Number:   big.NewInt(0),
+		Time:     100,
+		GasLimit: 30_000_000,
+	}
+
+	base := canonicalRegistryTestChain(config, genesis)
+	chain := &workV1BranchTestChain{
+		testHeaderChain: base,
+		canonical:       make(map[uint64]*types.Header),
+	}
+	chain.canonical[0] = genesis
+
+	runtime, err := NewCanonicalWorkRuntimeStateV1(
+		chain.Config().ChainID,
+		0,
+		genesis.Hash(),
+		WorkProtocolEpochLengthV1,
+		big.NewInt(17),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentHash := genesis.Hash()
+	var canonical128 *types.Header
+	var branch128 *types.Header
+	var branch256 *types.Header
+
+	for number := uint64(1); number <= 512; number++ {
+		if number == 128 {
+			canonical128 = &types.Header{
+				ParentHash: parentHash,
+				Number:     new(big.Int).SetUint64(number),
+				Time:       100 + number,
+				GasLimit:   30_000_000,
+				Extra:      []byte("canonical-a-128"),
+			}
+			chain.headers[canonical128.Hash()] = canonical128
+			chain.canonical[number] = canonical128
+		}
+
+		header := &types.Header{
+			ParentHash: parentHash,
+			Number:     new(big.Int).SetUint64(number),
+			Time:       100 + number,
+			GasLimit:   30_000_000,
+		}
+		if number == 128 {
+			header.Extra = []byte("branch-b-128")
+			branch128 = header
+		}
+
+		var challenge common.Hash
+		switch {
+		case number <= 128:
+		case number <= 256:
+			challenge = genesis.Hash()
+		case number <= 384:
+			challenge = branch128.Hash()
+		default:
+			challenge = branch256.Hash()
+		}
+
+		var verified []VerifiedRandomXWorkTicketV1
+		if number == 385 {
+			verified = []VerifiedRandomXWorkTicketV1{
+				runtimeVerifiedV1(3, 0),
+				runtimeVerifiedV1(3, 1),
+			}
+		}
+
+		runtime, err = runtime.ApplyVerifiedBlockV1(
+			chain.Config().ChainID,
+			number,
+			header.Hash(),
+			runtime.Work.Hash,
+			challenge,
+			verified,
+		)
+		if err != nil {
+			t.Fatalf("apply block %d: %v", number, err)
+		}
+
+		chain.headers[header.Hash()] = header
+		chain.current = header
+		parentHash = header.Hash()
+
+		if number == 256 {
+			branch256 = header
+		}
+	}
+
+	if canonical128 == nil || branch128 == nil || branch256 == nil {
+		t.Fatal("branch anchor fixture incomplete")
+	}
+	if canonical128.Hash() == branch128.Hash() {
+		t.Fatal("branch dataset anchors unexpectedly match")
+	}
+	if runtime.Work.SelectionEpoch != 3 {
+		t.Fatalf(
+			"selection epoch=%d want=3",
+			runtime.Work.SelectionEpoch,
+		)
+	}
+	if len(runtime.Work.SelectionSeats) != 2 {
+		t.Fatalf(
+			"selection seats=%d want=2",
+			len(runtime.Work.SelectionSeats),
+		)
+	}
+
+	if err := engine.workV1EngineLabRemember(
+		chain.current.Hash(),
+		runtime,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	bridge, ok, err := engine.RabbitVRFDKGBridgeContextV1(
+		chain,
+		512,
+		chain.current.Hash(),
+		513,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("branch Rabbit VRF bridge context unavailable")
+	}
+
+	wantBranchKey, err := RandomXWorkDatasetKeyV1(
+		chain.Config().ChainID,
+		3,
+		branch128.Hash(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongCanonicalKey, err := RandomXWorkDatasetKeyV1(
+		chain.Config().ChainID,
+		3,
+		canonical128.Hash(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bridge.DatasetKey != wantBranchKey {
+		t.Fatalf(
+			"dataset key=%s want parent-branch key=%s",
+			bridge.DatasetKey,
+			wantBranchKey,
+		)
+	}
+	if bridge.DatasetKey == wrongCanonicalKey {
+		t.Fatal("VRF bridge jumped to canonical branch dataset anchor")
+	}
+	if bridge.SourceWorkEpoch != 3 ||
+		bridge.PreparationEpoch != 5 ||
+		bridge.TargetVRFEpoch != 6 {
+		t.Fatalf(
+			"epochs source/prep/target=%d/%d/%d want=3/5/6",
+			bridge.SourceWorkEpoch,
+			bridge.PreparationEpoch,
+			bridge.TargetVRFEpoch,
+		)
+	}
+
+	t.Cleanup(func() {
+		if actual, loaded := workV1EngineLabRuntimes.LoadAndDelete(engine); loaded {
+			runtimeState := actual.(*workV1EngineLabRuntime)
+			if runtimeState.close != nil {
+				runtimeState.close()
+			}
+		}
+	})
+}
+
 func TestWorkV2EngineLabRelayContextUsesCanonicalRuntimeAndPermissionlessAdmission(
 	t *testing.T,
 ) {
