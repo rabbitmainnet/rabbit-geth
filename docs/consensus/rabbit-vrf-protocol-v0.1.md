@@ -805,3 +805,73 @@ behavior is deterministic, and no known critical protocol question remains.
 Until then:
 
     vrfProtocolBlock = disabled
+
+## Network-frozen Rabbit VRF economic profile
+
+The Rabbit VRF V1 numeric economic policy is frozen for both Rabbit Testnet
+and Rabbit Mainnet.
+
+Canonical service price:
+
+    VRF_SERVICE_PRICE_QUOTE = 0.01 quote units per request
+
+Canonical TWAP policy:
+
+    TWAP_MIN_WINDOW_SECONDS = 1800
+    TWAP_OBSERVATION_CADENCE_SECONDS = 300
+    TWAP_MAX_AGE_SECONDS = 3600
+    TWAP_OBSERVATION_RING_SIZE = 16
+
+Canonical Rabbit VRF protocol-fee distribution:
+
+    VRF_PRODUCER_BPS = 5000
+    VRF_COMMITTEE_BPS = 3000
+    VRF_RABBIT_BPS = 2000
+    VRF_TOTAL_BPS = 10000
+
+Canonical reward settlement period:
+
+    VRF_SETTLEMENT_PERIOD_BLOCKS = 128
+
+These numeric protocol economics are common to Testnet and Mainnet V1.
+
+Testnet binding:
+
+    quote asset = tRUSD
+    quote decimals = 6
+    VRF_BASE_FEE_TRUSD_BASE_UNITS = 10000
+    10000 base units = 0.01 tRUSD
+
+The Mainnet quote asset, decimals and canonical RabbitSwap pair address MUST be
+explicitly frozen before Mainnet Rabbit VRF activation.
+
+Mainnet MUST NOT silently reuse:
+
+- the Testnet tRUSD address;
+- the Testnet tWRAB address;
+- the Testnet RabbitSwap pair address;
+- any Testnet-specific pricing binding.
+
+If the Mainnet quote asset uses a decimal scale different from Testnet, its
+immutable base-unit encoding MUST represent exactly 0.01 quote units.
+
+The numeric service price remains 0.01 quote units.
+
+The coordinator MUST expose no owner/admin/privileged setter capable of changing:
+
+- the service price;
+- TWAP window;
+- observation cadence;
+- maximum observation age;
+- observation ring size;
+- 50/30/20 reward split;
+- settlement period.
+
+Changing any of these protocol-economic values after activation requires an
+explicit protocol fork.
+
+Callback execution funding remains separate from the Rabbit VRF protocol fee
+and MUST NOT modify the 50/30/20 split.
+
+No Mainnet Rabbit VRF activation may occur until its quote asset and canonical
+RabbitSwap pricing pair are explicitly bound and tested.

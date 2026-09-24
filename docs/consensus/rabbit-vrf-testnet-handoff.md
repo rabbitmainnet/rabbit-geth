@@ -1837,3 +1837,34 @@ If a new ChatGPT conversation is required, send:
 Do not use git clean or git reset --hard.
 
 Do not delete datadirs, blockchain state, keystores, WorkSeats or backups.
+
+### Testnet and Mainnet economic values frozen
+
+Rabbit VRF V1 now treats the following numeric economics as common frozen
+protocol policy for both Testnet and Mainnet:
+
+    service price = 0.01 quote units per request
+    TWAP minimum window = 1800 seconds
+    TWAP observation cadence = 300 seconds
+    TWAP maximum age = 3600 seconds
+    observation ring size = 16
+    producer share = 5000 BPS
+    committee share = 3000 BPS
+    Rabbit allocation = 2000 BPS
+    settlement period = 128 blocks
+
+Testnet encoding remains:
+
+    0.01 tRUSD
+    10000 tRUSD base units
+    tRUSD decimals = 6
+
+Mainnet keeps the same numeric economic policy, but its production quote asset,
+decimal encoding and canonical RabbitSwap pair MUST be frozen independently
+before Mainnet activation.
+
+Never reuse the Testnet pair/address blindly on Mainnet.
+
+There is no admin setter for these economic parameters.
+
+Any post-activation change requires an explicit protocol fork.
