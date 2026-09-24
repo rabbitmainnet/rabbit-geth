@@ -314,6 +314,61 @@ func TestRabbitVRFDKGBridgeContextV1UsesCanonicalWorkRuntime(
 		t.Fatalf("unexpected DKG session: %+v", bridge.Session)
 	}
 
+	candidate := &types.Header{
+		ParentHash: chain.current.Hash(),
+		Number:     new(big.Int).SetUint64(257),
+		Time:       357,
+		GasLimit:   30_000_000,
+	}
+
+	if err :=
+		engine.maybeEnsureRabbitVRFDKGLifecycleV1(
+			chain,
+			candidate,
+		); err != nil {
+		t.Fatal(err)
+	}
+
+	persisted, err :=
+		engine.LoadRabbitVRFDKGLifecycleV1(
+			bridge.SessionID,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if persisted.SessionID != bridge.SessionID ||
+		persisted.SourceWorkEpoch != bridge.SourceWorkEpoch ||
+		persisted.PreparationEpoch != bridge.PreparationEpoch ||
+		persisted.TargetVRFEpoch != bridge.TargetVRFEpoch ||
+		persisted.CommitteeRoot != bridge.CommitteeRoot {
+		t.Fatal(
+			"persisted lifecycle differs from canonical bridge",
+		)
+	}
+
+	if err :=
+		engine.maybeEnsureRabbitVRFDKGLifecycleV1(
+			chain,
+			candidate,
+		); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, err :=
+		engine.LoadRabbitVRFDKGLifecycleV1(
+			bridge.SessionID,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resumed.SessionID != persisted.SessionID {
+		t.Fatal(
+			"repeated runtime ensure changed DKG session",
+		)
+	}
+
 	state, err := workV1EngineLabRuntimeFor(engine)
 	if err != nil {
 		t.Fatal(err)

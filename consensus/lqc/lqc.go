@@ -973,6 +973,18 @@ func (l *LQC) Finalize(chain consensus.ChainHeaderReader, header *types.Header, 
 		return
 	}
 	l.distributeRewards(chain, header, statedb)
+
+	if err := l.maybeEnsureRabbitVRFDKGLifecycleV1(
+		chain,
+		header,
+	); err != nil {
+		log.Warn(
+			"Failed to ensure Rabbit VRF DKG lifecycle",
+			"number", header.Number,
+			"parent", header.ParentHash,
+			"err", err,
+		)
+	}
 }
 
 func (l *LQC) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, statedb *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
