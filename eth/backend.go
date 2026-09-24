@@ -221,6 +221,7 @@ type Ethereum struct {
 	registryNetwork     *lqcRegistryNetwork
 	workTicketTransport *lqcWorkTicketTransport
 	workV1Transport     *lqcWorkV1Transport
+	vrfDKGRuntime       *rabbitVRFDKGRuntime
 	discmix             *enode.FairMix
 	dropper             *dropper
 
@@ -486,6 +487,18 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		)
 	}
 
+	if lqcEngine, ok := eth.engine.(*lqc.LQC); ok {
+		vrfRuntime, err :=
+			newRabbitVRFDKGRuntimeMaybeLab(
+				eth,
+				lqcEngine,
+			)
+		if err != nil {
+			return nil, err
+		}
+		eth.vrfDKGRuntime = vrfRuntime
+	}
+
 	// Initialize filtermaps log index.
 	fmConfig := filtermaps.Config{
 		History:        config.LogHistory,
@@ -700,6 +713,12 @@ func (s *Ethereum) Start() error {
 
 	// Start the networking layer
 	s.handler.Start(s.p2pServer.MaxPeers)
+
+	if s.vrfDKGRuntime != nil {
+		if err := s.vrfDKGRuntime.Start(); err != nil {
+			return err
+		}
+	}
 
 	// Start the connection manager with inclusion-based peer protection.
 	s.dropper.Start(s.p2pServer, func() bool { return !s.Synced() }, s.handler.txTracker.GetAllPeerStats)
@@ -1035,6 +1054,9 @@ func (s *Ethereum) Stop() error {
 	// Stop all the peer-related stuff first.
 	s.discmix.Close()
 	s.dropper.Stop()
+	if s.vrfDKGRuntime != nil {
+		s.vrfDKGRuntime.Close()
+	}
 	if s.registryNetwork != nil {
 		s.registryNetwork.Close()
 	}
