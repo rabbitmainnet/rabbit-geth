@@ -31,7 +31,7 @@ func TestRabbitVRFCoordinatorV1Artifact(t *testing.T) {
 		t.Fatalf("coordinator address = %s, want %s", params.RabbitVRFCoordinatorV1Address, wantAddr)
 	}
 
-	wantHash := common.HexToHash("0x5479f86bda354092c005400acb7f7bee106d77840c5208be5e6274a4f89eeb1d")
+	wantHash := common.HexToHash("0xfc4f7e4e983b299c0f03c388c64920a123312f6bde669f0e5787551cd8e97cba")
 	gotHash := crypto.Keccak256Hash(params.RabbitVRFCoordinatorV1Code)
 	if gotHash != wantHash {
 		t.Fatalf("runtime code hash = %s, want %s", gotHash, wantHash)
@@ -121,13 +121,14 @@ func TestRabbitVRFCoordinatorV1OnlySystem(t *testing.T) {
 func rabbitVRFTestConfig(activation uint64) *params.ChainConfig {
 	config := *params.TestChainConfig
 	config.LQC = &params.LQCConfig{
+		EpochLength:      1,
 		VRFProtocolBlock: activation,
 	}
 	return &config
 }
 
 func TestRabbitVRFCoordinatorV1PreExecutionActivationBoundary(t *testing.T) {
-	config := rabbitVRFTestConfig(2)
+	config := rabbitVRFTestConfig(4)
 	sdb := mkState(nil)
 	evm := amsterdamCoreEVM(sdb)
 
@@ -135,10 +136,10 @@ func TestRabbitVRFCoordinatorV1PreExecutionActivationBoundary(t *testing.T) {
 	slot := common.HexToHash("0x1234")
 	value := common.HexToHash("0xcafebabe")
 
-	// Block 1: fork inactive.
+	// Block 3: fork inactive.
 	parent0 := &types.Header{
-		Number: big.NewInt(0),
-		Time:   0,
+		Number: big.NewInt(2),
+		Time:   20,
 	}
 
 	PreExecution(
@@ -147,18 +148,18 @@ func TestRabbitVRFCoordinatorV1PreExecutionActivationBoundary(t *testing.T) {
 		parent0,
 		config,
 		evm,
-		big.NewInt(1),
-		10,
+		big.NewInt(3),
+		30,
 	)
 
 	if got := sdb.GetCode(addr); len(got) != 0 {
 		t.Fatalf("coordinator installed before fork: %x", got)
 	}
 
-	// Block 2: exact activation boundary.
+	// Block 4: exact activation boundary.
 	parent1 := &types.Header{
-		Number: big.NewInt(1),
-		Time:   10,
+		Number: big.NewInt(3),
+		Time:   30,
 	}
 
 	PreExecution(
@@ -167,8 +168,8 @@ func TestRabbitVRFCoordinatorV1PreExecutionActivationBoundary(t *testing.T) {
 		parent1,
 		config,
 		evm,
-		big.NewInt(2),
-		20,
+		big.NewInt(4),
+		40,
 	)
 
 	if got := sdb.GetCode(addr); !bytes.Equal(got, params.RabbitVRFCoordinatorV1Code) {
@@ -178,10 +179,10 @@ func TestRabbitVRFCoordinatorV1PreExecutionActivationBoundary(t *testing.T) {
 	// Simulate protocol storage written after installation.
 	sdb.SetState(addr, slot, value)
 
-	// Block 3: already active. The installer must NOT run again.
+	// Block 5: already active. The installer must NOT run again.
 	parent2 := &types.Header{
-		Number: big.NewInt(2),
-		Time:   20,
+		Number: big.NewInt(4),
+		Time:   40,
 	}
 
 	PreExecution(
@@ -190,8 +191,8 @@ func TestRabbitVRFCoordinatorV1PreExecutionActivationBoundary(t *testing.T) {
 		parent2,
 		config,
 		evm,
-		big.NewInt(3),
-		30,
+		big.NewInt(5),
+		50,
 	)
 
 	if got := sdb.GetState(addr, slot); got != value {
@@ -204,7 +205,7 @@ func TestRabbitVRFCoordinatorV1PreExecutionActivationBoundary(t *testing.T) {
 }
 
 func TestRabbitVRFCoordinatorV1ChainMakerActivationBoundary(t *testing.T) {
-	config := rabbitVRFTestConfig(2)
+	config := rabbitVRFTestConfig(4)
 
 	addr := params.RabbitVRFCoordinatorV1Address
 	slot := common.HexToHash("0x5678")
@@ -217,14 +218,14 @@ func TestRabbitVRFCoordinatorV1ChainMakerActivationBoundary(t *testing.T) {
 	_, blocks, _ := GenerateChainWithGenesis(
 		genesis,
 		ethash.NewFaker(),
-		3,
+		5,
 		func(i int, b *BlockGen) {
 			number := b.Number().Uint64()
 
 			switch number {
-			case 1:
+			case 3:
 				if got := b.statedb.GetCode(addr); len(got) != 0 {
-					t.Fatalf("block 1: coordinator installed before fork: %x", got)
+					t.Fatalf("block 3: coordinator installed before fork: %x", got)
 				}
 
 				rabbitVRFTestSetPair(
@@ -235,9 +236,9 @@ func TestRabbitVRFCoordinatorV1ChainMakerActivationBoundary(t *testing.T) {
 					0,
 				)
 
-			case 2:
+			case 4:
 				if got := b.statedb.GetCode(addr); !bytes.Equal(got, params.RabbitVRFCoordinatorV1Code) {
-					t.Fatal("block 2: coordinator not installed at activation")
+					t.Fatal("block 4: coordinator not installed at activation")
 				}
 
 				if got := b.statedb.GetState(
@@ -245,16 +246,16 @@ func TestRabbitVRFCoordinatorV1ChainMakerActivationBoundary(t *testing.T) {
 					common.Hash{},
 				); got != common.BigToHash(big.NewInt(1)) {
 					t.Fatalf(
-						"block 2: oracle observation missing: got %s want 0x1",
+						"block 4: oracle observation missing: got %s want 0x1",
 						got,
 					)
 				}
 
 				b.statedb.SetState(addr, slot, value)
 
-			case 3:
+			case 5:
 				if got := b.statedb.GetCode(addr); !bytes.Equal(got, params.RabbitVRFCoordinatorV1Code) {
-					t.Fatal("block 3: coordinator code missing")
+					t.Fatal("block 5: coordinator code missing")
 				}
 
 				if got := b.statedb.GetState(
@@ -262,19 +263,19 @@ func TestRabbitVRFCoordinatorV1ChainMakerActivationBoundary(t *testing.T) {
 					common.Hash{},
 				); got != common.BigToHash(big.NewInt(1)) {
 					t.Fatalf(
-						"block 3: oracle observation changed unexpectedly: got %s want 0x1",
+						"block 5: oracle observation changed unexpectedly: got %s want 0x1",
 						got,
 					)
 				}
 
 				if got := b.statedb.GetState(addr, slot); got != value {
-					t.Fatalf("block 3: coordinator storage was reset: got %s want %s", got, value)
+					t.Fatalf("block 5: coordinator storage was reset: got %s want %s", got, value)
 				}
 			}
 		},
 	)
 
-	if len(blocks) != 3 {
-		t.Fatalf("generated %d blocks, want 3", len(blocks))
+	if len(blocks) != 5 {
+		t.Fatalf("generated %d blocks, want 5", len(blocks))
 	}
 }

@@ -975,9 +975,9 @@ func TestRabbitVRFProtocolFeeWarmupAndStale(
 		)
 	}
 
-	if fee.Cmp(big.NewInt(20_000)) != 0 {
+	if fee.Cmp(big.NewInt(2_000)) != 0 {
 		t.Fatalf(
-			"exact-window fee = %s, want 20000",
+			"exact-window fee = %s, want 2000",
 			fee,
 		)
 	}
@@ -994,9 +994,9 @@ func TestRabbitVRFProtocolFeeWarmupAndStale(
 		)
 	}
 
-	if fee.Cmp(big.NewInt(20_000)) != 0 {
+	if fee.Cmp(big.NewInt(2_000)) != 0 {
 		t.Fatalf(
-			"boundary fee = %s, want 20000",
+			"boundary fee = %s, want 2000",
 			fee,
 		)
 	}
@@ -1055,9 +1055,9 @@ func TestRabbitVRFProtocolFeeRecoveryNeedsNewWindow(
 		)
 	}
 
-	if fee.Cmp(big.NewInt(20_000)) != 0 {
+	if fee.Cmp(big.NewInt(2_000)) != 0 {
 		t.Fatalf(
-			"pre-outage fee = %s, want 20000",
+			"pre-outage fee = %s, want 2000",
 			fee,
 		)
 	}
@@ -1133,9 +1133,9 @@ func TestRabbitVRFProtocolFeeRecoveryNeedsNewWindow(
 		)
 	}
 
-	if fee.Cmp(big.NewInt(20_000)) != 0 {
+	if fee.Cmp(big.NewInt(2_000)) != 0 {
 		t.Fatalf(
-			"recovered fee = %s, want 20000",
+			"recovered fee = %s, want 2000",
 			fee,
 		)
 	}
@@ -1222,7 +1222,7 @@ func TestRabbitVRFProtocolFeeUsesNewestValidBaseline(
 		)
 	}
 
-	if fee.Cmp(big.NewInt(200)) != 0 {
+	if fee.Cmp(big.NewInt(20)) != 0 {
 		t.Fatalf(
 			"newest-baseline fee = %s, want 200",
 			fee,
@@ -1279,7 +1279,7 @@ func TestRabbitVRFProtocolFeeRoundsUp(
 	)
 
 	numerator := new(big.Int).Mul(
-		big.NewInt(10_000),
+		big.NewInt(1_000),
 		priceX112,
 	)
 
@@ -1300,9 +1300,9 @@ func TestRabbitVRFProtocolFeeRoundsUp(
 		)
 	}
 
-	if fee.Cmp(big.NewInt(3334)) != 0 {
+	if fee.Cmp(big.NewInt(334)) != 0 {
 		t.Fatalf(
-			"rounded fee = %s, want 3334",
+			"rounded fee = %s, want 334",
 			fee,
 		)
 	}
@@ -1351,7 +1351,7 @@ func TestRabbitVRFProtocolFeeUint256WrapAnd512BitMulDiv(
 	)
 
 	numerator := new(big.Int).Mul(
-		big.NewInt(10_000),
+		big.NewInt(1_000),
 		delta,
 	)
 
@@ -1576,9 +1576,9 @@ func TestRabbitVRFRequestFeeQuote(
 		)
 	}
 
-	if requestFee.Cmp(big.NewInt(20_000)) != 0 {
+	if requestFee.Cmp(big.NewInt(2_000)) != 0 {
 		t.Fatalf(
-			"request fee = %s, want 20000",
+			"request fee = %s, want 2000",
 			requestFee,
 		)
 	}
@@ -1880,7 +1880,7 @@ func TestRabbitVRFRequestRandomnessStateAndReverts(
 			caller,
 			0,
 			appDataHash,
-			20_000,
+			2_000,
 		)
 		if err != nil {
 			t.Fatalf(
@@ -2015,9 +2015,9 @@ func TestRabbitVRFRequestRandomnessStateAndReverts(
 			}
 		}
 
-		if got := new(big.Int).SetBytes(word(6)).Uint64(); got != 20_000 {
+		if got := new(big.Int).SetBytes(word(6)).Uint64(); got != 2_000 {
 			t.Fatalf(
-				"stored feePaid = %d, want 20000",
+				"stored feePaid = %d, want 2000",
 				got,
 			)
 		}
@@ -2051,18 +2051,18 @@ func TestRabbitVRFRequestRandomnessStateAndReverts(
 			)
 		}
 
-		if got := sdb.GetBalance(caller).Uint64(); got != 980_000 {
+		if got := sdb.GetBalance(caller).Uint64(); got != 998_000 {
 			t.Fatalf(
-				"caller balance = %d, want 980000",
+				"caller balance = %d, want 998000",
 				got,
 			)
 		}
 
 		if got := sdb.GetBalance(
 			params.RabbitVRFCoordinatorV1Address,
-		).Uint64(); got != 20_000 {
+		).Uint64(); got != 2_000 {
 			t.Fatalf(
-				"coordinator balance = %d, want 20000",
+				"coordinator balance = %d, want 2000",
 				got,
 			)
 		}
@@ -2142,7 +2142,7 @@ func TestRabbitVRFRequestRandomnessConsecutiveAndEvents(
 		caller,
 		0,
 		appDataHash,
-		20_000,
+		2_000,
 	)
 	if err != nil {
 		t.Fatalf(
@@ -2157,7 +2157,7 @@ func TestRabbitVRFRequestRandomnessConsecutiveAndEvents(
 		caller,
 		0,
 		appDataHash,
-		20_000,
+		2_000,
 	)
 	if err != nil {
 		t.Fatalf(
@@ -2252,9 +2252,9 @@ func TestRabbitVRFRequestRandomnessConsecutiveAndEvents(
 			)
 		}
 
-		if got := new(big.Int).SetBytes(word(6)).Uint64(); got != 20_000 {
+		if got := new(big.Int).SetBytes(word(6)).Uint64(); got != 2_000 {
 			t.Fatalf(
-				"request %d feePaid = %d, want 20000",
+				"request %d feePaid = %d, want 2000",
 				index,
 				got,
 			)
@@ -2386,27 +2386,27 @@ func TestRabbitVRFRequestRandomnessConsecutiveAndEvents(
 
 		if got := new(big.Int).SetBytes(
 			log.Data[64:96],
-		).Uint64(); got != 20_000 {
+		).Uint64(); got != 2_000 {
 			t.Fatalf(
-				"log %d feePaid = %d, want 20000",
+				"log %d feePaid = %d, want 2000",
 				index,
 				got,
 			)
 		}
 	}
 
-	if got := sdb.GetBalance(caller).Uint64(); got != 960_000 {
+	if got := sdb.GetBalance(caller).Uint64(); got != 996_000 {
 		t.Fatalf(
-			"caller balance = %d, want 960000",
+			"caller balance = %d, want 996000",
 			got,
 		)
 	}
 
 	if got := sdb.GetBalance(
 		params.RabbitVRFCoordinatorV1Address,
-	).Uint64(); got != 40_000 {
+	).Uint64(); got != 4_000 {
 		t.Fatalf(
-			"coordinator balance = %d, want 40000",
+			"coordinator balance = %d, want 4000",
 			got,
 		)
 	}

@@ -20,7 +20,7 @@ contract RabbitVRFCoordinatorV1 {
 
     uint256 public constant VERSION = 1;
 
-    uint256 public constant VRF_BASE_FEE_TRUSD_BASE_UNITS = 10_000;
+    uint256 public constant VRF_BASE_FEE_TRUSD_BASE_UNITS = 1_000;
     uint256 public constant TWAP_MIN_WINDOW_SECONDS = 1_800;
     uint256 public constant TWAP_OBSERVATION_CADENCE_SECONDS = 300;
     uint256 public constant TWAP_MAX_AGE_SECONDS = 3_600;

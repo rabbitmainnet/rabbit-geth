@@ -1912,3 +1912,55 @@ remaining VRF lifecycle are validated.
 
 Batching is a V1 architecture requirement, but maximum batch size remains open
 until gas/state/throughput/adversarial measurements are complete.
+
+### Volume-first economics implementation checkpoint
+
+Rabbit VRF Testnet V1 economics are now implemented and tested with:
+
+    base service price = 0.001 tRUSD per request
+    VRF_BASE_FEE_TRUSD_BASE_UNITS = 1_000
+    Producer = 30%
+    VRF Committee = 50%
+    Rabbit Allocation = 20%
+
+The Mainnet launch target currently uses the same numeric economics, but
+Mainnet economics remain subject to a final market/economic review before
+Mainnet genesis and activation.
+
+After Mainnet activation, protocol-economic changes require an explicit fork.
+
+Coordinator source and compiled runtime bytecode were rebuilt using the pinned
+contracts/rabbitvrf/compile.sh compiler configuration.
+
+The predeploy runtime in params.RabbitVRFCoordinatorV1Code was updated to the
+new compiled runtime.
+
+Rabbit VRF pricing/request tests were updated for the 10x lower base fee.
+
+The Coordinator runtime remains 5080 bytes with Keccak-256:
+
+    0xfc4f7e4e983b299c0f03c388c64920a123312f6bde669f0e5787551cd8e97cba
+
+VRF activation-boundary tests now use a valid epoch-aligned test configuration:
+
+    EpochLength = 1
+    VRFProtocolBlock = 4
+
+This preserves the rule that VRF epoch 4 is the earliest valid target epoch.
+
+Rabbit VRF remains disabled on the public Testnet.
+
+Exact next implementation step:
+
+Return to the canonical-head DKG runtime and implement the smallest safe secret
+transport-key slice: explicit dedicated credential source, private storage under
+the node instance directory, sync/readiness gate, exact lifecycle matching,
+load-before-create behavior, fail-closed corruption/password handling, P2P key
+separation, restart/race tests, and no P2P publication yet.
+
+Resume instruction:
+
+Leia docs/consensus/rabbit-vrf-testnet-handoff.md, confira o HEAD e o git status
+sem apagar nenhuma alteração, e continue do "Exact next implementation step".
+Estamos no worktree ~/projects/rabbit-geth-vrf e Rabbit VRF continua desativado
+na Testnet pública.
