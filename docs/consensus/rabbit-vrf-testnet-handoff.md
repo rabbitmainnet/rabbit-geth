@@ -1371,19 +1371,129 @@ Validation passed:
 
 Rabbit VRF activation remains disabled.
 
-Exact next implementation step:
+## Canonical runtime bridge + preactivation DKG checkpoint
 
-Wire the bridge into the canonical production runtime without introducing a second
-DatasetKey path. Resolve the source Work snapshot and the canonical dataset-anchor
-header from the existing Work runtime/chain context, derive the DatasetKey with
-`RandomXWorkDatasetKeyV1`, and invoke `RabbitVRFDKGBridgeForSnapshotV1` through
-the existing deterministic selection-beacon hasher path.
+Completed at:
 
-Before editing runtime code, inspect the exact production call sites that already
-resolve `WorkDatasetAnchorBlockV1`, canonical ancestor headers, cached selection
-beacon hashing, and `SelectionSnapshotV1`. Do not derive DatasetKey from
-`WorkEpochSnapshotV1.Anchor`.
+`13c5112f2 feat(rabbitvrf): wire canonical dkg runtime bridge`
 
-While Rabbit VRF remains disabled, this wiring MUST NOT create transport keys,
-read VRF credentials, publish DKG messages, or introduce any P2P/runtime side
-effects.
+The canonical LQC Work runtime now exposes
+`RabbitVRFDKGBridgeContextV1`.
+
+The runtime bridge:
+
+- resolves the validated CLOSED Work selection snapshot;
+- resolves the RandomX dataset anchor through the parent branch;
+- derives `RandomXWorkDatasetKeyV1` from the canonical ancestor header;
+- reuses the existing cached Work selection-beacon hasher;
+- derives the deterministic Rabbit VRF committee and immutable ShareIDs;
+- derives source Work epoch, DKG preparation epoch and target VRF epoch;
+- derives the canonical DKG SessionID;
+- remains read-only and does not create transport keys or publish messages.
+
+Tests cover:
+
+- disabled configuration with no runtime side effects;
+- canonical Work runtime construction;
+- parent-branch dataset-anchor correctness across a fork/reorg fixture.
+
+Validation passed with the pinned Rabbit RandomX build:
+
+- targeted Rabbit VRF runtime bridge tests;
+- full `consensus/lqc` suite with
+  `rabbit_workv1 rabbit_randomx`;
+- `git diff --check`.
+
+## Rabbit VRF preactivation DKG window checkpoint
+
+Completed at:
+
+`d57bb77d7 feat(rabbitvrf): derive preactivation dkg window`
+
+Rabbit VRF keeps one public fork parameter:
+
+    VRFProtocolBlock
+
+Semantics are now frozen as:
+
+    VRFProtocolBlock == 0
+        => Rabbit VRF disabled
+        => DKG preparation disabled
+
+    VRFProtocolBlock > 0
+        => VRFProtocolBlock is the first Rabbit VRF-active block
+
+The activation block MUST be the first block of a Work epoch and MUST target
+VRF epoch 4 or later.
+
+The initial DKG preparation gate is derived automatically from the same fork:
+
+    DKGPreparationBlock =
+        VRFProtocolBlock - EpochLength
+
+No second public DKG fork parameter is introduced.
+
+For epochLength=128 and VRFProtocolBlock=385:
+
+    blocks <= 256
+        DKG preparation disabled
+        Rabbit VRF disabled
+
+    blocks 257..384
+        DKG preparation enabled
+        Rabbit VRF still disabled
+
+    block 385+
+        Rabbit VRF active
+
+`IsRabbitVRFDKGPreparation` is separate from `IsRabbitVRF`.
+
+`RabbitVRFDKGBridgeContextV1` uses the preparation gate, allowing the first
+committee ceremony to be prepared during the Work epoch immediately before
+Rabbit VRF activation.
+
+The normal Rabbit VRF protocol gate continues to protect coordinator
+activation, pricing observations and other VRF-active behavior.
+
+Validation passed:
+
+- full `go test ./params -count=1`;
+- full `go test -tags="rabbit_workv1 rabbit_randomx" ./consensus/lqc -count=1`;
+- `git diff --check`.
+
+The public Rabbit Testnet still has no Rabbit VRF activation block configured.
+Rabbit VRF therefore remains disabled.
+
+## Exact next implementation step
+
+Implement the Rabbit VRF DKG runtime lifecycle that consumes the already
+canonical `RabbitVRFDKGBridgeContextV1` during the preparation window.
+
+Before editing lifecycle code, inspect the existing DKG session, transport,
+persistent-state and keyset structures and identify the smallest canonical
+runtime insertion point.
+
+The first lifecycle slice MUST remain deterministic and bounded:
+
+1. detect the canonical preparation session from
+   `RabbitVRFDKGBridgeContextV1`;
+2. create or resume exactly that SessionID;
+3. never retarget an existing session after restart or reorg;
+4. never create a DKG runtime when `IsRabbitVRFDKGPreparation` is false;
+5. keep transport-key creation, credential reads and P2P publication behind
+   explicit lifecycle phases;
+6. preserve crash-safe persisted state;
+7. do not activate a target keyset until qualification rules are satisfied.
+
+Still required after this lifecycle slice:
+
+- confidential DKG P2P transport runtime;
+- replay and duplicate handling;
+- complaint evidence and dealer qualification;
+- transcript aggregation;
+- final qualified-keyset activation;
+- failed-ceremony/old-key continuity rules;
+- threshold signing and canonical fulfillment;
+- restart, sync, reorg and multinode testing;
+- callbacks, economics, observability, documentation and release validation;
+- final public Testnet activation block selection only after all of the above.
