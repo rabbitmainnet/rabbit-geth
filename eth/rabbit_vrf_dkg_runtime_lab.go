@@ -5,6 +5,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -21,26 +23,31 @@ var errRabbitVRFDKGRuntimeV1 = errors.New(
 )
 
 type rabbitVRFDKGLocalContextV1 struct {
-	HeadNumber       uint64
-	HeadHash         common.Hash
-	SessionID        common.Hash
-	SourceWorkEpoch  uint64
-	PreparationEpoch uint64
-	TargetVRFEpoch   uint64
-	Members          []lqc.RabbitVRFCommitteeMemberV1
+	HeadNumber        uint64
+	HeadHash          common.Hash
+	SessionID         common.Hash
+	SourceWorkEpoch   uint64
+	PreparationEpoch  uint64
+	TargetVRFEpoch    uint64
+	Members           []lqc.RabbitVRFCommitteeMemberV1
+	TransportBindings []lqc.RabbitVRFDKGTransportKeyBindingV1
 }
 
-// rabbitVRFDKGRuntime owns only local, non-consensus DKG observation state.
+// rabbitVRFDKGRuntime owns local, non-consensus DKG runtime state.
 //
-// At this stage it deliberately performs no:
-//   - password reads;
-//   - transport-key generation;
+// For canonical local committee members, the secret-ready path may read the
+// explicit DKG password file and load or create an encrypted transport key.
+// Only the public transport binding is retained in runtime state.
+//
+// It still deliberately performs no:
 //   - wallet signing;
 //   - private evaluation generation;
 //   - P2P publication.
 type rabbitVRFDKGRuntime struct {
 	backend *Ethereum
 	engine  *lqc.LQC
+
+	secretGate sync.RWMutex
 
 	mu          sync.RWMutex
 	started     bool
@@ -152,11 +159,74 @@ func cloneRabbitVRFDKGMembersV1(
 	return out
 }
 
+func cloneRabbitVRFDKGTransportBindingsV1(
+	bindings []lqc.RabbitVRFDKGTransportKeyBindingV1,
+) []lqc.RabbitVRFDKGTransportKeyBindingV1 {
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	out := make(
+		[]lqc.RabbitVRFDKGTransportKeyBindingV1,
+		len(bindings),
+	)
+	copy(out, bindings)
+	return out
+}
+
+func (runtime *rabbitVRFDKGRuntime) setTransportBindingsV1(
+	sessionID common.Hash,
+	bindings []lqc.RabbitVRFDKGTransportKeyBindingV1,
+) bool {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	if runtime.current.SessionID != sessionID {
+		return false
+	}
+
+	runtime.current.TransportBindings =
+		cloneRabbitVRFDKGTransportBindingsV1(bindings)
+
+	return true
+}
+
+func (runtime *rabbitVRFDKGRuntime) transportBindingsReadyV1(
+	sessionID common.Hash,
+	members []lqc.RabbitVRFCommitteeMemberV1,
+) bool {
+	runtime.mu.RLock()
+	defer runtime.mu.RUnlock()
+
+	bindings := runtime.current.TransportBindings
+	if runtime.current.SessionID != sessionID ||
+		len(bindings) != len(members) ||
+		len(bindings) == 0 {
+		return false
+	}
+
+	for index := range members {
+		if bindings[index].SessionID != sessionID ||
+			bindings[index].ShareID != members[index].ShareID ||
+			bindings[index].Participant != members[index].Participant {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (runtime *rabbitVRFDKGRuntime) setCurrent(
 	context rabbitVRFDKGLocalContextV1,
 ) common.Hash {
 	runtime.mu.Lock()
 	previous := runtime.current.SessionID
+	if previous == context.SessionID {
+		context.TransportBindings =
+			cloneRabbitVRFDKGTransportBindingsV1(
+				runtime.current.TransportBindings,
+			)
+	}
 	context.Members = cloneRabbitVRFDKGMembersV1(
 		context.Members,
 	)
@@ -178,6 +248,10 @@ func (runtime *rabbitVRFDKGRuntime) currentContext() rabbitVRFDKGLocalContextV1 
 	context.Members = cloneRabbitVRFDKGMembersV1(
 		context.Members,
 	)
+	context.TransportBindings =
+		cloneRabbitVRFDKGTransportBindingsV1(
+			context.TransportBindings,
+		)
 	runtime.mu.RUnlock()
 
 	return context
@@ -187,6 +261,9 @@ func (runtime *rabbitVRFDKGRuntime) setSyncingV1(syncing bool) {
 	if runtime == nil {
 		return
 	}
+
+	runtime.secretGate.Lock()
+	defer runtime.secretGate.Unlock()
 
 	runtime.mu.Lock()
 	runtime.syncing = syncing
@@ -206,6 +283,55 @@ func (runtime *rabbitVRFDKGRuntime) secretReadyV1() bool {
 	runtime.mu.RUnlock()
 
 	return ready
+}
+
+func (runtime *rabbitVRFDKGRuntime) beginSecretOperationV1() bool {
+	if runtime == nil {
+		return false
+	}
+
+	var downloaderGuard bool
+
+	if runtime.backend != nil {
+		if runtime.backend.handler == nil ||
+			runtime.backend.handler.downloader == nil {
+			return false
+		}
+		if !runtime.backend.handler.downloader.TryAcquireSyncIdleGuard() {
+			return false
+		}
+		downloaderGuard = true
+	}
+
+	runtime.secretGate.RLock()
+
+	runtime.mu.RLock()
+	ready := runtime.secretReady && !runtime.syncing
+	runtime.mu.RUnlock()
+
+	if !ready {
+		runtime.secretGate.RUnlock()
+		if downloaderGuard {
+			runtime.backend.handler.downloader.ReleaseSyncIdleGuard()
+		}
+		return false
+	}
+
+	return true
+}
+
+func (runtime *rabbitVRFDKGRuntime) endSecretOperationV1() {
+	if runtime == nil {
+		return
+	}
+
+	runtime.secretGate.RUnlock()
+
+	if runtime.backend != nil &&
+		runtime.backend.handler != nil &&
+		runtime.backend.handler.downloader != nil {
+		runtime.backend.handler.downloader.ReleaseSyncIdleGuard()
+	}
 }
 
 // refreshSecretReadyV1 returns true only when the runtime transitions from
@@ -249,6 +375,111 @@ func (runtime *rabbitVRFDKGRuntime) refreshSecretReadyV1() bool {
 	runtime.mu.Unlock()
 
 	return ready && !previous
+}
+
+func (runtime *rabbitVRFDKGRuntime) ensureTransportBindingsV1(
+	bridge lqc.RabbitVRFDKGBridgeV1,
+	members []lqc.RabbitVRFCommitteeMemberV1,
+) error {
+	if runtime == nil || runtime.backend == nil {
+		return errRabbitVRFDKGRuntimeV1
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	if runtime.transportBindingsReadyV1(
+		bridge.SessionID,
+		members,
+	) {
+		return nil
+	}
+
+	if !runtime.beginSecretOperationV1() {
+		return nil
+	}
+	defer runtime.endSecretOperationV1()
+
+	// Recheck after entering the full anti-TOCTOU gate.
+	if runtime.transportBindingsReadyV1(
+		bridge.SessionID,
+		members,
+	) {
+		return nil
+	}
+
+	if runtime.backend.config == nil ||
+		runtime.backend.vrfDKGInstanceDir == "" ||
+		runtime.backend.p2pServer == nil ||
+		runtime.backend.p2pServer.PrivateKey == nil {
+		return errRabbitVRFDKGRuntimeV1
+	}
+
+	password, err :=
+		readRabbitVRFDKGPasswordFileV1(
+			runtime.backend.config.RabbitVRFDKGPasswordFile,
+		)
+	if err != nil {
+		return fmt.Errorf(
+			"read rabbit vrf dkg password file: %w",
+			err,
+		)
+	}
+
+	store, err :=
+		rabbitvrfstate.NewStandardDKGTransportKeyStoreV1(
+			filepath.Join(
+				runtime.backend.vrfDKGInstanceDir,
+				"rabbit-vrf",
+				"dkg-transport",
+			),
+		)
+	if err != nil {
+		return fmt.Errorf(
+			"open rabbit vrf dkg transport store: %w",
+			err,
+		)
+	}
+
+	bindings := make(
+		[]lqc.RabbitVRFDKGTransportKeyBindingV1,
+		0,
+		len(members),
+	)
+
+	for _, member := range members {
+		binding, err :=
+			rabbitVRFDKGLoadOrCreateTransportBindingV1(
+				store,
+				bridge.Session,
+				member,
+				password,
+				runtime.backend.p2pServer.PrivateKey,
+			)
+		if err != nil {
+			return fmt.Errorf(
+				"prepare rabbit vrf dkg transport key share %d: %w",
+				member.ShareID,
+				err,
+			)
+		}
+
+		bindings = append(bindings, binding)
+	}
+
+	if !runtime.setTransportBindingsV1(
+		bridge.SessionID,
+		bindings,
+	) {
+		return errRabbitVRFDKGRuntimeV1
+	}
+
+	log.Info(
+		"Rabbit VRF DKG local transport bindings ready",
+		"session", bridge.SessionID,
+		"bindings", len(bindings),
+	)
+
+	return nil
 }
 
 func (runtime *rabbitVRFDKGRuntime) processCurrentHead() error {
@@ -353,6 +584,16 @@ func (runtime *rabbitVRFDKGRuntime) processCurrentHead() error {
 				"shareID", member.ShareID,
 			)
 		}
+	}
+
+	if err := runtime.ensureTransportBindingsV1(
+		bridge,
+		members,
+	); err != nil {
+		return fmt.Errorf(
+			"prepare local rabbit vrf dkg transport bindings: %w",
+			err,
+		)
 	}
 
 	return nil

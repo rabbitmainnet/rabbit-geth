@@ -121,6 +121,7 @@ type Downloader struct {
 	badBlock badBlockFn // Reports a block as rejected by the chain
 
 	// Status
+	syncIdleGate  sync.RWMutex
 	synchronising atomic.Bool
 	notified      atomic.Bool
 	committed     atomic.Bool
@@ -377,7 +378,13 @@ func (d *Downloader) synchronise(beaconPing chan struct{}) (err error) {
 	if !d.synchronising.CompareAndSwap(false, true) {
 		return errBusy
 	}
-	defer d.synchronising.Store(false)
+
+	// Block new idle guards before synchronization performs any work.
+	d.syncIdleGate.Lock()
+	defer func() {
+		d.synchronising.Store(false)
+		d.syncIdleGate.Unlock()
+	}()
 
 	// Post a user notification of the sync (only once per session)
 	if d.notified.CompareAndSwap(false, true) {
@@ -447,6 +454,26 @@ func (d *Downloader) getMode() SyncMode {
 // The actual running sync mode can differ from this.
 func (d *Downloader) ConfigSyncMode() SyncMode {
 	return d.moder.get(false)
+}
+
+// TryAcquireSyncIdleGuard prevents a caller from starting local secret work
+// while downloader synchronization is active or waiting to begin.
+func (d *Downloader) TryAcquireSyncIdleGuard() bool {
+	if d == nil || !d.syncIdleGate.TryRLock() {
+		return false
+	}
+	if d.synchronising.Load() {
+		d.syncIdleGate.RUnlock()
+		return false
+	}
+	return true
+}
+
+// ReleaseSyncIdleGuard releases a successful TryAcquireSyncIdleGuard.
+func (d *Downloader) ReleaseSyncIdleGuard() {
+	if d != nil {
+		d.syncIdleGate.RUnlock()
+	}
 }
 
 // SubscribeSyncEvents creates a subscription for downloader sync events

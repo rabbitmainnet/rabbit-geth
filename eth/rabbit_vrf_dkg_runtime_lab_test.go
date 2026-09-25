@@ -5,6 +5,7 @@ package eth
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
@@ -182,5 +183,150 @@ func TestRabbitVRFDKGRuntimeV1RejectsDuplicateParticipant(
 			err,
 			errRabbitVRFDKGRuntimeV1,
 		)
+	}
+}
+
+func TestRabbitVRFDKGRuntimeV1SecretGateBlocksSyncTransition(
+	t *testing.T,
+) {
+	runtime := &rabbitVRFDKGRuntime{
+		secretReady: true,
+	}
+
+	if !runtime.beginSecretOperationV1() {
+		t.Fatal("secret operation did not enter while ready")
+	}
+
+	started := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		close(started)
+		runtime.setSyncingV1(true)
+		close(done)
+	}()
+
+	<-started
+
+	select {
+	case <-done:
+		runtime.endSecretOperationV1()
+		t.Fatal("sync transition crossed active secret operation")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	runtime.endSecretOperationV1()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sync transition did not complete after secret operation")
+	}
+
+	if runtime.secretReadyV1() {
+		t.Fatal("secret readiness remained open after sync started")
+	}
+
+	if runtime.beginSecretOperationV1() {
+		runtime.endSecretOperationV1()
+		t.Fatal("secret operation entered while syncing")
+	}
+}
+
+func TestRabbitVRFDKGRuntimeV1NoLocalMembersSkipSecretIO(
+	t *testing.T,
+) {
+	runtime := &rabbitVRFDKGRuntime{
+		backend: &Ethereum{},
+	}
+
+	err := runtime.ensureTransportBindingsV1(
+		lqc.RabbitVRFDKGBridgeV1{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf(
+			"zero local members touched secret runtime: %v",
+			err,
+		)
+	}
+}
+
+func TestRabbitVRFDKGRuntimeV1PreservesTransportBindingsSameSession(
+	t *testing.T,
+) {
+	bridge := lqc.RabbitVRFDKGBridgeV1{}
+	bridge.SessionID[0] = 1
+
+	member := lqc.RabbitVRFCommitteeMemberV1{ShareID: 7}
+	member.Participant[0] = 2
+
+	binding := lqc.RabbitVRFDKGTransportKeyBindingV1{
+		SessionID:   bridge.SessionID,
+		ShareID:     member.ShareID,
+		Participant: member.Participant,
+	}
+
+	runtime := &rabbitVRFDKGRuntime{
+		current: rabbitVRFDKGLocalContextV1{
+			SessionID:         bridge.SessionID,
+			Members:           []lqc.RabbitVRFCommitteeMemberV1{member},
+			TransportBindings: []lqc.RabbitVRFDKGTransportKeyBindingV1{binding},
+		},
+	}
+
+	runtime.setCurrent(
+		rabbitVRFDKGLocalContextV1{
+			HeadNumber: 2,
+			SessionID:  bridge.SessionID,
+			Members:    []lqc.RabbitVRFCommitteeMemberV1{member},
+		},
+	)
+
+	got := runtime.currentContext()
+	if len(got.TransportBindings) != 1 {
+		t.Fatalf("transport bindings=%d want=1", len(got.TransportBindings))
+	}
+	if got.TransportBindings[0] != binding {
+		t.Fatal("transport binding was not preserved across same-session head")
+	}
+	if !runtime.transportBindingsReadyV1(bridge.SessionID, []lqc.RabbitVRFCommitteeMemberV1{member}) {
+		t.Fatal("preserved transport binding is not recognized as ready")
+	}
+}
+
+func TestRabbitVRFDKGRuntimeV1DropsTransportBindingsOnSessionChange(
+	t *testing.T,
+) {
+	oldSession := common.Hash{1}
+	newSession := common.Hash{2}
+
+	member := lqc.RabbitVRFCommitteeMemberV1{ShareID: 7}
+	member.Participant[0] = 3
+
+	binding := lqc.RabbitVRFDKGTransportKeyBindingV1{
+		SessionID:   oldSession,
+		ShareID:     member.ShareID,
+		Participant: member.Participant,
+	}
+
+	runtime := &rabbitVRFDKGRuntime{
+		current: rabbitVRFDKGLocalContextV1{
+			SessionID:         oldSession,
+			Members:           []lqc.RabbitVRFCommitteeMemberV1{member},
+			TransportBindings: []lqc.RabbitVRFDKGTransportKeyBindingV1{binding},
+		},
+	}
+
+	runtime.setCurrent(
+		rabbitVRFDKGLocalContextV1{
+			SessionID: newSession,
+			Members:   []lqc.RabbitVRFCommitteeMemberV1{member},
+		},
+	)
+
+	got := runtime.currentContext()
+	if len(got.TransportBindings) != 0 {
+		t.Fatalf("stale transport bindings survived session change: %d", len(got.TransportBindings))
 	}
 }
