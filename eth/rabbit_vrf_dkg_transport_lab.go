@@ -17,17 +17,19 @@ import (
 const (
 	rabbitVRFDKGProtocolName    = "rvrfdkg"
 	rabbitVRFDKGProtocolVersion = uint(1)
-	rabbitVRFDKGProtocolLength  = uint64(1)
+	rabbitVRFDKGProtocolLength  = uint64(2)
 
-	rabbitVRFDKGStatusMsg = uint64(0)
+	rabbitVRFDKGStatusMsg            = uint64(0)
+	rabbitVRFDKGTransportArtifactMsg = uint64(1)
 
 	rabbitVRFDKGHandshakeTimeout = 5 * time.Second
 	rabbitVRFDKGMaxMessageSize   = 16 * 1024
 )
 
 var (
-	errRabbitVRFDKGProtocolClosed = errors.New("rabbit vrf dkg protocol closed")
-	errRabbitVRFDKGPeerKnown      = errors.New("rabbit vrf dkg peer already connected")
+	errRabbitVRFDKGProtocolClosed   = errors.New("rabbit vrf dkg protocol closed")
+	errRabbitVRFDKGPeerKnown        = errors.New("rabbit vrf dkg peer already connected")
+	errRabbitVRFDKGArtifactConflict = errors.New("rabbit vrf dkg transport artifact conflict")
 )
 
 type rabbitVRFDKGStatusPacket struct {
@@ -41,20 +43,30 @@ type rabbitVRFDKGStatusPacket struct {
 	ChainID             *big.Int
 }
 
+type rabbitVRFDKGTransportArtifactPacketV1 struct {
+	Binding  lqc.RabbitVRFDKGTransportKeyBindingV1
+	Envelope lqc.RabbitVRFDKGEnvelopeV1
+}
+
 type rabbitVRFDKGTransportConfig struct {
 	ChainID   *big.Int
 	NetworkID uint64
 	Genesis   common.Hash
+	Runtime   *rabbitVRFDKGRuntime
 }
 
 type rabbitVRFDKGTransport struct {
 	chainID   *big.Int
 	networkID uint64
 	genesis   common.Hash
+	runtime   *rabbitVRFDKGRuntime
 
 	mu     sync.RWMutex
 	peers  map[string]*rabbitVRFDKGPeer
 	closed bool
+
+	remoteSession   common.Hash
+	remoteArtifacts map[uint64]rabbitVRFDKGTransportArtifactPacketV1
 }
 
 type rabbitVRFDKGPeer struct {
@@ -76,10 +88,12 @@ func newRabbitVRFDKGTransport(
 	}
 
 	return &rabbitVRFDKGTransport{
-		chainID:   new(big.Int).Set(config.ChainID),
-		networkID: config.NetworkID,
-		genesis:   config.Genesis,
-		peers:     make(map[string]*rabbitVRFDKGPeer),
+		chainID:         new(big.Int).Set(config.ChainID),
+		networkID:       config.NetworkID,
+		genesis:         config.Genesis,
+		runtime:         config.Runtime,
+		peers:           make(map[string]*rabbitVRFDKGPeer),
+		remoteArtifacts: make(map[uint64]rabbitVRFDKGTransportArtifactPacketV1),
 	}, nil
 }
 
@@ -108,6 +122,7 @@ func newRabbitVRFDKGTransportMaybeLab(
 			ChainID:   chainConfig.ChainID,
 			NetworkID: networkID,
 			Genesis:   genesis.Hash(),
+			Runtime:   runtime,
 		},
 	)
 }
@@ -136,6 +151,151 @@ func (n *rabbitVRFDKGTransport) status() rabbitVRFDKGStatusPacket {
 	}
 }
 
+func cloneRabbitVRFDKGTransportArtifactPacketV1(
+	packet rabbitVRFDKGTransportArtifactPacketV1,
+) rabbitVRFDKGTransportArtifactPacketV1 {
+	packet.Envelope.Signature = append(
+		[]byte(nil),
+		packet.Envelope.Signature...,
+	)
+	return packet
+}
+
+func (n *rabbitVRFDKGTransport) storeRemoteTransportArtifactV1(
+	packet rabbitVRFDKGTransportArtifactPacketV1,
+) (bool, error) {
+	if err := n.validateTransportArtifactV1(packet); err != nil {
+		return false, err
+	}
+
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) ||
+		context.SessionID != packet.Binding.SessionID {
+		return false, errors.New("rabbit vrf dkg transport artifact session changed")
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.closed {
+		return false, errRabbitVRFDKGProtocolClosed
+	}
+
+	if n.remoteSession != packet.Binding.SessionID {
+		n.remoteSession = packet.Binding.SessionID
+		n.remoteArtifacts = make(
+			map[uint64]rabbitVRFDKGTransportArtifactPacketV1,
+		)
+	}
+
+	if existing, ok := n.remoteArtifacts[packet.Binding.ShareID]; ok {
+		if existing.Binding != packet.Binding {
+			return false, errRabbitVRFDKGArtifactConflict
+		}
+		return false, nil
+	}
+
+	n.remoteArtifacts[packet.Binding.ShareID] =
+		cloneRabbitVRFDKGTransportArtifactPacketV1(packet)
+
+	return true, nil
+}
+
+func (n *rabbitVRFDKGTransport) reconcileRemoteSessionV1(
+	sessionID common.Hash,
+) {
+	if n == nil {
+		return
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.closed {
+		return
+	}
+	if n.remoteSession == sessionID {
+		return
+	}
+
+	n.remoteSession = sessionID
+	n.remoteArtifacts = make(
+		map[uint64]rabbitVRFDKGTransportArtifactPacketV1,
+	)
+}
+
+func (n *rabbitVRFDKGTransport) remoteTransportArtifactV1(
+	sessionID common.Hash,
+	shareID uint64,
+) (rabbitVRFDKGTransportArtifactPacketV1, bool) {
+	if n == nil ||
+		n.runtime == nil ||
+		sessionID == (common.Hash{}) ||
+		shareID == 0 {
+		return rabbitVRFDKGTransportArtifactPacketV1{}, false
+	}
+
+	context := n.runtime.currentContext()
+	n.reconcileRemoteSessionV1(context.SessionID)
+
+	if context.SessionID == (common.Hash{}) ||
+		context.SessionID != sessionID {
+		return rabbitVRFDKGTransportArtifactPacketV1{}, false
+	}
+
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	if n.closed || n.remoteSession != sessionID {
+		return rabbitVRFDKGTransportArtifactPacketV1{}, false
+	}
+
+	packet, ok := n.remoteArtifacts[shareID]
+	if !ok {
+		return rabbitVRFDKGTransportArtifactPacketV1{}, false
+	}
+
+	return cloneRabbitVRFDKGTransportArtifactPacketV1(packet), true
+}
+
+func (n *rabbitVRFDKGTransport) validateTransportArtifactV1(
+	packet rabbitVRFDKGTransportArtifactPacketV1,
+) error {
+	if n == nil || n.runtime == nil {
+		return errors.New("rabbit vrf dkg transport runtime unavailable")
+	}
+
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) ||
+		packet.Binding.SessionID != context.SessionID ||
+		packet.Envelope.SessionID != context.SessionID {
+		return errors.New("rabbit vrf dkg transport artifact session mismatch")
+	}
+
+	var expected lqc.RabbitVRFCommitteeMemberV1
+	found := false
+
+	for _, member := range context.CanonicalMembers {
+		if member.ShareID == packet.Binding.ShareID &&
+			member.Participant == packet.Binding.Participant {
+			expected = member
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return errors.New("rabbit vrf dkg transport artifact sender not in canonical committee")
+	}
+
+	return lqc.VerifyRabbitVRFDKGTransportKeyEnvelopeV1(
+		context.CanonicalSession,
+		expected,
+		packet.Binding,
+		packet.Envelope,
+	)
+}
+
 func (n *rabbitVRFDKGTransport) runPeer(
 	remote *p2p.Peer,
 	rw p2p.MsgReadWriter,
@@ -161,10 +321,27 @@ func (n *rabbitVRFDKGTransport) runPeer(
 				message.Size,
 			)
 		}
-		return fmt.Errorf(
-			"invalid rabbit vrf dkg message code: %d",
-			message.Code,
-		)
+		switch message.Code {
+		case rabbitVRFDKGTransportArtifactMsg:
+			var packet rabbitVRFDKGTransportArtifactPacketV1
+			if err := message.Decode(&packet); err != nil {
+				return fmt.Errorf(
+					"decode rabbit vrf dkg transport artifact: %w",
+					err,
+				)
+			}
+			if _, err := n.storeRemoteTransportArtifactV1(packet); err != nil {
+				return fmt.Errorf(
+					"validate rabbit vrf dkg transport artifact: %w",
+					err,
+				)
+			}
+		default:
+			return fmt.Errorf(
+				"invalid rabbit vrf dkg message code: %d",
+				message.Code,
+			)
+		}
 	}
 }
 
@@ -279,5 +456,9 @@ func (n *rabbitVRFDKGTransport) Close() {
 	n.mu.Lock()
 	n.closed = true
 	n.peers = make(map[string]*rabbitVRFDKGPeer)
+	n.remoteSession = common.Hash{}
+	n.remoteArtifacts = make(
+		map[uint64]rabbitVRFDKGTransportArtifactPacketV1,
+	)
 	n.mu.Unlock()
 }
