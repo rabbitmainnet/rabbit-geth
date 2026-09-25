@@ -23,14 +23,15 @@ var errRabbitVRFDKGRuntimeV1 = errors.New(
 )
 
 type rabbitVRFDKGLocalContextV1 struct {
-	HeadNumber        uint64
-	HeadHash          common.Hash
-	SessionID         common.Hash
-	SourceWorkEpoch   uint64
-	PreparationEpoch  uint64
-	TargetVRFEpoch    uint64
-	Members           []lqc.RabbitVRFCommitteeMemberV1
-	TransportBindings []lqc.RabbitVRFDKGTransportKeyBindingV1
+	HeadNumber         uint64
+	HeadHash           common.Hash
+	SessionID          common.Hash
+	SourceWorkEpoch    uint64
+	PreparationEpoch   uint64
+	TargetVRFEpoch     uint64
+	Members            []lqc.RabbitVRFCommitteeMemberV1
+	TransportBindings  []lqc.RabbitVRFDKGTransportKeyBindingV1
+	TransportEnvelopes []lqc.RabbitVRFDKGEnvelopeV1
 }
 
 // rabbitVRFDKGRuntime owns local, non-consensus DKG runtime state.
@@ -174,6 +175,52 @@ func cloneRabbitVRFDKGTransportBindingsV1(
 	return out
 }
 
+func cloneRabbitVRFDKGTransportEnvelopesV1(
+	envelopes []lqc.RabbitVRFDKGEnvelopeV1,
+) []lqc.RabbitVRFDKGEnvelopeV1 {
+	if len(envelopes) == 0 {
+		return nil
+	}
+
+	out := make(
+		[]lqc.RabbitVRFDKGEnvelopeV1,
+		len(envelopes),
+	)
+	for index := range envelopes {
+		out[index] = envelopes[index]
+		out[index].Signature = append(
+			[]byte(nil),
+			envelopes[index].Signature...,
+		)
+	}
+	return out
+}
+
+func (runtime *rabbitVRFDKGRuntime) setTransportArtifactsV1(
+	sessionID common.Hash,
+	bindings []lqc.RabbitVRFDKGTransportKeyBindingV1,
+	envelopes []lqc.RabbitVRFDKGEnvelopeV1,
+) bool {
+	if len(bindings) == 0 ||
+		len(bindings) != len(envelopes) {
+		return false
+	}
+
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	if runtime.current.SessionID != sessionID {
+		return false
+	}
+
+	runtime.current.TransportBindings =
+		cloneRabbitVRFDKGTransportBindingsV1(bindings)
+	runtime.current.TransportEnvelopes =
+		cloneRabbitVRFDKGTransportEnvelopesV1(envelopes)
+
+	return true
+}
+
 func (runtime *rabbitVRFDKGRuntime) setTransportBindingsV1(
 	sessionID common.Hash,
 	bindings []lqc.RabbitVRFDKGTransportKeyBindingV1,
@@ -187,6 +234,38 @@ func (runtime *rabbitVRFDKGRuntime) setTransportBindingsV1(
 
 	runtime.current.TransportBindings =
 		cloneRabbitVRFDKGTransportBindingsV1(bindings)
+
+	return true
+}
+
+func (runtime *rabbitVRFDKGRuntime) transportArtifactsReadyV1(
+	context lqc.RabbitVRFDKGSessionContextV1,
+	sessionID common.Hash,
+	members []lqc.RabbitVRFCommitteeMemberV1,
+) bool {
+	runtime.mu.RLock()
+	defer runtime.mu.RUnlock()
+
+	bindings := runtime.current.TransportBindings
+	envelopes := runtime.current.TransportEnvelopes
+
+	if runtime.current.SessionID != sessionID ||
+		len(members) == 0 ||
+		len(bindings) != len(members) ||
+		len(envelopes) != len(members) {
+		return false
+	}
+
+	for index := range members {
+		if err := lqc.VerifyRabbitVRFDKGTransportKeyEnvelopeV1(
+			context,
+			members[index],
+			bindings[index],
+			envelopes[index],
+		); err != nil {
+			return false
+		}
+	}
 
 	return true
 }
@@ -226,6 +305,10 @@ func (runtime *rabbitVRFDKGRuntime) setCurrent(
 			cloneRabbitVRFDKGTransportBindingsV1(
 				runtime.current.TransportBindings,
 			)
+		context.TransportEnvelopes =
+			cloneRabbitVRFDKGTransportEnvelopesV1(
+				runtime.current.TransportEnvelopes,
+			)
 	}
 	context.Members = cloneRabbitVRFDKGMembersV1(
 		context.Members,
@@ -251,6 +334,10 @@ func (runtime *rabbitVRFDKGRuntime) currentContext() rabbitVRFDKGLocalContextV1 
 	context.TransportBindings =
 		cloneRabbitVRFDKGTransportBindingsV1(
 			context.TransportBindings,
+		)
+	context.TransportEnvelopes =
+		cloneRabbitVRFDKGTransportEnvelopesV1(
+			context.TransportEnvelopes,
 		)
 	runtime.mu.RUnlock()
 
@@ -387,7 +474,8 @@ func (runtime *rabbitVRFDKGRuntime) ensureTransportBindingsV1(
 	if len(members) == 0 {
 		return nil
 	}
-	if runtime.transportBindingsReadyV1(
+	if runtime.transportArtifactsReadyV1(
+		bridge.Session,
 		bridge.SessionID,
 		members,
 	) {
@@ -400,7 +488,8 @@ func (runtime *rabbitVRFDKGRuntime) ensureTransportBindingsV1(
 	defer runtime.endSecretOperationV1()
 
 	// Recheck after entering the full anti-TOCTOU gate.
-	if runtime.transportBindingsReadyV1(
+	if runtime.transportArtifactsReadyV1(
+		bridge.Session,
 		bridge.SessionID,
 		members,
 	) {
@@ -408,6 +497,7 @@ func (runtime *rabbitVRFDKGRuntime) ensureTransportBindingsV1(
 	}
 
 	if runtime.backend.config == nil ||
+		runtime.backend.accountManager == nil ||
 		runtime.backend.vrfDKGInstanceDir == "" ||
 		runtime.backend.p2pServer == nil ||
 		runtime.backend.p2pServer.PrivateKey == nil {
@@ -445,6 +535,13 @@ func (runtime *rabbitVRFDKGRuntime) ensureTransportBindingsV1(
 		0,
 		len(members),
 	)
+	envelopes := make(
+		[]lqc.RabbitVRFDKGEnvelopeV1,
+		0,
+		len(members),
+	)
+
+	wallets := runtime.backend.accountManager.Wallets()
 
 	for _, member := range members {
 		binding, err :=
@@ -463,22 +560,39 @@ func (runtime *rabbitVRFDKGRuntime) ensureTransportBindingsV1(
 			)
 		}
 
+		envelope, err :=
+			rabbitVRFDKGSignTransportBindingEnvelopeV1(
+				wallets,
+				bridge.Session,
+				member,
+				binding,
+			)
+		if err != nil {
+			return fmt.Errorf(
+				"authenticate rabbit vrf dkg transport key share %d: %w",
+				member.ShareID,
+				err,
+			)
+		}
+
 		bindings = append(bindings, binding)
+		envelopes = append(envelopes, envelope)
 	}
 
-	if !runtime.setTransportBindingsV1(
+	if !runtime.setTransportArtifactsV1(
 		bridge.SessionID,
 		bindings,
+		envelopes,
 	) {
 		return errRabbitVRFDKGRuntimeV1
 	}
 
 	log.Info(
-		"Rabbit VRF DKG local transport bindings ready",
+		"Rabbit VRF DKG local authenticated transport artifacts ready",
 		"session", bridge.SessionID,
 		"bindings", len(bindings),
+		"envelopes", len(envelopes),
 	)
-
 	return nil
 }
 

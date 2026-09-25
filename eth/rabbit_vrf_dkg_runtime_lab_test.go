@@ -4,6 +4,8 @@ package eth
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/crypto"
+	"math/big"
 	"testing"
 	"time"
 
@@ -328,5 +330,209 @@ func TestRabbitVRFDKGRuntimeV1DropsTransportBindingsOnSessionChange(
 	got := runtime.currentContext()
 	if len(got.TransportBindings) != 0 {
 		t.Fatalf("stale transport bindings survived session change: %d", len(got.TransportBindings))
+	}
+}
+
+func TestRabbitVRFDKGRuntimeV1PreservesTransportEnvelopeSameSession(
+	t *testing.T,
+) {
+	sessionID := common.Hash{1}
+
+	member := lqc.RabbitVRFCommitteeMemberV1{
+		ShareID:     7,
+		Participant: common.Address{2},
+	}
+
+	envelope := lqc.RabbitVRFDKGEnvelopeV1{
+		SessionID:     sessionID,
+		SenderShareID: member.ShareID,
+		Participant:   member.Participant,
+		Signature:     []byte{1, 2, 3},
+	}
+
+	runtime := &rabbitVRFDKGRuntime{
+		current: rabbitVRFDKGLocalContextV1{
+			SessionID:          sessionID,
+			Members:            []lqc.RabbitVRFCommitteeMemberV1{member},
+			TransportEnvelopes: []lqc.RabbitVRFDKGEnvelopeV1{envelope},
+		},
+	}
+
+	runtime.setCurrent(
+		rabbitVRFDKGLocalContextV1{
+			HeadNumber: 2,
+			SessionID:  sessionID,
+			Members:    []lqc.RabbitVRFCommitteeMemberV1{member},
+		},
+	)
+
+	got := runtime.currentContext()
+	if len(got.TransportEnvelopes) != 1 {
+		t.Fatalf("transport envelopes=%d want=1", len(got.TransportEnvelopes))
+	}
+	if len(got.TransportEnvelopes[0].Signature) != 3 {
+		t.Fatal("transport envelope signature was not preserved")
+	}
+
+	got.TransportEnvelopes[0].Signature[0] = 9
+	again := runtime.currentContext()
+	if again.TransportEnvelopes[0].Signature[0] != 1 {
+		t.Fatal("transport envelope signature was not defensively copied")
+	}
+}
+
+func TestRabbitVRFDKGRuntimeV1DropsTransportEnvelopeOnSessionChange(
+	t *testing.T,
+) {
+	oldSession := common.Hash{1}
+	newSession := common.Hash{2}
+
+	member := lqc.RabbitVRFCommitteeMemberV1{
+		ShareID:     7,
+		Participant: common.Address{3},
+	}
+
+	envelope := lqc.RabbitVRFDKGEnvelopeV1{
+		SessionID:     oldSession,
+		SenderShareID: member.ShareID,
+		Participant:   member.Participant,
+		Signature:     []byte{4, 5, 6},
+	}
+
+	runtime := &rabbitVRFDKGRuntime{
+		current: rabbitVRFDKGLocalContextV1{
+			SessionID:          oldSession,
+			Members:            []lqc.RabbitVRFCommitteeMemberV1{member},
+			TransportEnvelopes: []lqc.RabbitVRFDKGEnvelopeV1{envelope},
+		},
+	}
+
+	runtime.setCurrent(
+		rabbitVRFDKGLocalContextV1{
+			SessionID: newSession,
+			Members:   []lqc.RabbitVRFCommitteeMemberV1{member},
+		},
+	)
+
+	got := runtime.currentContext()
+	if len(got.TransportEnvelopes) != 0 {
+		t.Fatalf("stale transport envelopes survived session change: %d", len(got.TransportEnvelopes))
+	}
+}
+
+func TestRabbitVRFDKGRuntimeV1TransportArtifactsRequireValidSignature(
+	t *testing.T,
+) {
+	context, err := lqc.NewRabbitVRFDKGSessionContextV1(
+		big.NewInt(9280),
+		11,
+		crypto.Keccak256Hash(
+			[]byte("rabbit-vrf-runtime-artifact-ready-committee"),
+		),
+		32,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	participantKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	member := lqc.RabbitVRFCommitteeMemberV1{
+		ShareID: 7,
+		TicketHash: crypto.Keccak256Hash(
+			[]byte("rabbit-vrf-runtime-artifact-ready-ticket"),
+		),
+		Participant: crypto.PubkeyToAddress(
+			participantKey.PublicKey,
+		),
+	}
+
+	transportKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	publicKey, err :=
+		lqc.RabbitVRFDKGTransportPublicKeyV1FromBytes(
+			crypto.CompressPubkey(
+				&transportKey.PublicKey,
+			),
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	binding, root, err :=
+		lqc.NewRabbitVRFDKGTransportKeyBindingV1(
+			context,
+			member,
+			publicKey,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	envelope, err := lqc.NewRabbitVRFDKGEnvelopeV1(
+		context,
+		member,
+		lqc.RabbitVRFDKGMessageTransportKeyBindingV1,
+		root,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signingHash, err :=
+		lqc.RabbitVRFDKGEnvelopeSigningHashV1(
+			context,
+			envelope,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	envelope.Signature, err = crypto.Sign(
+		signingHash[:],
+		participantKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID, err := lqc.RabbitVRFDKGSessionIDV1(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := &rabbitVRFDKGRuntime{
+		current: rabbitVRFDKGLocalContextV1{
+			SessionID:          sessionID,
+			Members:            []lqc.RabbitVRFCommitteeMemberV1{member},
+			TransportBindings:  []lqc.RabbitVRFDKGTransportKeyBindingV1{binding},
+			TransportEnvelopes: []lqc.RabbitVRFDKGEnvelopeV1{envelope},
+		},
+	}
+
+	if !runtime.transportArtifactsReadyV1(
+		context,
+		sessionID,
+		[]lqc.RabbitVRFCommitteeMemberV1{member},
+	) {
+		t.Fatal("valid authenticated transport artifacts not ready")
+	}
+
+	runtime.mu.Lock()
+	runtime.current.TransportEnvelopes[0].Signature[0] ^= 1
+	runtime.mu.Unlock()
+
+	if runtime.transportArtifactsReadyV1(
+		context,
+		sessionID,
+		[]lqc.RabbitVRFCommitteeMemberV1{member},
+	) {
+		t.Fatal("tampered transport envelope accepted as ready")
 	}
 }
