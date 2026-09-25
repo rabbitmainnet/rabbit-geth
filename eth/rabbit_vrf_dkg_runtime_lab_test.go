@@ -536,3 +536,54 @@ func TestRabbitVRFDKGRuntimeV1TransportArtifactsRequireValidSignature(
 		t.Fatal("tampered transport envelope accepted as ready")
 	}
 }
+
+func TestRabbitVRFDKGRuntimeV1KeepsLocalAndCanonicalMembersSeparate(t *testing.T) {
+	sessionID := common.Hash{9}
+
+	localMember := lqc.RabbitVRFCommitteeMemberV1{
+		ShareID:     1,
+		Participant: common.Address{1},
+	}
+	remoteMember := lqc.RabbitVRFCommitteeMemberV1{
+		ShareID:     2,
+		Participant: common.Address{2},
+	}
+
+	localMembers := []lqc.RabbitVRFCommitteeMemberV1{localMember}
+	canonicalMembers := []lqc.RabbitVRFCommitteeMemberV1{
+		localMember,
+		remoteMember,
+	}
+
+	runtime := &rabbitVRFDKGRuntime{}
+	runtime.setCurrent(rabbitVRFDKGLocalContextV1{
+		SessionID: sessionID,
+		CanonicalSession: lqc.RabbitVRFDKGSessionContextV1{
+			CommitteeSize: 2,
+		},
+		Members:          localMembers,
+		CanonicalMembers: canonicalMembers,
+	})
+
+	localMembers[0].ShareID = 91
+	canonicalMembers[0].ShareID = 92
+
+	got := runtime.currentContext()
+	if len(got.Members) != 1 || got.Members[0].ShareID != 1 {
+		t.Fatalf("local members changed unexpectedly: %+v", got.Members)
+	}
+	if len(got.CanonicalMembers) != 2 ||
+		got.CanonicalMembers[0].ShareID != 1 ||
+		got.CanonicalMembers[1].ShareID != 2 {
+		t.Fatalf("canonical members mismatch: %+v", got.CanonicalMembers)
+	}
+	if got.CanonicalSession.CommitteeSize != 2 {
+		t.Fatalf("canonical committee size=%d want=2", got.CanonicalSession.CommitteeSize)
+	}
+
+	got.CanonicalMembers[0].ShareID = 77
+	again := runtime.currentContext()
+	if again.CanonicalMembers[0].ShareID != 1 {
+		t.Fatal("currentContext leaked mutable canonical member slice")
+	}
+}

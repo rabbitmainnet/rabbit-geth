@@ -29,6 +29,8 @@ type rabbitVRFDKGLocalContextV1 struct {
 	SourceWorkEpoch    uint64
 	PreparationEpoch   uint64
 	TargetVRFEpoch     uint64
+	CanonicalSession   lqc.RabbitVRFDKGSessionContextV1
+	CanonicalMembers   []lqc.RabbitVRFCommitteeMemberV1
 	Members            []lqc.RabbitVRFCommitteeMemberV1
 	TransportBindings  []lqc.RabbitVRFDKGTransportKeyBindingV1
 	TransportEnvelopes []lqc.RabbitVRFDKGEnvelopeV1
@@ -313,6 +315,9 @@ func (runtime *rabbitVRFDKGRuntime) setCurrent(
 	context.Members = cloneRabbitVRFDKGMembersV1(
 		context.Members,
 	)
+	context.CanonicalMembers = cloneRabbitVRFDKGMembersV1(
+		context.CanonicalMembers,
+	)
 	runtime.current = context
 	runtime.mu.Unlock()
 
@@ -330,6 +335,9 @@ func (runtime *rabbitVRFDKGRuntime) currentContext() rabbitVRFDKGLocalContextV1 
 	context := runtime.current
 	context.Members = cloneRabbitVRFDKGMembersV1(
 		context.Members,
+	)
+	context.CanonicalMembers = cloneRabbitVRFDKGMembersV1(
+		context.CanonicalMembers,
 	)
 	context.TransportBindings =
 		cloneRabbitVRFDKGTransportBindingsV1(
@@ -676,6 +684,8 @@ func (runtime *rabbitVRFDKGRuntime) processCurrentHead() error {
 				SourceWorkEpoch:  bridge.SourceWorkEpoch,
 				PreparationEpoch: bridge.PreparationEpoch,
 				TargetVRFEpoch:   bridge.TargetVRFEpoch,
+				CanonicalSession: bridge.Session,
+				CanonicalMembers: bridge.Members,
 				Members:          members,
 			},
 		)
