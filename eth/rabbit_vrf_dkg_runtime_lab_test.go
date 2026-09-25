@@ -254,6 +254,110 @@ func TestRabbitVRFDKGRuntimeV1NoLocalMembersSkipSecretIO(
 	}
 }
 
+func TestRabbitVRFDKGRuntimeV1RecoversCanonicalTransportKeySetSameSession(
+	t *testing.T,
+) {
+	transport, members, packets, _ :=
+		newRabbitVRFDKGCanonicalTransportKeySetFixtureV1(t)
+
+	inserted, err := transport.storeRemoteTransportArtifactV1(packets[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("remote canonical transport artifact was not inserted")
+	}
+
+	root, bindings, envelopes, complete, err :=
+		transport.canonicalTransportKeySetV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !complete {
+		t.Fatal("canonical transport key set was not complete")
+	}
+
+	original := transport.runtime.currentContext()
+
+	restarted := &rabbitVRFDKGRuntime{
+		current: rabbitVRFDKGLocalContextV1{
+			SessionID:        original.SessionID,
+			CanonicalSession: original.CanonicalSession,
+			CanonicalMembers: cloneRabbitVRFDKGMembersV1(members),
+		},
+	}
+
+	if !restarted.setCanonicalTransportKeySetV1(
+		original.SessionID,
+		root,
+		members,
+		bindings,
+		envelopes,
+	) {
+		t.Fatal("persisted canonical transport key set was not recovered")
+	}
+
+	got := restarted.currentContext()
+	if got.CanonicalTransportKeySetRoot != root {
+		t.Fatal("recovered canonical transport key set root changed")
+	}
+	if len(got.CanonicalTransportBindings) != len(members) ||
+		len(got.CanonicalTransportEnvelopes) != len(members) {
+		t.Fatal("recovered canonical transport key set is incomplete")
+	}
+}
+
+func TestRabbitVRFDKGRuntimeV1RejectsCanonicalTransportKeySetFromStaleSession(
+	t *testing.T,
+) {
+	transport, members, packets, _ :=
+		newRabbitVRFDKGCanonicalTransportKeySetFixtureV1(t)
+
+	inserted, err := transport.storeRemoteTransportArtifactV1(packets[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("remote canonical transport artifact was not inserted")
+	}
+
+	root, bindings, envelopes, complete, err :=
+		transport.canonicalTransportKeySetV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !complete {
+		t.Fatal("canonical transport key set was not complete")
+	}
+
+	staleSession := transport.runtime.currentContext().SessionID
+	newSession := common.Hash{0xaa}
+
+	runtime := &rabbitVRFDKGRuntime{
+		current: rabbitVRFDKGLocalContextV1{
+			SessionID:        newSession,
+			CanonicalMembers: cloneRabbitVRFDKGMembersV1(members),
+		},
+	}
+
+	if runtime.setCanonicalTransportKeySetV1(
+		staleSession,
+		root,
+		members,
+		bindings,
+		envelopes,
+	) {
+		t.Fatal("stale canonical transport key set entered new session")
+	}
+
+	got := runtime.currentContext()
+	if got.CanonicalTransportKeySetRoot != (common.Hash{}) ||
+		len(got.CanonicalTransportBindings) != 0 ||
+		len(got.CanonicalTransportEnvelopes) != 0 {
+		t.Fatal("stale canonical transport key set leaked into new session")
+	}
+}
+
 func TestRabbitVRFDKGRuntimeV1PreservesTransportBindingsSameSession(
 	t *testing.T,
 ) {

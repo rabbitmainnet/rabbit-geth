@@ -348,6 +348,10 @@ func (n *rabbitVRFDKGTransport) runPeer(
 			peer.markKnown(packet.Envelope.PayloadHash)
 
 			if inserted {
+				if _, err := n.persistCanonicalTransportKeySetV1(); err != nil {
+					return fmt.Errorf("persist rabbit vrf dkg canonical transport key set: %w", err)
+				}
+
 				n.broadcastTransportArtifactV1(
 					packet,
 					peer.id(),

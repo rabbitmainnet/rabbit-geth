@@ -243,9 +243,16 @@ func (l *LQC) LoadRabbitVRFDKGTransportKeySetStateV1(
 		return nil, err
 	}
 
-	blob, err := l.db.Get(
-		rabbitVRFDKGTransportKeySetStateKeyV1(sessionID),
-	)
+	key := rabbitVRFDKGTransportKeySetStateKeyV1(sessionID)
+	has, err := l.db.Has(key)
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return nil, nil
+	}
+
+	blob, err := l.db.Get(key)
 	if err != nil {
 		return nil, err
 	}

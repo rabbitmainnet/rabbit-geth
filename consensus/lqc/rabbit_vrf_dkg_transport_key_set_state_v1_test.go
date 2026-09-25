@@ -210,6 +210,24 @@ func rabbitVRFDKGTransportKeySetStateFixtureV1(
 		participantKeys
 }
 
+func TestRabbitVRFDKGTransportKeySetStateV1MissingStateIsNotError(
+	t *testing.T,
+) {
+	engine, bridge, _, _, _ :=
+		rabbitVRFDKGTransportKeySetStateFixtureV1(t)
+
+	state, err :=
+		engine.LoadRabbitVRFDKGTransportKeySetStateV1(
+			bridge.SessionID,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != nil {
+		t.Fatal("missing transport key set state unexpectedly loaded")
+	}
+}
+
 func TestRabbitVRFDKGTransportKeySetStateV1CreateResumeRestart(
 	t *testing.T,
 ) {
@@ -300,6 +318,145 @@ func TestRabbitVRFDKGTransportKeySetStateV1CreateResumeRestart(
 	}
 	if restarted.Root != first.Root {
 		t.Fatal("restart changed transport key set root")
+	}
+}
+
+func TestRabbitVRFDKGTransportKeySetStateV1SessionsCoexist(
+	t *testing.T,
+) {
+	engine,
+		firstBridge,
+		firstBindings,
+		firstEnvelopes,
+		participantKeys :=
+		rabbitVRFDKGTransportKeySetStateFixtureV1(t)
+
+	first, created, err :=
+		engine.EnsureRabbitVRFDKGTransportKeySetStateV1(
+			firstBridge.SessionID,
+			firstBridge.Members,
+			firstBindings,
+			firstEnvelopes,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("first transport key set state was not created")
+	}
+
+	seats := make(
+		[]WorkSeatV1,
+		len(firstBridge.Members),
+	)
+	for index, member := range firstBridge.Members {
+		seats[index] = WorkSeatV1{
+			TicketHash:  member.TicketHash,
+			Participant: member.Participant,
+		}
+	}
+
+	chainID := new(big.Int).Set(
+		firstBridge.Session.ChainID,
+	)
+	anchor := common.HexToHash("0x7a02")
+	difficulty := big.NewInt(4096)
+
+	root, canonicalSeats, err := WorkEpochRootV1(
+		chainID,
+		8,
+		anchor,
+		difficulty,
+		seats,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := &WorkEpochSnapshotV1{
+		Epoch:      8,
+		Anchor:     anchor,
+		Difficulty: new(big.Int).Set(difficulty),
+		Root:       root,
+		Seats:      canonicalSeats,
+	}
+	if err := snapshot.Validate(chainID); err != nil {
+		t.Fatal(err)
+	}
+
+	secondBridge, err := RabbitVRFDKGBridgeForSnapshotV1(
+		chainID,
+		snapshot,
+		common.HexToHash(
+			"0x2234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		),
+		2,
+		2,
+		fakeSelectionBeaconHasherV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondBridge.SessionID == firstBridge.SessionID {
+		t.Fatal("distinct snapshots produced identical DKG SessionID")
+	}
+
+	if _, created, err :=
+		engine.EnsureRabbitVRFDKGLifecycleV1(
+			secondBridge,
+		); err != nil {
+		t.Fatal(err)
+	} else if !created {
+		t.Fatal("second lifecycle was not created")
+	}
+
+	secondBindings, secondEnvelopes :=
+		rabbitVRFDKGTransportKeySetStateArtifactsV1(
+			t,
+			secondBridge,
+			participantKeys,
+		)
+
+	second, created, err :=
+		engine.EnsureRabbitVRFDKGTransportKeySetStateV1(
+			secondBridge.SessionID,
+			secondBridge.Members,
+			secondBindings,
+			secondEnvelopes,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("second transport key set state was not created")
+	}
+
+	loadedFirst, err :=
+		engine.LoadRabbitVRFDKGTransportKeySetStateV1(
+			firstBridge.SessionID,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loadedSecond, err :=
+		engine.LoadRabbitVRFDKGTransportKeySetStateV1(
+			secondBridge.SessionID,
+		)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if loadedFirst == nil || loadedSecond == nil {
+		t.Fatal("coexisting transport key set state is missing")
+	}
+	if loadedFirst.SessionID != firstBridge.SessionID ||
+		loadedFirst.Root != first.Root {
+		t.Fatal("first session state changed after second session persisted")
+	}
+	if loadedSecond.SessionID != secondBridge.SessionID ||
+		loadedSecond.Root != second.Root {
+		t.Fatal("second session state did not persist independently")
 	}
 }
 

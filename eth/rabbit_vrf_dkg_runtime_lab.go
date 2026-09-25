@@ -23,17 +23,20 @@ var errRabbitVRFDKGRuntimeV1 = errors.New(
 )
 
 type rabbitVRFDKGLocalContextV1 struct {
-	HeadNumber         uint64
-	HeadHash           common.Hash
-	SessionID          common.Hash
-	SourceWorkEpoch    uint64
-	PreparationEpoch   uint64
-	TargetVRFEpoch     uint64
-	CanonicalSession   lqc.RabbitVRFDKGSessionContextV1
-	CanonicalMembers   []lqc.RabbitVRFCommitteeMemberV1
-	Members            []lqc.RabbitVRFCommitteeMemberV1
-	TransportBindings  []lqc.RabbitVRFDKGTransportKeyBindingV1
-	TransportEnvelopes []lqc.RabbitVRFDKGEnvelopeV1
+	HeadNumber                   uint64
+	HeadHash                     common.Hash
+	SessionID                    common.Hash
+	SourceWorkEpoch              uint64
+	PreparationEpoch             uint64
+	TargetVRFEpoch               uint64
+	CanonicalSession             lqc.RabbitVRFDKGSessionContextV1
+	CanonicalMembers             []lqc.RabbitVRFCommitteeMemberV1
+	Members                      []lqc.RabbitVRFCommitteeMemberV1
+	TransportBindings            []lqc.RabbitVRFDKGTransportKeyBindingV1
+	TransportEnvelopes           []lqc.RabbitVRFDKGEnvelopeV1
+	CanonicalTransportKeySetRoot common.Hash
+	CanonicalTransportBindings   []lqc.RabbitVRFDKGTransportKeyBindingV1
+	CanonicalTransportEnvelopes  []lqc.RabbitVRFDKGEnvelopeV1
 }
 
 // rabbitVRFDKGRuntime owns local, non-consensus DKG runtime state.
@@ -198,6 +201,44 @@ func cloneRabbitVRFDKGTransportEnvelopesV1(
 	return out
 }
 
+func (runtime *rabbitVRFDKGRuntime) setCanonicalTransportKeySetV1(
+	sessionID common.Hash,
+	root common.Hash,
+	members []lqc.RabbitVRFCommitteeMemberV1,
+	bindings []lqc.RabbitVRFDKGTransportKeyBindingV1,
+	envelopes []lqc.RabbitVRFDKGEnvelopeV1,
+) bool {
+	if sessionID == (common.Hash{}) ||
+		root == (common.Hash{}) ||
+		len(members) == 0 ||
+		len(bindings) != len(members) ||
+		len(envelopes) != len(members) {
+		return false
+	}
+
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	if runtime.current.SessionID != sessionID ||
+		len(runtime.current.CanonicalMembers) != len(members) {
+		return false
+	}
+
+	for index := range members {
+		if runtime.current.CanonicalMembers[index] != members[index] {
+			return false
+		}
+	}
+
+	runtime.current.CanonicalTransportKeySetRoot = root
+	runtime.current.CanonicalTransportBindings =
+		cloneRabbitVRFDKGTransportBindingsV1(bindings)
+	runtime.current.CanonicalTransportEnvelopes =
+		cloneRabbitVRFDKGTransportEnvelopesV1(envelopes)
+
+	return true
+}
+
 func (runtime *rabbitVRFDKGRuntime) setTransportArtifactsV1(
 	sessionID common.Hash,
 	bindings []lqc.RabbitVRFDKGTransportKeyBindingV1,
@@ -311,6 +352,9 @@ func (runtime *rabbitVRFDKGRuntime) setCurrent(
 			cloneRabbitVRFDKGTransportEnvelopesV1(
 				runtime.current.TransportEnvelopes,
 			)
+		context.CanonicalTransportKeySetRoot = runtime.current.CanonicalTransportKeySetRoot
+		context.CanonicalTransportBindings = cloneRabbitVRFDKGTransportBindingsV1(runtime.current.CanonicalTransportBindings)
+		context.CanonicalTransportEnvelopes = cloneRabbitVRFDKGTransportEnvelopesV1(runtime.current.CanonicalTransportEnvelopes)
 	}
 	context.Members = cloneRabbitVRFDKGMembersV1(
 		context.Members,
@@ -347,6 +391,8 @@ func (runtime *rabbitVRFDKGRuntime) currentContext() rabbitVRFDKGLocalContextV1 
 		cloneRabbitVRFDKGTransportEnvelopesV1(
 			context.TransportEnvelopes,
 		)
+	context.CanonicalTransportBindings = cloneRabbitVRFDKGTransportBindingsV1(context.CanonicalTransportBindings)
+	context.CanonicalTransportEnvelopes = cloneRabbitVRFDKGTransportEnvelopesV1(context.CanonicalTransportEnvelopes)
 	runtime.mu.RUnlock()
 
 	return context
@@ -595,6 +641,16 @@ func (runtime *rabbitVRFDKGRuntime) ensureTransportBindingsV1(
 		return errRabbitVRFDKGRuntimeV1
 	}
 
+	if runtime.backend.vrfDKGTransport != nil {
+
+		if _, err := runtime.backend.vrfDKGTransport.persistCanonicalTransportKeySetV1(); err != nil {
+
+			return fmt.Errorf("persist rabbit vrf dkg canonical transport key set: %w", err)
+
+		}
+
+	}
+
 	log.Info(
 		"Rabbit VRF DKG local authenticated transport artifacts ready",
 		"session", bridge.SessionID,
@@ -689,6 +745,30 @@ func (runtime *rabbitVRFDKGRuntime) processCurrentHead() error {
 				Members:          members,
 			},
 		)
+
+	persistedKeySet, err := runtime.engine.LoadRabbitVRFDKGTransportKeySetStateV1(
+		bridge.SessionID,
+	)
+	if err != nil {
+		runtime.clearCurrent()
+		return fmt.Errorf(
+			"load persisted rabbit vrf dkg transport key set: %w",
+			err,
+		)
+	}
+
+	if persistedKeySet != nil {
+		if !runtime.setCanonicalTransportKeySetV1(
+			persistedKeySet.SessionID,
+			persistedKeySet.Root,
+			persistedKeySet.Members,
+			persistedKeySet.Bindings,
+			persistedKeySet.Envelopes,
+		) {
+			runtime.clearCurrent()
+			return errRabbitVRFDKGRuntimeV1
+		}
+	}
 
 	if previous != bridge.SessionID {
 		log.Info(

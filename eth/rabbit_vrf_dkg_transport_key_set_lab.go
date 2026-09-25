@@ -13,6 +13,73 @@ var errRabbitVRFDKGCanonicalTransportKeySetV1 = errors.New(
 	"invalid rabbit vrf dkg canonical transport key set v1",
 )
 
+func (n *rabbitVRFDKGTransport) persistCanonicalTransportKeySetV1() (
+	bool,
+	error,
+) {
+	if n == nil || n.runtime == nil || n.runtime.engine == nil {
+		return false, nil
+	}
+
+	root, bindings, envelopes, complete, err :=
+		n.canonicalTransportKeySetV1()
+	if err != nil {
+		return false, err
+	}
+	if !complete {
+		return false, nil
+	}
+	if len(bindings) == 0 {
+		return false, errRabbitVRFDKGCanonicalTransportKeySetV1
+	}
+
+	sessionID := bindings[0].SessionID
+
+	n.runtime.mu.RLock()
+	if n.runtime.current.SessionID != sessionID {
+		n.runtime.mu.RUnlock()
+		return false, nil
+	}
+
+	members := cloneRabbitVRFDKGMembersV1(
+		n.runtime.current.CanonicalMembers,
+	)
+	if len(members) != len(bindings) {
+		n.runtime.mu.RUnlock()
+		return false, errRabbitVRFDKGCanonicalTransportKeySetV1
+	}
+
+	persisted, _, err :=
+		n.runtime.engine.EnsureRabbitVRFDKGTransportKeySetStateV1(
+			sessionID,
+			members,
+			bindings,
+			envelopes,
+		)
+	n.runtime.mu.RUnlock()
+
+	if err != nil {
+		return false, err
+	}
+	if persisted == nil ||
+		persisted.SessionID != sessionID ||
+		persisted.Root != root {
+		return false, errRabbitVRFDKGCanonicalTransportKeySetV1
+	}
+
+	if !n.runtime.setCanonicalTransportKeySetV1(
+		persisted.SessionID,
+		persisted.Root,
+		persisted.Members,
+		persisted.Bindings,
+		persisted.Envelopes,
+	) {
+		return false, nil
+	}
+
+	return true, nil
+}
+
 func (n *rabbitVRFDKGTransport) canonicalTransportKeySetV1() (
 	common.Hash,
 	[]lqc.RabbitVRFDKGTransportKeyBindingV1,
