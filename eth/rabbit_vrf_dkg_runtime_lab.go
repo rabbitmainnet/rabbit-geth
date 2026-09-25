@@ -34,6 +34,8 @@ type rabbitVRFDKGLocalContextV1 struct {
 	Members                      []lqc.RabbitVRFCommitteeMemberV1
 	TransportBindings            []lqc.RabbitVRFDKGTransportKeyBindingV1
 	TransportEnvelopes           []lqc.RabbitVRFDKGEnvelopeV1
+	PolynomialCommitments        []lqc.RabbitVRFDKGPolynomialCommitmentV1
+	PolynomialEnvelopes          []lqc.RabbitVRFDKGEnvelopeV1
 	CanonicalTransportKeySetRoot common.Hash
 	CanonicalTransportBindings   []lqc.RabbitVRFDKGTransportKeyBindingV1
 	CanonicalTransportEnvelopes  []lqc.RabbitVRFDKGEnvelopeV1
@@ -352,6 +354,8 @@ func (runtime *rabbitVRFDKGRuntime) setCurrent(
 			cloneRabbitVRFDKGTransportEnvelopesV1(
 				runtime.current.TransportEnvelopes,
 			)
+		context.PolynomialCommitments = cloneRabbitVRFDKGPolynomialCommitmentsV1(runtime.current.PolynomialCommitments)
+		context.PolynomialEnvelopes = cloneRabbitVRFDKGTransportEnvelopesV1(runtime.current.PolynomialEnvelopes)
 		context.CanonicalTransportKeySetRoot = runtime.current.CanonicalTransportKeySetRoot
 		context.CanonicalTransportBindings = cloneRabbitVRFDKGTransportBindingsV1(runtime.current.CanonicalTransportBindings)
 		context.CanonicalTransportEnvelopes = cloneRabbitVRFDKGTransportEnvelopesV1(runtime.current.CanonicalTransportEnvelopes)
@@ -391,6 +395,8 @@ func (runtime *rabbitVRFDKGRuntime) currentContext() rabbitVRFDKGLocalContextV1 
 		cloneRabbitVRFDKGTransportEnvelopesV1(
 			context.TransportEnvelopes,
 		)
+	context.PolynomialCommitments = cloneRabbitVRFDKGPolynomialCommitmentsV1(context.PolynomialCommitments)
+	context.PolynomialEnvelopes = cloneRabbitVRFDKGTransportEnvelopesV1(context.PolynomialEnvelopes)
 	context.CanonicalTransportBindings = cloneRabbitVRFDKGTransportBindingsV1(context.CanonicalTransportBindings)
 	context.CanonicalTransportEnvelopes = cloneRabbitVRFDKGTransportEnvelopesV1(context.CanonicalTransportEnvelopes)
 	runtime.mu.RUnlock()

@@ -11,16 +11,18 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
+	"github.com/ethereum/go-ethereum/crypto/rabbitvrf"
 	"github.com/ethereum/go-ethereum/p2p"
 )
 
 const (
 	rabbitVRFDKGProtocolName    = "rvrfdkg"
 	rabbitVRFDKGProtocolVersion = uint(1)
-	rabbitVRFDKGProtocolLength  = uint64(2)
+	rabbitVRFDKGProtocolLength  = uint64(3)
 
-	rabbitVRFDKGStatusMsg            = uint64(0)
-	rabbitVRFDKGTransportArtifactMsg = uint64(1)
+	rabbitVRFDKGStatusMsg               = uint64(0)
+	rabbitVRFDKGTransportArtifactMsg    = uint64(1)
+	rabbitVRFDKGPolynomialCommitmentMsg = uint64(2)
 
 	rabbitVRFDKGHandshakeTimeout = 5 * time.Second
 	rabbitVRFDKGMaxMessageSize   = 16 * 1024
@@ -50,6 +52,11 @@ type rabbitVRFDKGTransportArtifactPacketV1 struct {
 	Envelope lqc.RabbitVRFDKGEnvelopeV1
 }
 
+type rabbitVRFDKGPolynomialCommitmentPacketV1 struct {
+	Commitment lqc.RabbitVRFDKGPolynomialCommitmentV1
+	Envelope   lqc.RabbitVRFDKGEnvelopeV1
+}
+
 type rabbitVRFDKGTransportConfig struct {
 	ChainID   *big.Int
 	NetworkID uint64
@@ -67,8 +74,9 @@ type rabbitVRFDKGTransport struct {
 	peers  map[string]*rabbitVRFDKGPeer
 	closed bool
 
-	remoteSession   common.Hash
-	remoteArtifacts map[uint64]rabbitVRFDKGTransportArtifactPacketV1
+	remoteSession     common.Hash
+	remoteArtifacts   map[uint64]rabbitVRFDKGTransportArtifactPacketV1
+	remoteCommitments map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1
 }
 
 type rabbitVRFDKGPeer struct {
@@ -93,12 +101,13 @@ func newRabbitVRFDKGTransport(
 	}
 
 	return &rabbitVRFDKGTransport{
-		chainID:         new(big.Int).Set(config.ChainID),
-		networkID:       config.NetworkID,
-		genesis:         config.Genesis,
-		runtime:         config.Runtime,
-		peers:           make(map[string]*rabbitVRFDKGPeer),
-		remoteArtifacts: make(map[uint64]rabbitVRFDKGTransportArtifactPacketV1),
+		chainID:           new(big.Int).Set(config.ChainID),
+		networkID:         config.NetworkID,
+		genesis:           config.Genesis,
+		runtime:           config.Runtime,
+		peers:             make(map[string]*rabbitVRFDKGPeer),
+		remoteArtifacts:   make(map[uint64]rabbitVRFDKGTransportArtifactPacketV1),
+		remoteCommitments: make(map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1),
 	}, nil
 }
 
@@ -193,6 +202,9 @@ func (n *rabbitVRFDKGTransport) storeRemoteTransportArtifactV1(
 		n.remoteArtifacts = make(
 			map[uint64]rabbitVRFDKGTransportArtifactPacketV1,
 		)
+		n.remoteCommitments = make(
+			map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1,
+		)
 	}
 
 	if existing, ok := n.remoteArtifacts[packet.Binding.ShareID]; ok {
@@ -280,6 +292,128 @@ func (n *rabbitVRFDKGTransport) validateTransportArtifactV1(
 	)
 }
 
+func cloneRabbitVRFDKGPolynomialCommitmentsV1(
+	input []lqc.RabbitVRFDKGPolynomialCommitmentV1,
+) []lqc.RabbitVRFDKGPolynomialCommitmentV1 {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]lqc.RabbitVRFDKGPolynomialCommitmentV1, len(input))
+	for i := range input {
+		out[i] = input[i]
+		out[i].Coefficients = append(
+			[]rabbitvrf.DKGCoefficientCommitmentV1(nil),
+			input[i].Coefficients...,
+		)
+	}
+	return out
+}
+
+func cloneRabbitVRFDKGPolynomialCommitmentPacketV1(
+	packet rabbitVRFDKGPolynomialCommitmentPacketV1,
+) rabbitVRFDKGPolynomialCommitmentPacketV1 {
+	packet.Commitment.Coefficients = append(
+		[]rabbitvrf.DKGCoefficientCommitmentV1(nil),
+		packet.Commitment.Coefficients...,
+	)
+	packet.Envelope.Signature = append([]byte(nil), packet.Envelope.Signature...)
+	return packet
+}
+
+func (n *rabbitVRFDKGTransport) validatePolynomialCommitmentV1(
+	packet rabbitVRFDKGPolynomialCommitmentPacketV1,
+) error {
+	if n == nil || n.runtime == nil {
+		return errors.New("rabbit vrf dkg transport runtime unavailable")
+	}
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) ||
+		packet.Commitment.SessionID != context.SessionID ||
+		packet.Envelope.SessionID != context.SessionID {
+		return errRabbitVRFDKGArtifactSessionMismatch
+	}
+	if packet.Commitment.DealerShareID == 0 ||
+		packet.Commitment.DealerShareID != packet.Envelope.SenderShareID {
+		return errors.New("rabbit vrf dkg polynomial commitment dealer mismatch")
+	}
+	var expected lqc.RabbitVRFCommitteeMemberV1
+	found := false
+	for _, member := range context.CanonicalMembers {
+		if member.ShareID == packet.Commitment.DealerShareID &&
+			member.Participant == packet.Envelope.Participant {
+			expected = member
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.New("rabbit vrf dkg polynomial commitment sender not in canonical committee")
+	}
+	root, err := lqc.RabbitVRFDKGPolynomialCommitmentPayloadHashV1(
+		context.CanonicalSession,
+		packet.Commitment,
+	)
+	if err != nil {
+		return err
+	}
+	if packet.Envelope.MessageType != lqc.RabbitVRFDKGMessagePolynomialCommitmentV1 ||
+		packet.Envelope.PayloadHash != root {
+		return errors.New("rabbit vrf dkg polynomial commitment payload mismatch")
+	}
+	return lqc.VerifyRabbitVRFDKGEnvelopeV1(
+		context.CanonicalSession,
+		expected,
+		packet.Envelope,
+	)
+}
+
+func (n *rabbitVRFDKGTransport) storeRemotePolynomialCommitmentV1(
+	packet rabbitVRFDKGPolynomialCommitmentPacketV1,
+) (bool, error) {
+	if err := n.validatePolynomialCommitmentV1(packet); err != nil {
+		return false, err
+	}
+	n.runtime.mu.RLock()
+	defer n.runtime.mu.RUnlock()
+	if n.runtime.current.SessionID == (common.Hash{}) ||
+		n.runtime.current.SessionID != packet.Commitment.SessionID {
+		return false, errors.New("rabbit vrf dkg polynomial commitment session changed")
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.closed {
+		return false, errRabbitVRFDKGProtocolClosed
+	}
+	if n.remoteSession != packet.Commitment.SessionID {
+		n.remoteSession = packet.Commitment.SessionID
+		n.remoteArtifacts = make(map[uint64]rabbitVRFDKGTransportArtifactPacketV1)
+		n.remoteCommitments = make(map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1)
+	}
+	if existing, ok := n.remoteCommitments[packet.Commitment.DealerShareID]; ok {
+		existingRoot, err := lqc.RabbitVRFDKGPolynomialCommitmentPayloadHashV1(
+			n.runtime.current.CanonicalSession,
+			existing.Commitment,
+		)
+		if err != nil {
+			return false, err
+		}
+		newRoot, err := lqc.RabbitVRFDKGPolynomialCommitmentPayloadHashV1(
+			n.runtime.current.CanonicalSession,
+			packet.Commitment,
+		)
+		if err != nil {
+			return false, err
+		}
+		if existingRoot != newRoot || existing.Envelope.PayloadHash != packet.Envelope.PayloadHash {
+			return false, errRabbitVRFDKGArtifactConflict
+		}
+		return false, nil
+	}
+	n.remoteCommitments[packet.Commitment.DealerShareID] =
+		cloneRabbitVRFDKGPolynomialCommitmentPacketV1(packet)
+	return true, nil
+}
+
 func (n *rabbitVRFDKGTransport) runPeer(
 	remote *p2p.Peer,
 	rw p2p.MsgReadWriter,
@@ -357,6 +491,38 @@ func (n *rabbitVRFDKGTransport) runPeer(
 					peer.id(),
 				)
 			}
+		case rabbitVRFDKGPolynomialCommitmentMsg:
+			var packet rabbitVRFDKGPolynomialCommitmentPacketV1
+			if err := message.Decode(&packet); err != nil {
+				return fmt.Errorf(
+					"decode rabbit vrf dkg polynomial commitment: %w",
+					err,
+				)
+			}
+
+			inserted, err := n.storeRemotePolynomialCommitmentV1(packet)
+			if err != nil {
+				if errors.Is(
+					err,
+					errRabbitVRFDKGArtifactSessionMismatch,
+				) {
+					continue
+				}
+				return fmt.Errorf(
+					"validate rabbit vrf dkg polynomial commitment: %w",
+					err,
+				)
+			}
+
+			peer.markKnown(packet.Envelope.PayloadHash)
+
+			if inserted {
+				n.broadcastPolynomialCommitmentV1(
+					packet,
+					peer.id(),
+				)
+			}
+
 		default:
 			return fmt.Errorf(
 				"invalid rabbit vrf dkg message code: %d",
@@ -494,6 +660,44 @@ func (peer *rabbitVRFDKGPeer) sendTransportArtifactV1(
 	return nil
 }
 
+func (peer *rabbitVRFDKGPeer) sendPolynomialCommitmentV1(
+	packet rabbitVRFDKGPolynomialCommitmentPacketV1,
+) error {
+	if peer == nil || peer.rw == nil {
+		return errors.New("invalid rabbit vrf dkg peer transport")
+	}
+
+	hash := packet.Envelope.PayloadHash
+	if hash == (common.Hash{}) {
+		return errors.New("zero rabbit vrf dkg polynomial commitment hash")
+	}
+
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+
+	if peer.known == nil {
+		peer.known = make(map[common.Hash]struct{})
+	}
+	if _, exists := peer.known[hash]; exists {
+		return nil
+	}
+
+	if err := p2p.Send(
+		peer.rw,
+		rabbitVRFDKGPolynomialCommitmentMsg,
+		packet,
+	); err != nil {
+		return err
+	}
+
+	if len(peer.known) >= rabbitVRFDKGMaxKnownPerPeer {
+		clear(peer.known)
+	}
+	peer.known[hash] = struct{}{}
+
+	return nil
+}
+
 func (peer *rabbitVRFDKGPeer) id() string {
 	if peer == nil || peer.peer == nil {
 		return ""
@@ -612,6 +816,79 @@ func (n *rabbitVRFDKGTransport) broadcastTransportArtifactV1(
 	}
 }
 
+func (n *rabbitVRFDKGTransport) sendLocalPolynomialCommitmentsV1(peer *rabbitVRFDKGPeer) error {
+	if n == nil || n.runtime == nil || peer == nil {
+		return nil
+	}
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) {
+		return nil
+	}
+	if len(context.PolynomialCommitments) == 0 {
+		return nil
+	}
+	if len(context.PolynomialCommitments) != len(context.PolynomialEnvelopes) {
+		return errors.New("rabbit vrf dkg local polynomial commitment/envelope count mismatch")
+	}
+	for i := range context.PolynomialCommitments {
+		if n.runtime.currentContext().SessionID != context.SessionID {
+			return nil
+		}
+		packet := rabbitVRFDKGPolynomialCommitmentPacketV1{
+			Commitment: context.PolynomialCommitments[i],
+			Envelope:   context.PolynomialEnvelopes[i],
+		}
+		if err := n.validatePolynomialCommitmentV1(packet); err != nil {
+			return fmt.Errorf("validate local rabbit vrf dkg polynomial commitment: %w", err)
+		}
+		if err := peer.sendPolynomialCommitmentV1(cloneRabbitVRFDKGPolynomialCommitmentPacketV1(packet)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (n *rabbitVRFDKGTransport) broadcastPolynomialCommitmentV1(
+	packet rabbitVRFDKGPolynomialCommitmentPacketV1,
+	except string,
+) {
+	if n == nil {
+		return
+	}
+
+	n.mu.RLock()
+	if n.closed {
+		n.mu.RUnlock()
+		return
+	}
+
+	peers := make([]*rabbitVRFDKGPeer, 0, len(n.peers))
+	for id, peer := range n.peers {
+		if id != except {
+			peers = append(peers, peer)
+		}
+	}
+	n.mu.RUnlock()
+
+	for _, peer := range peers {
+		peer := peer
+		outbound := cloneRabbitVRFDKGPolynomialCommitmentPacketV1(packet)
+
+		go func() {
+			if err := peer.sendPolynomialCommitmentV1(outbound); err != nil {
+				if peer.peer != nil {
+					peer.peer.Log().Debug(
+						"Rabbit VRF DKG polynomial commitment broadcast failed",
+						"err",
+						err,
+					)
+				}
+			}
+		}()
+	}
+
+}
+
 func (n *rabbitVRFDKGTransport) Close() {
 	if n == nil {
 		return
@@ -622,6 +899,9 @@ func (n *rabbitVRFDKGTransport) Close() {
 	n.remoteSession = common.Hash{}
 	n.remoteArtifacts = make(
 		map[uint64]rabbitVRFDKGTransportArtifactPacketV1,
+	)
+	n.remoteCommitments = make(
+		map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1,
 	)
 	n.mu.Unlock()
 }

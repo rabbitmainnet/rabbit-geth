@@ -63,12 +63,74 @@ func (n *rabbitVRFDKGTransport) sendRetainedRemoteTransportArtifactsV1(
 	return nil
 }
 
+func (n *rabbitVRFDKGTransport) sendRetainedRemotePolynomialCommitmentsV1(
+	peer *rabbitVRFDKGPeer,
+) error {
+	if n == nil || n.runtime == nil || peer == nil {
+		return nil
+	}
+
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) {
+		return nil
+	}
+
+	n.mu.RLock()
+	if n.closed || n.remoteSession != context.SessionID {
+		n.mu.RUnlock()
+		return nil
+	}
+
+	shareIDs := make([]uint64, 0, len(n.remoteCommitments))
+	for shareID := range n.remoteCommitments {
+		shareIDs = append(shareIDs, shareID)
+	}
+	sort.Slice(shareIDs, func(i, j int) bool {
+		return shareIDs[i] < shareIDs[j]
+	})
+
+	packets := make(
+		[]rabbitVRFDKGPolynomialCommitmentPacketV1,
+		0,
+		len(shareIDs),
+	)
+	for _, shareID := range shareIDs {
+		packets = append(
+			packets,
+			cloneRabbitVRFDKGPolynomialCommitmentPacketV1(
+				n.remoteCommitments[shareID],
+			),
+		)
+	}
+	n.mu.RUnlock()
+
+	for _, packet := range packets {
+		current := n.runtime.currentContext()
+		if current.SessionID != context.SessionID {
+			return nil
+		}
+
+		if err := peer.sendPolynomialCommitmentV1(packet); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (n *rabbitVRFDKGTransport) sendPendingTransportArtifactsV1(
 	peer *rabbitVRFDKGPeer,
 ) error {
 	if err := n.sendLocalTransportArtifactsV1(peer); err != nil {
 		return err
 	}
+	if err := n.sendRetainedRemoteTransportArtifactsV1(peer); err != nil {
+		return err
+	}
 
-	return n.sendRetainedRemoteTransportArtifactsV1(peer)
+	if err := n.sendLocalPolynomialCommitmentsV1(peer); err != nil {
+		return err
+	}
+
+	return n.sendRetainedRemotePolynomialCommitmentsV1(peer)
 }

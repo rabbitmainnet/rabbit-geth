@@ -9,6 +9,57 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 )
 
+func rabbitVRFDKGSignPolynomialCommitmentEnvelopeV1(
+	wallets []accounts.Wallet,
+	context lqc.RabbitVRFDKGSessionContextV1,
+	member lqc.RabbitVRFCommitteeMemberV1,
+	commitment lqc.RabbitVRFDKGPolynomialCommitmentV1,
+) (lqc.RabbitVRFDKGEnvelopeV1, error) {
+	var empty lqc.RabbitVRFDKGEnvelopeV1
+
+	root, err := lqc.RabbitVRFDKGPolynomialCommitmentPayloadHashV1(context, commitment)
+	if err != nil {
+		return empty, fmt.Errorf("verify rabbit vrf dkg polynomial commitment: %w", err)
+	}
+	if commitment.DealerShareID != member.ShareID {
+		return empty, fmt.Errorf("%w: polynomial commitment dealer mismatch", errRabbitVRFDKGRuntimeV1)
+	}
+
+	envelope, err := lqc.NewRabbitVRFDKGEnvelopeV1(context, member, lqc.RabbitVRFDKGMessagePolynomialCommitmentV1, root)
+	if err != nil {
+		return empty, fmt.Errorf("create rabbit vrf dkg polynomial commitment envelope: %w", err)
+	}
+
+	signingData, err := lqc.RabbitVRFDKGEnvelopeSigningDataV1(context, envelope)
+	if err != nil {
+		return empty, fmt.Errorf("encode rabbit vrf dkg polynomial commitment envelope signing data: %w", err)
+	}
+
+	var lastErr error
+	for _, wallet := range wallets {
+		for _, account := range wallet.Accounts() {
+			if account.Address != member.Participant {
+				continue
+			}
+			signature, signErr := wallet.SignData(account, accounts.MimetypeClique, signingData)
+			if signErr != nil {
+				lastErr = signErr
+				continue
+			}
+			envelope.Signature = append([]byte(nil), signature...)
+			if verifyErr := lqc.VerifyRabbitVRFDKGEnvelopeV1(context, member, envelope); verifyErr != nil {
+				lastErr = verifyErr
+				envelope.Signature = nil
+				continue
+			}
+			return envelope, nil
+		}
+	}
+	if lastErr != nil {
+		return empty, fmt.Errorf("sign rabbit vrf dkg polynomial commitment envelope: %w", lastErr)
+	}
+	return empty, fmt.Errorf("%w: participant wallet unavailable", errRabbitVRFDKGRuntimeV1)
+}
 func rabbitVRFDKGSignTransportBindingEnvelopeV1(
 	wallets []accounts.Wallet,
 	context lqc.RabbitVRFDKGSessionContextV1,
