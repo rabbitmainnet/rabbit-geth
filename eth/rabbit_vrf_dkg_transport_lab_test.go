@@ -710,7 +710,7 @@ func TestRabbitVRFDKGTransportV1RemoteStoreDefensiveSignatureCopy(
 	}
 }
 
-func TestRabbitVRFDKGTransportV1RemoteStoreClearsOnCanonicalSessionChange(
+func TestRabbitVRFDKGTransportV1RemoteStoreReadDoesNotRotateSession(
 	t *testing.T,
 ) {
 	transport, packet :=
@@ -761,15 +761,15 @@ func TestRabbitVRFDKGTransportV1RemoteStoreClearsOnCanonicalSessionChange(
 	}
 
 	transport.mu.RLock()
-	reconciledSession := transport.remoteSession
+	retainedSession := transport.remoteSession
 	count := len(transport.remoteArtifacts)
 	transport.mu.RUnlock()
 
-	if reconciledSession != newSession {
-		t.Fatal("remote store did not reconcile to canonical session")
+	if retainedSession != oldSession {
+		t.Fatal("read path rotated remote session")
 	}
-	if count != 0 {
-		t.Fatalf("old remote artifacts survived session rotation: %d", count)
+	if count != 1 {
+		t.Fatalf("read path mutated retained remote artifacts: %d", count)
 	}
 
 	if _, ok := transport.remoteTransportArtifactV1(

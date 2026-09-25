@@ -20,8 +20,6 @@ func (n *rabbitVRFDKGTransport) sendRetainedRemoteTransportArtifactsV1(
 		return nil
 	}
 
-	n.reconcileRemoteSessionV1(context.SessionID)
-
 	n.mu.RLock()
 	if n.closed || n.remoteSession != context.SessionID {
 		n.mu.RUnlock()

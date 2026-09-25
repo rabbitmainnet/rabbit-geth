@@ -173,9 +173,11 @@ func (n *rabbitVRFDKGTransport) storeRemoteTransportArtifactV1(
 		return false, err
 	}
 
-	context := n.runtime.currentContext()
-	if context.SessionID == (common.Hash{}) ||
-		context.SessionID != packet.Binding.SessionID {
+	n.runtime.mu.RLock()
+	defer n.runtime.mu.RUnlock()
+
+	if n.runtime.current.SessionID == (common.Hash{}) ||
+		n.runtime.current.SessionID != packet.Binding.SessionID {
 		return false, errors.New("rabbit vrf dkg transport artifact session changed")
 	}
 
@@ -206,29 +208,6 @@ func (n *rabbitVRFDKGTransport) storeRemoteTransportArtifactV1(
 	return true, nil
 }
 
-func (n *rabbitVRFDKGTransport) reconcileRemoteSessionV1(
-	sessionID common.Hash,
-) {
-	if n == nil {
-		return
-	}
-
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	if n.closed {
-		return
-	}
-	if n.remoteSession == sessionID {
-		return
-	}
-
-	n.remoteSession = sessionID
-	n.remoteArtifacts = make(
-		map[uint64]rabbitVRFDKGTransportArtifactPacketV1,
-	)
-}
-
 func (n *rabbitVRFDKGTransport) remoteTransportArtifactV1(
 	sessionID common.Hash,
 	shareID uint64,
@@ -240,11 +219,11 @@ func (n *rabbitVRFDKGTransport) remoteTransportArtifactV1(
 		return rabbitVRFDKGTransportArtifactPacketV1{}, false
 	}
 
-	context := n.runtime.currentContext()
-	n.reconcileRemoteSessionV1(context.SessionID)
+	n.runtime.mu.RLock()
+	defer n.runtime.mu.RUnlock()
 
-	if context.SessionID == (common.Hash{}) ||
-		context.SessionID != sessionID {
+	if n.runtime.current.SessionID == (common.Hash{}) ||
+		n.runtime.current.SessionID != sessionID {
 		return rabbitVRFDKGTransportArtifactPacketV1{}, false
 	}
 

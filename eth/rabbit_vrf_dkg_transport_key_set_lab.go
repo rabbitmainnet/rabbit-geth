@@ -165,8 +165,6 @@ func (n *rabbitVRFDKGTransport) canonicalTransportKeySetV1() (
 		}
 	}
 
-	n.reconcileRemoteSessionV1(context.SessionID)
-
 	n.mu.RLock()
 	if n.closed {
 		n.mu.RUnlock()
