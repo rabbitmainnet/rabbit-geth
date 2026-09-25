@@ -320,7 +320,7 @@ func (n *rabbitVRFDKGTransport) runPeer(
 	defer n.unregister(peer.id())
 
 	go func() {
-		if err := n.sendLocalTransportArtifactsV1(peer); err != nil {
+		if err := n.sendPendingTransportArtifactsV1(peer); err != nil {
 			if peer.peer != nil {
 				peer.peer.Log().Debug(
 					"Rabbit VRF DKG initial artifact sync failed",
