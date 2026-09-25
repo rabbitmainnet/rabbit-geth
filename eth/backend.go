@@ -221,6 +221,7 @@ type Ethereum struct {
 	registryNetwork     *lqcRegistryNetwork
 	workTicketTransport *lqcWorkTicketTransport
 	workV1Transport     *lqcWorkV1Transport
+	vrfDKGTransport     *rabbitVRFDKGTransport
 	vrfDKGRuntime       *rabbitVRFDKGRuntime
 	vrfDKGInstanceDir   string
 	discmix             *enode.FairMix
@@ -499,6 +500,17 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return nil, err
 		}
 		eth.vrfDKGRuntime = vrfRuntime
+
+		vrfTransport, err :=
+			newRabbitVRFDKGTransportMaybeLab(
+				eth,
+				vrfRuntime,
+				networkID,
+			)
+		if err != nil {
+			return nil, err
+		}
+		eth.vrfDKGTransport = vrfTransport
 	}
 
 	// Initialize filtermaps log index.
@@ -685,6 +697,9 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 	}
 	if s.workV1Transport != nil {
 		protos = append(protos, s.workV1Transport.Protocol())
+	}
+	if s.vrfDKGTransport != nil {
+		protos = append(protos, s.vrfDKGTransport.Protocol())
 	}
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.config.SnapV2)...)
@@ -1058,6 +1073,9 @@ func (s *Ethereum) Stop() error {
 	// Stop all the peer-related stuff first.
 	s.discmix.Close()
 	s.dropper.Stop()
+	if s.vrfDKGTransport != nil {
+		s.vrfDKGTransport.Close()
+	}
 	if s.vrfDKGRuntime != nil {
 		s.vrfDKGRuntime.Close()
 	}
