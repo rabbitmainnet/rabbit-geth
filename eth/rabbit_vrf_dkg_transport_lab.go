@@ -24,12 +24,14 @@ const (
 
 	rabbitVRFDKGHandshakeTimeout = 5 * time.Second
 	rabbitVRFDKGMaxMessageSize   = 16 * 1024
+	rabbitVRFDKGMaxKnownPerPeer  = 4096
 )
 
 var (
-	errRabbitVRFDKGProtocolClosed   = errors.New("rabbit vrf dkg protocol closed")
-	errRabbitVRFDKGPeerKnown        = errors.New("rabbit vrf dkg peer already connected")
-	errRabbitVRFDKGArtifactConflict = errors.New("rabbit vrf dkg transport artifact conflict")
+	errRabbitVRFDKGProtocolClosed          = errors.New("rabbit vrf dkg protocol closed")
+	errRabbitVRFDKGPeerKnown               = errors.New("rabbit vrf dkg peer already connected")
+	errRabbitVRFDKGArtifactConflict        = errors.New("rabbit vrf dkg transport artifact conflict")
+	errRabbitVRFDKGArtifactSessionMismatch = errors.New("rabbit vrf dkg transport artifact session mismatch")
 )
 
 type rabbitVRFDKGStatusPacket struct {
@@ -72,6 +74,9 @@ type rabbitVRFDKGTransport struct {
 type rabbitVRFDKGPeer struct {
 	peer *p2p.Peer
 	rw   p2p.MsgReadWriter
+
+	mu    sync.Mutex
+	known map[common.Hash]struct{}
 }
 
 func newRabbitVRFDKGTransport(
@@ -269,7 +274,7 @@ func (n *rabbitVRFDKGTransport) validateTransportArtifactV1(
 	if context.SessionID == (common.Hash{}) ||
 		packet.Binding.SessionID != context.SessionID ||
 		packet.Envelope.SessionID != context.SessionID {
-		return errors.New("rabbit vrf dkg transport artifact session mismatch")
+		return errRabbitVRFDKGArtifactSessionMismatch
 	}
 
 	var expected lqc.RabbitVRFCommitteeMemberV1
@@ -300,7 +305,11 @@ func (n *rabbitVRFDKGTransport) runPeer(
 	remote *p2p.Peer,
 	rw p2p.MsgReadWriter,
 ) error {
-	peer := &rabbitVRFDKGPeer{peer: remote, rw: rw}
+	peer := &rabbitVRFDKGPeer{
+		peer:  remote,
+		rw:    rw,
+		known: make(map[common.Hash]struct{}),
+	}
 
 	if err := n.handshake(peer); err != nil {
 		return err
@@ -309,6 +318,18 @@ func (n *rabbitVRFDKGTransport) runPeer(
 		return err
 	}
 	defer n.unregister(peer.id())
+
+	go func() {
+		if err := n.sendLocalTransportArtifactsV1(peer); err != nil {
+			if peer.peer != nil {
+				peer.peer.Log().Debug(
+					"Rabbit VRF DKG initial artifact sync failed",
+					"err",
+					err,
+				)
+			}
+		}
+	}()
 
 	for {
 		message, err := rw.ReadMsg()
@@ -330,10 +351,27 @@ func (n *rabbitVRFDKGTransport) runPeer(
 					err,
 				)
 			}
-			if _, err := n.storeRemoteTransportArtifactV1(packet); err != nil {
+			inserted, err := n.storeRemoteTransportArtifactV1(packet)
+			if err != nil {
+				if errors.Is(
+					err,
+					errRabbitVRFDKGArtifactSessionMismatch,
+				) {
+					continue
+				}
+
 				return fmt.Errorf(
 					"validate rabbit vrf dkg transport artifact: %w",
 					err,
+				)
+			}
+
+			peer.markKnown(packet.Envelope.PayloadHash)
+
+			if inserted {
+				n.broadcastTransportArtifactV1(
+					packet,
+					peer.id(),
 				)
 			}
 		default:
@@ -416,6 +454,63 @@ func (n *rabbitVRFDKGTransport) handshake(
 	return nil
 }
 
+func (peer *rabbitVRFDKGPeer) markKnown(
+	hash common.Hash,
+) {
+	if peer == nil || hash == (common.Hash{}) {
+		return
+	}
+
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+
+	if peer.known == nil {
+		peer.known = make(map[common.Hash]struct{})
+	}
+	if len(peer.known) >= rabbitVRFDKGMaxKnownPerPeer {
+		clear(peer.known)
+	}
+	peer.known[hash] = struct{}{}
+}
+
+func (peer *rabbitVRFDKGPeer) sendTransportArtifactV1(
+	packet rabbitVRFDKGTransportArtifactPacketV1,
+) error {
+	if peer == nil || peer.rw == nil {
+		return errors.New("invalid rabbit vrf dkg peer transport")
+	}
+
+	hash := packet.Envelope.PayloadHash
+	if hash == (common.Hash{}) {
+		return errors.New("zero rabbit vrf dkg transport artifact hash")
+	}
+
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+
+	if peer.known == nil {
+		peer.known = make(map[common.Hash]struct{})
+	}
+	if _, exists := peer.known[hash]; exists {
+		return nil
+	}
+
+	if err := p2p.Send(
+		peer.rw,
+		rabbitVRFDKGTransportArtifactMsg,
+		packet,
+	); err != nil {
+		return err
+	}
+
+	if len(peer.known) >= rabbitVRFDKGMaxKnownPerPeer {
+		clear(peer.known)
+	}
+	peer.known[hash] = struct{}{}
+
+	return nil
+}
+
 func (peer *rabbitVRFDKGPeer) id() string {
 	if peer == nil || peer.peer == nil {
 		return ""
@@ -447,6 +542,91 @@ func (n *rabbitVRFDKGTransport) unregister(id string) {
 	n.mu.Lock()
 	delete(n.peers, id)
 	n.mu.Unlock()
+}
+
+func (n *rabbitVRFDKGTransport) sendLocalTransportArtifactsV1(
+	peer *rabbitVRFDKGPeer,
+) error {
+	if n == nil || n.runtime == nil || peer == nil {
+		return nil
+	}
+
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) ||
+		len(context.Members) == 0 ||
+		len(context.TransportBindings) == 0 ||
+		len(context.TransportBindings) !=
+			len(context.TransportEnvelopes) {
+		return nil
+	}
+
+	if !n.runtime.transportArtifactsReadyV1(
+		context.CanonicalSession,
+		context.SessionID,
+		context.Members,
+	) {
+		return nil
+	}
+
+	for index := range context.TransportBindings {
+		current := n.runtime.currentContext()
+		if current.SessionID != context.SessionID {
+			return nil
+		}
+
+		packet := rabbitVRFDKGTransportArtifactPacketV1{
+			Binding:  context.TransportBindings[index],
+			Envelope: context.TransportEnvelopes[index],
+		}
+
+		if err := peer.sendTransportArtifactV1(
+			cloneRabbitVRFDKGTransportArtifactPacketV1(packet),
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (n *rabbitVRFDKGTransport) broadcastTransportArtifactV1(
+	packet rabbitVRFDKGTransportArtifactPacketV1,
+	except string,
+) {
+	if n == nil {
+		return
+	}
+
+	n.mu.RLock()
+	if n.closed {
+		n.mu.RUnlock()
+		return
+	}
+
+	peers := make([]*rabbitVRFDKGPeer, 0, len(n.peers))
+	for id, peer := range n.peers {
+		if id != except {
+			peers = append(peers, peer)
+		}
+	}
+	n.mu.RUnlock()
+
+	for _, peer := range peers {
+		peer := peer
+		outbound := cloneRabbitVRFDKGTransportArtifactPacketV1(packet)
+
+		go func() {
+			if err := peer.sendTransportArtifactV1(outbound); err != nil {
+				if peer.peer != nil {
+					peer.peer.Log().Debug(
+						"Rabbit VRF DKG artifact broadcast failed",
+						"err",
+						err,
+					)
+				}
+			}
+		}()
+	}
 }
 
 func (n *rabbitVRFDKGTransport) Close() {

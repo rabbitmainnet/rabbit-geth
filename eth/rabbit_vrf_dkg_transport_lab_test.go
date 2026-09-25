@@ -4,6 +4,7 @@ package eth
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -776,5 +777,473 @@ func TestRabbitVRFDKGTransportV1RemoteStoreClearsOnCanonicalSessionChange(
 		packet.Binding.ShareID,
 	); ok {
 		t.Fatal("old artifact appeared under new session")
+	}
+}
+
+func TestRabbitVRFDKGTransportV1PeerSendDeduplicates(
+	t *testing.T,
+) {
+	_, packet :=
+		newRabbitVRFDKGTransportArtifactFixtureV1(t)
+
+	leftRW, rightRW := p2p.MsgPipe()
+	defer leftRW.Close()
+	defer rightRW.Close()
+
+	peer := &rabbitVRFDKGPeer{
+		rw:    leftRW,
+		known: make(map[common.Hash]struct{}),
+	}
+
+	firstResult := make(chan error, 1)
+	go func() {
+		firstResult <- peer.sendTransportArtifactV1(packet)
+	}()
+
+	message, err := rightRW.ReadMsg()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Code != rabbitVRFDKGTransportArtifactMsg {
+		t.Fatalf("unexpected message code: %d", message.Code)
+	}
+
+	var received rabbitVRFDKGTransportArtifactPacketV1
+	if err := message.Decode(&received); err != nil {
+		t.Fatal(err)
+	}
+
+	if received.Binding != packet.Binding {
+		t.Fatal("received binding differs from sent binding")
+	}
+	if string(received.Envelope.Signature) !=
+		string(packet.Envelope.Signature) {
+		t.Fatal("received envelope signature differs")
+	}
+
+	select {
+	case err := <-firstResult:
+		if err != nil {
+			t.Fatalf("first artifact send failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first artifact send timed out")
+	}
+
+	if err := peer.sendTransportArtifactV1(packet); err != nil {
+		t.Fatalf("duplicate artifact send failed: %v", err)
+	}
+
+	peer.mu.Lock()
+	knownCount := len(peer.known)
+	_, known := peer.known[packet.Envelope.PayloadHash]
+	peer.mu.Unlock()
+
+	if !known {
+		t.Fatal("sent artifact was not marked known")
+	}
+	if knownCount != 1 {
+		t.Fatalf("unexpected known artifact count: %d", knownCount)
+	}
+
+	secondRead := make(chan error, 1)
+	go func() {
+		_, err := rightRW.ReadMsg()
+		secondRead <- err
+	}()
+
+	select {
+	case err := <-secondRead:
+		t.Fatalf("duplicate unexpectedly produced a message: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRabbitVRFDKGTransportV1GossipAToBToCNoEchoNoDuplicate(
+	t *testing.T,
+) {
+	receiver, packet :=
+		newRabbitVRFDKGTransportArtifactFixtureV1(t)
+
+	aRW, runResult :=
+		startRabbitVRFDKGTransportArtifactWireV1(
+			t,
+			receiver,
+		)
+
+	cLocal, cRemote := p2p.MsgPipe()
+	defer cLocal.Close()
+	defer cRemote.Close()
+
+	cPeer := &rabbitVRFDKGPeer{
+		peer: p2p.NewPeerPipe(
+			enode.ID{11},
+			"rabbit-vrf-c",
+			nil,
+			cLocal,
+		),
+		rw:    cLocal,
+		known: make(map[common.Hash]struct{}),
+	}
+
+	if err := receiver.register(cPeer); err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.unregister(cPeer.id())
+
+	if err := p2p.Send(
+		aRW,
+		rabbitVRFDKGTransportArtifactMsg,
+		packet,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	cFirst := make(chan rabbitVRFDKGTransportArtifactPacketV1, 1)
+	cFirstErr := make(chan error, 1)
+
+	go func() {
+		message, err := cRemote.ReadMsg()
+		if err != nil {
+			cFirstErr <- err
+			return
+		}
+		if message.Code != rabbitVRFDKGTransportArtifactMsg {
+			cFirstErr <- fmt.Errorf(
+				"unexpected C message code: %d",
+				message.Code,
+			)
+			return
+		}
+
+		var got rabbitVRFDKGTransportArtifactPacketV1
+		if err := message.Decode(&got); err != nil {
+			cFirstErr <- err
+			return
+		}
+		cFirst <- got
+	}()
+
+	select {
+	case err := <-cFirstErr:
+		t.Fatalf("B to C gossip failed: %v", err)
+	case got := <-cFirst:
+		if got.Binding != packet.Binding {
+			t.Fatal("C received wrong binding")
+		}
+		if string(got.Envelope.Signature) !=
+			string(packet.Envelope.Signature) {
+			t.Fatal("C received wrong envelope signature")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("B to C gossip timed out")
+	}
+
+	aEcho := make(chan error, 1)
+	go func() {
+		message, err := aRW.ReadMsg()
+		if err == nil {
+			err = fmt.Errorf(
+				"unexpected echo message code: %d",
+				message.Code,
+			)
+		}
+		aEcho <- err
+	}()
+
+	select {
+	case err := <-aEcho:
+		t.Fatalf("artifact echoed to origin A: %v", err)
+	case err := <-runResult:
+		t.Fatalf("B receive loop stopped unexpectedly: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	if err := p2p.Send(
+		aRW,
+		rabbitVRFDKGTransportArtifactMsg,
+		packet,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	cDuplicate := make(chan error, 1)
+	go func() {
+		message, err := cRemote.ReadMsg()
+		if err == nil {
+			err = fmt.Errorf(
+				"unexpected duplicate message code: %d",
+				message.Code,
+			)
+		}
+		cDuplicate <- err
+	}()
+
+	select {
+	case err := <-cDuplicate:
+		t.Fatalf("duplicate was retransmitted to C: %v", err)
+	case err := <-runResult:
+		t.Fatalf("B receive loop stopped after duplicate: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	stored, ok := receiver.remoteTransportArtifactV1(
+		packet.Binding.SessionID,
+		packet.Binding.ShareID,
+	)
+	if !ok {
+		t.Fatal("B did not retain received artifact")
+	}
+	if stored.Binding != packet.Binding {
+		t.Fatal("B retained wrong artifact")
+	}
+}
+
+func TestRabbitVRFDKGTransportV1NewPeerReceivesLocalArtifact(
+	t *testing.T,
+) {
+	transport, packet :=
+		newRabbitVRFDKGTransportArtifactFixtureV1(t)
+
+	context := transport.runtime.currentContext()
+	if len(context.CanonicalMembers) != 1 {
+		t.Fatalf(
+			"canonical members=%d want=1",
+			len(context.CanonicalMembers),
+		)
+	}
+
+	member := context.CanonicalMembers[0]
+
+	transport.runtime.mu.Lock()
+	transport.runtime.current.Members =
+		[]lqc.RabbitVRFCommitteeMemberV1{member}
+	transport.runtime.current.TransportBindings =
+		[]lqc.RabbitVRFDKGTransportKeyBindingV1{packet.Binding}
+	transport.runtime.current.TransportEnvelopes =
+		[]lqc.RabbitVRFDKGEnvelopeV1{
+			cloneRabbitVRFDKGTransportArtifactPacketV1(
+				packet,
+			).Envelope,
+		}
+	transport.runtime.mu.Unlock()
+
+	if !transport.runtime.transportArtifactsReadyV1(
+		context.CanonicalSession,
+		context.SessionID,
+		[]lqc.RabbitVRFCommitteeMemberV1{member},
+	) {
+		t.Fatal("local transport artifacts not ready")
+	}
+
+	remoteRW, runResult :=
+		startRabbitVRFDKGTransportArtifactWireV1(
+			t,
+			transport,
+		)
+
+	received := make(
+		chan rabbitVRFDKGTransportArtifactPacketV1,
+		1,
+	)
+	receiveErr := make(chan error, 1)
+
+	go func() {
+		message, err := remoteRW.ReadMsg()
+		if err != nil {
+			receiveErr <- err
+			return
+		}
+		if message.Code != rabbitVRFDKGTransportArtifactMsg {
+			receiveErr <- fmt.Errorf(
+				"unexpected initial sync message code: %d",
+				message.Code,
+			)
+			return
+		}
+
+		var got rabbitVRFDKGTransportArtifactPacketV1
+		if err := message.Decode(&got); err != nil {
+			receiveErr <- err
+			return
+		}
+		received <- got
+	}()
+
+	select {
+	case err := <-receiveErr:
+		t.Fatalf("initial artifact sync failed: %v", err)
+	case err := <-runResult:
+		t.Fatalf("receive loop stopped during initial sync: %v", err)
+	case got := <-received:
+		if got.Binding != packet.Binding {
+			t.Fatal("new peer received wrong local binding")
+		}
+		if string(got.Envelope.Signature) !=
+			string(packet.Envelope.Signature) {
+			t.Fatal("new peer received wrong local envelope")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("new peer initial artifact sync timed out")
+	}
+}
+
+func TestRabbitVRFDKGTransportV1NewPeerRejectsTamperedLocalArtifact(
+	t *testing.T,
+) {
+	transport, packet :=
+		newRabbitVRFDKGTransportArtifactFixtureV1(t)
+
+	context := transport.runtime.currentContext()
+	if len(context.CanonicalMembers) != 1 {
+		t.Fatalf(
+			"canonical members=%d want=1",
+			len(context.CanonicalMembers),
+		)
+	}
+
+	member := context.CanonicalMembers[0]
+	tampered :=
+		cloneRabbitVRFDKGTransportArtifactPacketV1(packet)
+	if len(tampered.Envelope.Signature) == 0 {
+		t.Fatal("fixture produced empty signature")
+	}
+	tampered.Envelope.Signature[0] ^= 0x01
+
+	transport.runtime.mu.Lock()
+	transport.runtime.current.Members =
+		[]lqc.RabbitVRFCommitteeMemberV1{member}
+	transport.runtime.current.TransportBindings =
+		[]lqc.RabbitVRFDKGTransportKeyBindingV1{
+			tampered.Binding,
+		}
+	transport.runtime.current.TransportEnvelopes =
+		[]lqc.RabbitVRFDKGEnvelopeV1{
+			tampered.Envelope,
+		}
+	transport.runtime.mu.Unlock()
+
+	if transport.runtime.transportArtifactsReadyV1(
+		context.CanonicalSession,
+		context.SessionID,
+		[]lqc.RabbitVRFCommitteeMemberV1{member},
+	) {
+		t.Fatal("tampered local artifact considered ready")
+	}
+
+	remoteRW, runResult :=
+		startRabbitVRFDKGTransportArtifactWireV1(
+			t,
+			transport,
+		)
+
+	unexpected := make(chan error, 1)
+	go func() {
+		message, err := remoteRW.ReadMsg()
+		if err == nil {
+			err = fmt.Errorf(
+				"unexpected published message code: %d",
+				message.Code,
+			)
+		}
+		unexpected <- err
+	}()
+
+	select {
+	case err := <-unexpected:
+		t.Fatalf(
+			"tampered local artifact was published: %v",
+			err,
+		)
+	case err := <-runResult:
+		t.Fatalf(
+			"receive loop stopped unexpectedly: %v",
+			err,
+		)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestRabbitVRFDKGTransportV1StaleSessionDoesNotDisconnectPeer(
+	t *testing.T,
+) {
+	transport, packet :=
+		newRabbitVRFDKGTransportArtifactFixtureV1(t)
+
+	remoteRW, runResult :=
+		startRabbitVRFDKGTransportArtifactWireV1(
+			t,
+			transport,
+		)
+
+	stale :=
+		cloneRabbitVRFDKGTransportArtifactPacketV1(packet)
+	staleSession := crypto.Keccak256Hash(
+		[]byte("rabbit-vrf-stale-session"),
+	)
+	if staleSession == packet.Binding.SessionID {
+		t.Fatal("stale session unexpectedly equals canonical session")
+	}
+
+	stale.Binding.SessionID = staleSession
+	stale.Envelope.SessionID = staleSession
+
+	if err := p2p.Send(
+		remoteRW,
+		rabbitVRFDKGTransportArtifactMsg,
+		stale,
+	); err != nil {
+		t.Fatalf("send stale artifact: %v", err)
+	}
+
+	select {
+	case err := <-runResult:
+		t.Fatalf(
+			"stale session disconnected peer: %v",
+			err,
+		)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if _, ok := transport.remoteTransportArtifactV1(
+		staleSession,
+		stale.Binding.ShareID,
+	); ok {
+		t.Fatal("stale-session artifact was retained")
+	}
+
+	if err := p2p.Send(
+		remoteRW,
+		rabbitVRFDKGTransportArtifactMsg,
+		packet,
+	); err != nil {
+		t.Fatalf("send valid artifact after stale: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-runResult:
+			t.Fatalf(
+				"peer disconnected before valid artifact was retained: %v",
+				err,
+			)
+		case <-ticker.C:
+			stored, ok := transport.remoteTransportArtifactV1(
+				packet.Binding.SessionID,
+				packet.Binding.ShareID,
+			)
+			if ok {
+				if stored.Binding != packet.Binding {
+					t.Fatal("wrong artifact retained after stale packet")
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("valid artifact after stale session was not retained")
+		}
 	}
 }
