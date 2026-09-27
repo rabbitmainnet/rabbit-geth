@@ -179,8 +179,10 @@ func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4(
 	// clear legacy missed-turn/jail state without deleting WorkSeats.
 	if l != nil &&
 		l.config != nil &&
-		l.config.ConsensusLivenessV4Block != 0 &&
-		blockNumber == l.config.ConsensusLivenessV4Block {
+		((l.config.ConsensusLivenessV4Block != 0 &&
+			blockNumber == l.config.ConsensusLivenessV4Block) ||
+			(l.config.ConsensusLivenessV5Block != 0 &&
+				blockNumber == l.config.ConsensusLivenessV5Block)) {
 		return append([]WorkSeatV1(nil), ordered...), nil
 	}
 
@@ -207,6 +209,66 @@ func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4(
 		final = append(final, seat)
 	}
 
+	return final, nil
+}
+
+func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4Legacy(
+	registry *CanonicalRegistry,
+	ordered []WorkSeatV1,
+	blockNumber uint64,
+) ([]WorkSeatV1, error) {
+	if registry == nil {
+		return nil, ErrParticipantNotActive
+	}
+
+	// The activation block is a deterministic liveness reset boundary.
+	// Keep the full canonical WorkSeat order for this one block so
+	// RestoreWorkSeatLiveness can recreate missing registry entries and
+	// clear legacy missed-turn/jail state without deleting WorkSeats.
+	if l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV4Block != 0 &&
+		blockNumber == l.config.ConsensusLivenessV4Block {
+		return append([]WorkSeatV1(nil), ordered...), nil
+	}
+
+	rules := l.registryRules()
+	ready := make([]WorkSeatV1, 0, len(ordered))
+	recovery := make([]WorkSeatV1, 0, len(ordered))
+
+	for _, seat := range ordered {
+		participant, exists := registry.Participant(seat.Participant)
+
+		// Missing/never-live registry identities cannot author a normal V4 block.
+		// Persistent WorkSeat ownership is not deleted.
+		if !exists || participant.LastHeartbeat == 0 {
+			continue
+		}
+
+		// Active jail is a hard authorization exclusion. V4 authorizes the
+		// whole Ordered queue, so jailed seats must not be present in Ordered.
+		if participant.JailedUntil > blockNumber {
+			continue
+		}
+
+		availableUntil, ok := checkedRegistryBlockAdd(
+			participant.LastHeartbeat,
+			rules.HeartbeatWindow,
+			rules.HeartbeatGrace,
+		)
+		if ok && blockNumber <= availableUntil {
+			ready = append(ready, seat)
+			continue
+		}
+
+		// A stale but non-jailed persistent seat remains a delayed recovery
+		// candidate. Successful production refreshes LastHeartbeat.
+		recovery = append(recovery, seat)
+	}
+
+	final := make([]WorkSeatV1, 0, len(ready)+len(recovery))
+	final = append(final, ready...)
+	final = append(final, recovery...)
 	return final, nil
 }
 
@@ -411,13 +473,25 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 	)
 
 	var orderedSeats []WorkSeatV1
-	if l.consensusLivenessV4Active(blockNumber) {
+	if l.consensusLivenessV5Active(blockNumber) {
 		orderedSeats, err = DeterministicallyOrderWorkSeatsV1(
 			eligibleSeats,
 			selectionSeed,
 		)
 		if err == nil {
 			orderedSeats, err = l.workV1EngineLabOrderSeatsByLivenessV4(
+				registry,
+				orderedSeats,
+				blockNumber,
+			)
+		}
+	} else if l.consensusLivenessV4Active(blockNumber) {
+		orderedSeats, err = DeterministicallyOrderWorkSeatsV1(
+			eligibleSeats,
+			selectionSeed,
+		)
+		if err == nil {
+			orderedSeats, err = l.workV1EngineLabOrderSeatsByLivenessV4Legacy(
 				registry,
 				orderedSeats,
 				blockNumber,
@@ -453,8 +527,8 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		fallbackCount,
 		committeeSize,
 	)
-	if l.consensusLivenessV4Active(blockNumber) {
-		// V4 fairness: heartbeat age must not remove or demote a selected
+	if l.consensusLivenessV5Active(blockNumber) {
+		// V5 fairness: heartbeat age must not remove or demote a selected
 		// committee WorkSeat. Only an active jail excludes committee duty.
 		workSelection = workV1EngineLabFilterCommitteeByLiveness(
 			workSelection,
@@ -722,15 +796,28 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 		l.isConsensusStabilizationBlock(blockNumber) ||
 		l.isConsensusFairnessBlock(blockNumber) ||
 		(l.config.ConsensusLivenessV4Block != 0 &&
-			blockNumber == l.config.ConsensusLivenessV4Block) {
+			blockNumber == l.config.ConsensusLivenessV4Block) ||
+		(l.config.ConsensusLivenessV5Block != 0 &&
+			blockNumber == l.config.ConsensusLivenessV5Block) {
 		addresses := make([]common.Address, 0, len(selection.Ordered))
 		for _, seat := range selection.Ordered {
 			addresses = append(addresses, seat.Address)
 		}
-		if err := registry.RestoreWorkSeatLiveness(
-			addresses,
-			blockNumber,
-		); err != nil {
+		var err error
+		if l.consensusLivenessV5Active(blockNumber) &&
+			l.config.ConsensusLivenessV5Block != 0 &&
+			blockNumber == l.config.ConsensusLivenessV5Block {
+			err = registry.RestoreWorkSeatLiveness(
+				addresses,
+				blockNumber,
+			)
+		} else {
+			err = registry.RestoreWorkSeatLivenessLegacy(
+				addresses,
+				blockNumber,
+			)
+		}
+		if err != nil {
 			return err
 		}
 	} else if l.consensusLivenessV4Active(blockNumber) || !l.consensusFairnessActive(blockNumber) {

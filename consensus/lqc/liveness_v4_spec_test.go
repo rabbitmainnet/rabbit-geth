@@ -21,6 +21,7 @@ func TestLivenessV4KeepsNormalAuthorizationBoundedAtForkBoundary(t *testing.T) {
 	engine := &LQC{config: &params.LQCConfig{
 		ConsensusLivenessV3Block: 100,
 		ConsensusLivenessV4Block: 200,
+		ConsensusLivenessV5Block: 200,
 	}}
 
 	if allowed, _ := engine.isAuthorAllowedAt(

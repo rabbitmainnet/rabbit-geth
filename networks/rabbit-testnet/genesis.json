@@ -40,7 +40,8 @@
       "minorSlashBps": 500,
       "majorSlashBps": 2000,
       "consensusLivenessV3Block": 77000,
-      "consensusLivenessV4Block": 97991
+      "consensusLivenessV4Block": 97991,
+      "consensusLivenessV5Block": 115000
     }
   },
   "nonce": "0x0",

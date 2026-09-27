@@ -144,6 +144,7 @@ func isFrozenRabbitPublicNetwork(
 }
 
 const rabbitTestnetLivenessV4Block uint64 = 97991
+const rabbitTestnetLivenessV5Block uint64 = 115000
 
 func migrateRabbitTestnetLivenessV4Config(
 	chainDb ethdb.Database,
@@ -164,12 +165,26 @@ func migrateRabbitTestnetLivenessV4Config(
 		cfg.ConsensusHardeningBlock != 50000 ||
 		cfg.ConsensusStabilizationBlock != 50500 ||
 		cfg.ConsensusFairnessBlock != 73000 ||
-		cfg.ConsensusLivenessV3Block != 77000 ||
-		cfg.ConsensusLivenessV4Block != 0 {
+		cfg.ConsensusLivenessV3Block != 77000 {
+		return false
+	}
+
+	if cfg.ConsensusLivenessV4Block != 0 &&
+		cfg.ConsensusLivenessV4Block != rabbitTestnetLivenessV4Block {
+		return false
+	}
+	if cfg.ConsensusLivenessV5Block != 0 &&
+		cfg.ConsensusLivenessV5Block != rabbitTestnetLivenessV5Block {
+		return false
+	}
+
+	if cfg.ConsensusLivenessV4Block == rabbitTestnetLivenessV4Block &&
+		cfg.ConsensusLivenessV5Block == rabbitTestnetLivenessV5Block {
 		return false
 	}
 
 	cfg.ConsensusLivenessV4Block = rabbitTestnetLivenessV4Block
+	cfg.ConsensusLivenessV5Block = rabbitTestnetLivenessV5Block
 
 	rawdb.WriteChainConfig(
 		chainDb,
@@ -181,6 +196,8 @@ func migrateRabbitTestnetLivenessV4Config(
 		"Migrated Rabbit Testnet stored chain config",
 		"consensusLivenessV4Block",
 		rabbitTestnetLivenessV4Block,
+		"consensusLivenessV5Block",
+		rabbitTestnetLivenessV5Block,
 	)
 
 	return true

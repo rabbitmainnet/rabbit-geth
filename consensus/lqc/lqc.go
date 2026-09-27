@@ -146,9 +146,19 @@ func (l *LQC) consensusLivenessV4Active(blockNumber uint64) bool {
 		blockNumber >= l.config.ConsensusLivenessV4Block
 }
 
+func (l *LQC) consensusLivenessV5Active(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV5Block != 0 &&
+		blockNumber >= l.config.ConsensusLivenessV5Block
+}
+
 func (l *LQC) isAuthorAllowedAt(blockNumber uint64, selection HybridSelection, author common.Address) (bool, int) {
-	if l.consensusLivenessV4Active(blockNumber) {
+	if l.consensusLivenessV5Active(blockNumber) {
 		return IsAuthorAllowedBounded(selection, author)
+	}
+	if l.consensusLivenessV4Active(blockNumber) {
+		return IsAuthorAllowed(selection, author)
 	}
 	if l.consensusLivenessV3Active(blockNumber) {
 		return IsAuthorAllowedBounded(selection, author)
