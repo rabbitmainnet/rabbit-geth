@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -791,6 +792,67 @@ func (peer *rabbitVRFDKGPeer) sendThresholdPartialV1(packet lqc.RabbitVRFThresho
 	return nil
 }
 
+func (n *rabbitVRFDKGTransport) processCanonicalPendingRequestV1(requestID common.Hash) error {
+	if n == nil || n.runtime == nil || n.runtime.backend == nil || n.runtime.backend.vrfDKGInstanceDir == "" {
+		return errors.New("rabbit vrf threshold local flow unavailable")
+	}
+	if _, err := n.runtime.canonicalPendingRequestV1(requestID); err != nil {
+		return fmt.Errorf("rabbit vrf canonical pending request: %w", err)
+	}
+
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) || len(context.Members) == 0 {
+		return errors.New("rabbit vrf local threshold committee unavailable")
+	}
+
+	keysetStore, err := rabbitvrfstate.NewDKGFinalKeysetStoreV1(filepath.Join(n.runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-final-keysets"))
+	if err != nil {
+		return fmt.Errorf("open rabbit vrf dkg final keyset store: %w", err)
+	}
+	keyset, err := keysetStore.Load(context.CanonicalSession)
+	if err != nil {
+		return fmt.Errorf("load rabbit vrf dkg final keyset: %w", err)
+	}
+
+	message, _, err := lqc.RabbitVRFThresholdMessageV1(context.CanonicalSession, keyset.KeysetRoot, requestID)
+	if err != nil {
+		return fmt.Errorf("build rabbit vrf threshold message: %w", err)
+	}
+
+	partialStore, err := rabbitvrfstate.NewThresholdPartialStoreV1(filepath.Join(n.runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "threshold-partials"))
+	if err != nil {
+		return fmt.Errorf("open rabbit vrf threshold partial store: %w", err)
+	}
+
+	for _, member := range context.Members {
+		packet, loadErr := partialStore.Load(context.CanonicalSession, keyset.KeysetRoot, requestID, member.ShareID)
+		if loadErr != nil {
+			if !errors.Is(loadErr, os.ErrNotExist) && !errors.Is(loadErr, rabbitvrfstate.ErrDKGTransportKeyStoreMissingV1) {
+				return fmt.Errorf("load rabbit vrf threshold partial share %d: %w", member.ShareID, loadErr)
+			}
+			partial, _, signErr := n.runtime.signLocalThresholdPartialV1(member, message)
+			if signErr != nil {
+				return fmt.Errorf("sign rabbit vrf threshold partial share %d: %w", member.ShareID, signErr)
+			}
+			packet, signErr = lqc.NewRabbitVRFThresholdPartialV1(context.CanonicalSession, keyset.KeysetRoot, requestID, partial)
+			if signErr != nil {
+				return fmt.Errorf("build rabbit vrf threshold partial share %d: %w", member.ShareID, signErr)
+			}
+			if signErr := partialStore.Store(context.CanonicalSession, packet); signErr != nil {
+				return fmt.Errorf("persist rabbit vrf threshold partial share %d: %w", member.ShareID, signErr)
+			}
+		}
+
+		if err := n.collectThresholdPartialV1(packet); err != nil {
+			return fmt.Errorf("collect local rabbit vrf threshold partial share %d: %w", member.ShareID, err)
+		}
+		if err := n.broadcastThresholdPartialV1(packet, ""); err != nil {
+			return fmt.Errorf("broadcast local rabbit vrf threshold partial share %d: %w", member.ShareID, err)
+		}
+	}
+	return nil
+}
+
 func (n *rabbitVRFDKGTransport) broadcastThresholdPartialV1(packet lqc.RabbitVRFThresholdPartialV1, excludePeerID string) error {
 	if n == nil {
 		return errors.New("invalid rabbit vrf threshold partial transport")
@@ -830,6 +892,13 @@ func (n *rabbitVRFDKGTransport) handleInboundThresholdPartialV1(peer *rabbitVRFD
 	}
 	if !n.thresholdPartialPeerAuthenticatedV1(peer, packet) {
 		return errors.New("rabbit vrf threshold partial sender route mismatch")
+	}
+	return n.collectThresholdPartialV1(packet)
+}
+
+func (n *rabbitVRFDKGTransport) collectThresholdPartialV1(packet lqc.RabbitVRFThresholdPartialV1) error {
+	if n == nil || n.runtime == nil {
+		return errors.New("rabbit vrf threshold partial transport unavailable")
 	}
 	if err := n.runtime.validateInboundThresholdPartialV1(packet); err != nil {
 		return err
