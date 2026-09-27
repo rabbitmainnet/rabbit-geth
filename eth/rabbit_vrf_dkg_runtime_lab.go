@@ -806,6 +806,16 @@ func (runtime *rabbitVRFDKGRuntime) processCurrentHead() error {
 		)
 	}
 
+	if err := runtime.ensurePolynomialCommitmentsV1(
+		bridge,
+		members,
+	); err != nil {
+		return fmt.Errorf(
+			"prepare local rabbit vrf dkg polynomial commitments: %w",
+			err,
+		)
+	}
+
 	return nil
 }
 
