@@ -52,3 +52,34 @@ Important caveats:
 ## Exact next implementation step
 
 Connect threshold signing to a CANONICAL pending Rabbit VRF request. Do not sign arbitrary RequestIDs received from P2P. First identify/read the canonical request state from RabbitVRFCoordinatorV1/core state and validate that the request exists and is pending. Then create the local threshold partial from the persisted SecretShare, build RabbitVRFThresholdPartialV1, send/gossip it through authenticated rvrfdkg code 5, and feed the local partial into the same collector path. Preserve session/keyset/request binding and reject stale or already-completed requests. After that add restart/adversarial and multinode tests before any activation discussion.
+
+
+## Checkpoint 2026-09-27 — canonical pending request gate
+
+Code checkpoint: `8b3aeb640 feat(rabbitvrf): gate threshold partials on canonical requests`
+
+Completed and green:
+- threshold partial validation now requires a canonical pending Rabbit VRF request
+- production lookup uses canonical head -> StateAt -> RabbitVRFCoordinatorV1.getRequest(bytes32)
+- zero/nonexistent request IDs are rejected
+- non-PENDING requests are rejected
+- pending requests that already contain randomness or proofHash are rejected
+- code 5 cannot accept arbitrary RequestIDs without canonical request validation
+- threshold wire test includes rejection of a non-canonical request
+- full tagged suites green: consensus/lqc, crypto/rabbitvrf, internal/rabbitvrfstate, eth
+
+Remaining fixed blocks: 3
+1. Automatic local flow: canonical pending request -> local SecretShare partial -> RabbitVRFThresholdPartialV1 -> local collector + authenticated rvrfdkg code 5 gossip
+2. Canonical request finalization: write/validate randomness, proofHash, epoch/round/status exactly once
+3. Robustness proof: restart/replay/adversarial tests and real 3+ node multinode validation
+
+Important caveats:
+- public Testnet Rabbit VRF remains disabled
+- do not choose or configure VRFProtocolBlock
+- do not activate a fork
+- dealer policy remains fail-closed/all-canonical-dealers-required until complaint/qualification is implemented
+- untracked `eth/rabbit_vrf_dkg_polynomial_transport_lab_test.go.broken` must remain untouched
+
+## Exact next implementation step
+
+Implement Block 2 of 4 (first of the 3 remaining blocks): automatic local threshold flow. Starting only from a canonical PENDING request, load the persisted local SecretShare and finalized keyset, build the canonical threshold message, sign the local partial, construct RabbitVRFThresholdPartialV1, feed the local partial into the same collector path used for inbound code 5 packets, and gossip it through authenticated rvrfdkg peers. Prevent duplicate local signing/gossip for the same SessionID + KeysetRoot + RequestID + ShareID and preserve restart safety. Do not finalize the on-chain request yet; that belongs to the next fixed block.
