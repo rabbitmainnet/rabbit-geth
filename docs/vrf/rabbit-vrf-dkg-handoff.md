@@ -23,3 +23,32 @@ Safety:
 
 Preserve untracked file:
 - eth/rabbit_vrf_dkg_polynomial_transport_lab_test.go.broken
+
+
+## Checkpoint 2026-09-27 — threshold partial P2P transport
+
+Code checkpoint: `d5c5fff06 feat(rabbitvrf): add threshold partial p2p transport`
+
+Completed and green:
+- canonical threshold message bound to SessionID + KeysetRoot + RequestID
+- deterministic MessageHash and partial MessageID
+- rvrfdkg protocol length 6 with message code 5
+- authenticated ShareID-to-peer route enforcement
+- final-keyset verification of every inbound partial
+- stale session, wrong keyset, wrong message and invalid ShareID rejection
+- duplicate partial idempotence and conflicting ShareID rejection
+- per-request collector until canonical threshold
+- public aggregation to final BLS signature and canonical randomness
+- real MsgPipe wire test with three canonical shares and threshold completion
+- full tagged suites green: consensus/lqc, crypto/rabbitvrf, internal/rabbitvrfstate, eth
+
+Important caveats:
+- public Testnet Rabbit VRF remains disabled
+- do not choose or configure VRFProtocolBlock
+- do not activate a fork
+- dealer policy remains fail-closed/all-canonical-dealers-required until complaint/qualification is implemented
+- untracked `eth/rabbit_vrf_dkg_polynomial_transport_lab_test.go.broken` must remain untouched
+
+## Exact next implementation step
+
+Connect threshold signing to a CANONICAL pending Rabbit VRF request. Do not sign arbitrary RequestIDs received from P2P. First identify/read the canonical request state from RabbitVRFCoordinatorV1/core state and validate that the request exists and is pending. Then create the local threshold partial from the persisted SecretShare, build RabbitVRFThresholdPartialV1, send/gossip it through authenticated rvrfdkg code 5, and feed the local partial into the same collector path. Preserve session/keyset/request binding and reject stale or already-completed requests. After that add restart/adversarial and multinode tests before any activation discussion.
