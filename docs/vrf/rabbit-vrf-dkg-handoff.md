@@ -1,6 +1,6 @@
 # Rabbit VRF DKG Handoff
 
-Last green checkpoint: e6b5da684
+Last green checkpoint: 5e3339bd7
 Branch: feat/rabbit-vrf-v0.1
 Repo: ~/projects/rabbit-geth-vrf
 
@@ -8,10 +8,10 @@ Completed through final public DKG keyset construction and persistence: canonica
 Green suites: consensus/lqc, crypto/rabbitvrf, internal/rabbitvrfstate, eth.
 
 Current flow:
-committee/session -> transport keys -> canonical transport set -> persistent dealer polynomial -> commitment gossip -> authenticated ShareID-to-peer routing -> encrypted private evaluation -> direct P2P delivery -> recipient validation -> decrypt/Feldman verification -> verified-evaluation persistence -> canonical evaluation aggregation -> local SecretShare -> encrypted SecretShare persistence -> canonical dealer commitments -> threshold public key -> deterministic transcript root -> public VerificationShares for all ShareIDs -> final RabbitVRF keyset root -> crash-safe final public keyset persistence.
+committee/session -> transport keys -> canonical transport set -> persistent dealer polynomial -> commitment gossip -> authenticated ShareID-to-peer routing -> encrypted private evaluation -> direct P2P delivery -> recipient validation -> decrypt/Feldman verification -> verified-evaluation persistence -> canonical evaluation aggregation -> local SecretShare -> encrypted SecretShare persistence -> canonical dealer commitments -> threshold public key -> deterministic transcript root -> public VerificationShares for all ShareIDs -> final RabbitVRF keyset root -> crash-safe final public keyset persistence -> persisted SecretShare/keyset match -> SignPartial -> VerifyPartial -> threshold CombineVerifiedPartials -> final signature verification -> canonical randomness derivation.
 
 Exact next implementation step:
-Wire operational threshold signing to the persisted DKG state. Load the local SecretShare and finalized public keyset for the exact canonical session, require their ShareID/public VerificationShare to match, produce partial signatures only while the canonical secret-operation gate is ready, verify received partials against the persisted keyset, combine at threshold with CombineVerifiedPartials, and verify the final signature/randomness against the persisted threshold public key. Keep Rabbit VRF disabled on the public Testnet and do not choose VRFProtocolBlock. After runtime integration, run restart, stale-session, wrong-share, insufficient-partial, duplicate-partial, mixed-message, multinode and adversarial tests before any activation discussion.
+Implement authenticated P2P transport for Rabbit VRF threshold partial signatures using the finalized DKG session and keyset. Bind every partial to the exact canonical session, request/message identity and ShareID; accept only authenticated committee ShareIDs from the finalized keyset; reject stale-session, wrong-message, duplicate/conflicting ShareID and malformed partials; verify each received partial before aggregation; collect only until the canonical threshold is reached; reconstruct with CombineVerifiedPartials and derive randomness only after final threshold-signature verification. Then test restart recovery, insufficient partials, duplicate/conflicting partials, stale-session, wrong-share, mixed-message, malformed signatures, network interruption/reconnect and real multinode behavior. Keep Rabbit VRF disabled on the public Testnet and do not choose VRFProtocolBlock.
 
 Safety:
 - Rabbit VRF remains disabled on public Testnet.
