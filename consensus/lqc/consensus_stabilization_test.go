@@ -68,6 +68,7 @@ func TestRestoreWorkSeatLivenessRecreatesRecoveryEntries(t *testing.T) {
 	if !ok ||
 		gotMissing.Address != missing ||
 		gotMissing.RegisteredAt != 100 ||
+		gotMissing.LastHeartbeat != 100 ||
 		gotMissing.Active ||
 		gotMissing.MissedTurns != 0 ||
 		gotMissing.JailedUntil != 0 {

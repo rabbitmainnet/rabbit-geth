@@ -530,9 +530,10 @@ func (r *CanonicalRegistry) RestoreWorkSeatLiveness(addresses []common.Address, 
 		participant, exists := r.entries[address]
 		if !exists {
 			participant = CanonicalParticipant{
-				Address:      address,
-				RegisteredAt: blockNumber,
-				Active:       false,
+				Address:       address,
+				RegisteredAt:  blockNumber,
+				LastHeartbeat: blockNumber,
+				Active:        false,
 			}
 		}
 		participant.MissedTurns = 0

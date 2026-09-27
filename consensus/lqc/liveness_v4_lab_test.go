@@ -213,3 +213,36 @@ func TestLivenessV4AppliesMissedTurnsAfterFairnessFork(t *testing.T) {
 		t.Fatalf("live producer state invalid: %+v", pc)
 	}
 }
+
+func TestLivenessV4RestoredWorkSeatRemainsSelectableNextBlock(t *testing.T) {
+	registry := NewCanonicalRegistry()
+	restored := common.BigToAddress(big.NewInt(1))
+	existing := common.BigToAddress(big.NewInt(2))
+
+	if err := registry.MarkWorkSeatProducerHeartbeat(existing, 90); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.RestoreWorkSeatLiveness([]common.Address{restored}, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	seats := []WorkSeatV1{
+		{TicketHash: common.BigToHash(big.NewInt(1)), Participant: restored},
+		{TicketHash: common.BigToHash(big.NewInt(2)), Participant: existing},
+	}
+
+	engine := &LQC{config: &params.LQCConfig{
+		ConsensusLivenessV3Block: 1,
+		ConsensusLivenessV4Block: 100,
+		HeartbeatWindow:          64,
+		HeartbeatGrace:           16,
+	}}
+
+	ordered, err := engine.workV1EngineLabOrderSeatsByLivenessV4(registry, seats, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ordered) != 2 || ordered[0].Participant != restored || ordered[1].Participant != existing {
+		t.Fatalf("restored WorkSeat disappeared after V4 activation: %+v", ordered)
+	}
+}
