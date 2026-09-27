@@ -1,17 +1,17 @@
 # Rabbit VRF DKG Handoff
 
-Last green checkpoint: 1dbf4140f
+Last green checkpoint: 389910313
 Branch: feat/rabbit-vrf-v0.1
 Repo: ~/projects/rabbit-geth-vrf
 
-Completed through private DKG evaluation transport, verified decryption, encrypted crash-safe verified-evaluation persistence, restart recovery, duplicate idempotency and conflict rejection.
+Completed through private DKG evaluation transport, verified evaluation persistence, canonical evaluation aggregation, local SecretShare derivation, VerificationShare derivation, encrypted crash-safe SecretShare persistence, restart recovery, duplicate idempotency and conflict rejection.
 Green suites: consensus/lqc, crypto/rabbitvrf, internal/rabbitvrfstate, eth.
 
 Current flow:
-committee/session -> transport keys -> canonical transport set -> persistent dealer polynomial -> commitment gossip -> authenticated ShareID-to-peer routing -> encrypted private evaluation -> direct P2P delivery -> recipient validation -> transport private-key reload -> decrypt -> Feldman commitment verification -> encrypted verified-evaluation persistence -> restart recovery / duplicate / conflict protection.
+committee/session -> transport keys -> canonical transport set -> persistent dealer polynomial -> commitment gossip -> authenticated ShareID-to-peer routing -> encrypted private evaluation -> direct P2P delivery -> recipient validation -> transport private-key reload -> decrypt -> Feldman commitment verification -> encrypted verified-evaluation persistence -> load complete canonical dealer evaluation set -> aggregate in BLS12-381 Fr -> local SecretShare -> VerificationShare -> encrypted restart-safe SecretShare persistence.
 
 Exact next implementation step:
-Load the complete verified evaluation set for each local recipient across all canonical dealers. Aggregate the canonical BLS12-381 Fr evaluations into the recipient SecretShare, fail closed if any required dealer evaluation is missing or if the final aggregate is zero, derive the VerificationShare, then persist the final local secret-share/keyset state crash-safely before enabling threshold signing.
+Build the final public DKG keyset from canonical dealer polynomial commitments. Derive the threshold public key from the aggregate of the dealers constant coefficient commitments, derive/publish canonical VerificationShares for committee members, define the transcript root over the finalized DKG transcript, call RabbitVRFKeysetRootV1, persist the finalized public keyset crash-safely, and only then wire the persisted local SecretShare into threshold signing. Do not derive the threshold public key from a local SecretShare.
 
 Safety:
 - Rabbit VRF remains disabled on public Testnet.
