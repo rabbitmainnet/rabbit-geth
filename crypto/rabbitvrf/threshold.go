@@ -64,6 +64,27 @@ func newSecretShare(
 	}, nil
 }
 
+func SecretShareFromBytes(id uint64, encoded []byte) (*SecretShare, error) {
+	if id == 0 || len(encoded) != SecretKeySize {
+		return nil, ErrInvalidSecretShare
+	}
+	var scalar fr.Element
+	if err := scalar.SetBytesCanonical(encoded); err != nil {
+		return nil, ErrInvalidSecretShare
+	}
+	return newSecretShare(id, scalar)
+}
+
+func (s *SecretShare) Bytes() ([SecretKeySize]byte, error) {
+	var out [SecretKeySize]byte
+	if s == nil || s.id == 0 || s.scalar.IsZero() {
+		return out, ErrInvalidSecretShare
+	}
+	encoded := s.scalar.Bytes()
+	copy(out[:], encoded[:])
+	return out, nil
+}
+
 func (s *SecretShare) ID() uint64 {
 	if s == nil {
 		return 0

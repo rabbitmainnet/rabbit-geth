@@ -167,3 +167,18 @@ func VerifyDKGPolynomialEvaluationV1(
 
 	return nil
 }
+
+func AggregateDKGPolynomialEvaluationsV1(recipientShareID uint64, evaluations []DKGPolynomialEvaluationV1) (*SecretShare, error) {
+	if recipientShareID == 0 || len(evaluations) == 0 {
+		return nil, ErrInvalidSecretShare
+	}
+	var aggregate fr.Element
+	for _, evaluation := range evaluations {
+		var scalar fr.Element
+		if err := scalar.SetBytesCanonical(evaluation[:]); err != nil {
+			return nil, ErrInvalidDKGPolynomialEvaluationV1
+		}
+		aggregate.Add(&aggregate, &scalar)
+	}
+	return newSecretShare(recipientShareID, aggregate)
+}

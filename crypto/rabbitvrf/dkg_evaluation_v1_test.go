@@ -2,6 +2,7 @@ package rabbitvrf
 
 import (
 	"bytes"
+	"errors"
 	"math/big"
 	"testing"
 
@@ -334,5 +335,93 @@ func TestVerifyDKGPolynomialEvaluationV1RejectsTampering(
 		commitments,
 	); err == nil {
 		t.Fatal("zero recipient ShareID accepted")
+	}
+}
+
+func TestAggregateDKGPolynomialEvaluationsV1(t *testing.T) {
+	makeEval := func(value byte) DKGPolynomialEvaluationV1 {
+		var encoded [DKGPolynomialEvaluationSizeV1]byte
+		encoded[len(encoded)-1] = value
+		evaluation, err := DKGPolynomialEvaluationV1FromBytes(encoded[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return evaluation
+	}
+
+	share, err := AggregateDKGPolynomialEvaluationsV1(7, []DKGPolynomialEvaluationV1{makeEval(1), makeEval(2), makeEval(3)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if share.ID() != 7 {
+		t.Fatalf("share id=%d", share.ID())
+	}
+	scalar, err := share.scalarBigInt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scalar.Uint64() != 6 {
+		t.Fatalf("aggregate scalar=%d", scalar.Uint64())
+	}
+
+	if _, err := AggregateDKGPolynomialEvaluationsV1(0, []DKGPolynomialEvaluationV1{makeEval(1)}); !errors.Is(err, ErrInvalidSecretShare) {
+		t.Fatalf("zero share id error=%v", err)
+	}
+
+	zero := makeEval(0)
+	if _, err := AggregateDKGPolynomialEvaluationsV1(7, []DKGPolynomialEvaluationV1{zero}); !errors.Is(err, ErrInvalidSecretShare) {
+		t.Fatalf("zero aggregate error=%v", err)
+	}
+}
+
+func TestDKGSecretShareSerializationRoundTripV1(t *testing.T) {
+	var aBytes [DKGPolynomialEvaluationSizeV1]byte
+	aBytes[len(aBytes)-1] = 2
+	a, err := DKGPolynomialEvaluationV1FromBytes(aBytes[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bBytes [DKGPolynomialEvaluationSizeV1]byte
+	bBytes[len(bBytes)-1] = 3
+	b, err := DKGPolynomialEvaluationV1FromBytes(bBytes[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	share, err := AggregateDKGPolynomialEvaluationsV1(7, []DKGPolynomialEvaluationV1{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := share.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := SecretShareFromBytes(7, encoded[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ID() != share.ID() {
+		t.Fatalf("restored share id=%d want=%d", restored.ID(), share.ID())
+	}
+	originalPublic, err := share.PublicKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredPublic, err := restored.PublicKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if originalPublic != restoredPublic {
+		t.Fatal("restored secret share public key mismatch")
+	}
+	originalVerification, err := share.VerificationShare()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredVerification, err := restored.VerificationShare()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if originalVerification.ShareID() != restoredVerification.ShareID() {
+		t.Fatal("restored verification share id mismatch")
 	}
 }

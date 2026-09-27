@@ -377,3 +377,60 @@ func (runtime *rabbitVRFDKGRuntime) decryptInboundEncryptedEvaluationV1(message 
 	}
 	return evaluation, nil
 }
+
+func (runtime *rabbitVRFDKGRuntime) buildLocalSecretShareV1(recipient lqc.RabbitVRFCommitteeMemberV1) (*rabbitvrf.SecretShare, rabbitvrf.VerificationShare, error) {
+	var zero rabbitvrf.VerificationShare
+	if runtime == nil || runtime.backend == nil || runtime.backend.config == nil || runtime.backend.vrfDKGInstanceDir == "" || recipient.ShareID == 0 {
+		return nil, zero, fmt.Errorf("rabbit vrf dkg secret share runtime unavailable")
+	}
+	if !runtime.beginSecretOperationV1() {
+		return nil, zero, fmt.Errorf("rabbit vrf dkg secret operation unavailable")
+	}
+	defer runtime.endSecretOperationV1()
+	context := runtime.currentContext()
+	if context.SessionID == ([32]byte{}) || len(context.CanonicalMembers) == 0 {
+		return nil, zero, fmt.Errorf("rabbit vrf dkg canonical members unavailable")
+	}
+	local := false
+	for _, member := range context.Members {
+		if member.ShareID == recipient.ShareID && member.Participant == recipient.Participant {
+			local = true
+			break
+		}
+	}
+	if !local {
+		return nil, zero, fmt.Errorf("rabbit vrf dkg secret share recipient is not local")
+	}
+	password, err := readRabbitVRFDKGPasswordFileV1(runtime.backend.config.RabbitVRFDKGPasswordFile)
+	if err != nil {
+		return nil, zero, fmt.Errorf("read rabbit vrf dkg password file: %w", err)
+	}
+	store, err := rabbitvrfstate.NewStandardDKGVerifiedEvaluationStoreV1(filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-evaluations"))
+	if err != nil {
+		return nil, zero, fmt.Errorf("open rabbit vrf dkg verified evaluation store: %w", err)
+	}
+	evaluations := make([]rabbitvrf.DKGPolynomialEvaluationV1, 0, len(context.CanonicalMembers))
+	for _, dealer := range context.CanonicalMembers {
+		evaluation, err := store.Load(context.CanonicalSession, recipient, dealer, password)
+		if err != nil {
+			return nil, zero, fmt.Errorf("load rabbit vrf dkg evaluation dealer share %d for recipient share %d: %w", dealer.ShareID, recipient.ShareID, err)
+		}
+		evaluations = append(evaluations, evaluation)
+	}
+	share, err := rabbitvrf.AggregateDKGPolynomialEvaluationsV1(recipient.ShareID, evaluations)
+	if err != nil {
+		return nil, zero, fmt.Errorf("aggregate rabbit vrf dkg secret share %d: %w", recipient.ShareID, err)
+	}
+	verification, err := share.VerificationShare()
+	if err != nil {
+		return nil, zero, fmt.Errorf("derive rabbit vrf dkg verification share %d: %w", recipient.ShareID, err)
+	}
+	shareStore, err := rabbitvrfstate.NewStandardDKGSecretShareStoreV1(filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-secret-shares"))
+	if err != nil {
+		return nil, zero, fmt.Errorf("open rabbit vrf dkg secret share store: %w", err)
+	}
+	if err := shareStore.Store(context.CanonicalSession, recipient, share, password); err != nil {
+		return nil, zero, fmt.Errorf("persist rabbit vrf dkg secret share %d: %w", recipient.ShareID, err)
+	}
+	return share, verification, nil
+}
