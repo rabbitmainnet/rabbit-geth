@@ -83,3 +83,35 @@ Important caveats:
 ## Exact next implementation step
 
 Implement Block 2 of 4 (first of the 3 remaining blocks): automatic local threshold flow. Starting only from a canonical PENDING request, load the persisted local SecretShare and finalized keyset, build the canonical threshold message, sign the local partial, construct RabbitVRFThresholdPartialV1, feed the local partial into the same collector path used for inbound code 5 packets, and gossip it through authenticated rvrfdkg peers. Prevent duplicate local signing/gossip for the same SessionID + KeysetRoot + RequestID + ShareID and preserve restart safety. Do not finalize the on-chain request yet; that belongs to the next fixed block.
+
+
+## Checkpoint 2026-09-27 — automatic local threshold flow
+
+Code checkpoint: `4c0d030dc feat(rabbitvrf): automate local threshold partial flow`
+
+Completed and green:
+- canonical PENDING request is required before local threshold signing
+- finalized DKG keyset is loaded before message/signature creation
+- persisted SecretShare is used for the local partial signature
+- local RabbitVRFThresholdPartialV1 is persisted restart-safely
+- persisted local partial is reused after restart instead of signing again
+- local partial enters the same canonical collector path used by inbound code 5 packets
+- local partial is gossiped through rvrfdkg code 5
+- duplicate persistence is idempotent and conflicting local partials are rejected
+- focused restart/reuse test passed
+- full tagged suites green: consensus/lqc, crypto/rabbitvrf, internal/rabbitvrfstate, eth
+
+Remaining fixed blocks: 2
+1. Canonical request finalization: persist/validate randomness, proofHash, epoch, round and completed status exactly once
+2. Robustness proof: restart/replay/adversarial tests and real 3+ node multinode validation
+
+Important caveats:
+- public Testnet Rabbit VRF remains disabled
+- do not choose or configure VRFProtocolBlock
+- do not activate a fork
+- dealer policy remains fail-closed/all-canonical-dealers-required until complaint/qualification is implemented
+- untracked `eth/rabbit_vrf_dkg_polynomial_transport_lab_test.go.broken` must remain untouched
+
+## Exact next implementation step
+
+Implement Block 3 of 4: canonical request finalization. Starting from a completed threshold result already produced by the collector, bind the result to the canonical request and persist/validate randomness, proofHash, epoch, round and completed status exactly once. Reject stale, already-completed, mismatched or conflicting finalization attempts. Keep finalization deterministic and consensus-safe. Do not enable Rabbit VRF on public Testnet and do not set VRFProtocolBlock. After focused tests, run the full tagged suites before committing.
