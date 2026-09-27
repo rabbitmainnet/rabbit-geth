@@ -182,3 +182,50 @@ func AggregateDKGPolynomialEvaluationsV1(recipientShareID uint64, evaluations []
 	}
 	return newSecretShare(recipientShareID, aggregate)
 }
+
+func DKGVerificationPublicKeyV1(recipientShareID uint64, dealerCommitments [][]DKGCoefficientCommitmentV1) (PublicKey, error) {
+	var out PublicKey
+	if recipientShareID == 0 || len(dealerCommitments) == 0 {
+		return out, ErrInvalidDKGPolynomialEvaluationV1
+	}
+	var x fr.Element
+	x.SetUint64(recipientShareID)
+	var aggregate bls12381.G1Affine
+	aggregate.SetInfinity()
+	for _, coefficients := range dealerCommitments {
+		if len(coefficients) == 0 {
+			return out, ErrInvalidDKGPolynomialEvaluationV1
+		}
+		power := fr.One()
+		var dealerPoint bls12381.G1Affine
+		dealerPoint.SetInfinity()
+		for _, encodedCommitment := range coefficients {
+			commitment, err := decodeDKGCoefficientCommitmentV1(encodedCommitment)
+			if err != nil {
+				return out, ErrInvalidDKGPolynomialEvaluationV1
+			}
+			if !commitment.IsInfinity() {
+				powerBig := new(big.Int)
+				power.ToBigIntRegular(powerBig)
+				var term bls12381.G1Affine
+				term.ScalarMultiplication(&commitment, powerBig)
+				var sum bls12381.G1Affine
+				sum.Add(&dealerPoint, &term)
+				dealerPoint = sum
+			}
+			power.Mul(&power, &x)
+		}
+		var sum bls12381.G1Affine
+		sum.Add(&aggregate, &dealerPoint)
+		aggregate = sum
+	}
+	if aggregate.IsInfinity() || !aggregate.IsOnCurve() || !aggregate.IsInSubGroup() {
+		return out, ErrInvalidPublicKey
+	}
+	encoded := aggregate.Bytes()
+	copy(out[:], encoded[:])
+	if _, err := decodePublicKey(out); err != nil {
+		return PublicKey{}, err
+	}
+	return out, nil
+}

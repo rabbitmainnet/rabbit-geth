@@ -266,3 +266,61 @@ func ValidateRabbitVRFDKGPolynomialCommitmentV1(
 
 	return root, nil
 }
+
+func RabbitVRFDKGThresholdPublicKeyV1(context RabbitVRFDKGSessionContextV1, commitments []RabbitVRFDKGPolynomialCommitmentV1) (rabbitvrf.PublicKey, []RabbitVRFDKGPolynomialCommitmentV1, []common.Hash, error) {
+	var zero rabbitvrf.PublicKey
+	canonical, roots, err := CanonicalRabbitVRFDKGPolynomialCommitmentsV1(context, commitments)
+	if err != nil {
+		return zero, nil, nil, err
+	}
+	if uint64(len(canonical)) != context.CommitteeSize {
+		return zero, nil, nil, ErrInvalidRabbitVRFDKGPolynomialCommitmentV1
+	}
+	constants := make([]rabbitvrf.DKGCoefficientCommitmentV1, len(canonical))
+	for index, commitment := range canonical {
+		if len(commitment.Coefficients) == 0 {
+			return zero, nil, nil, ErrInvalidRabbitVRFDKGPolynomialCommitmentV1
+		}
+		constants[index] = commitment.Coefficients[0]
+	}
+	publicKey, err := rabbitvrf.AggregateDKGConstantCommitmentsV1(constants)
+	if err != nil {
+		return zero, nil, nil, ErrInvalidRabbitVRFDKGPolynomialCommitmentV1
+	}
+	return publicKey, canonical, roots, nil
+}
+
+var rabbitVRFDKGTranscriptRootDomainV1 = []byte("RABBIT-VRF-DKG-TRANSCRIPT-ROOT-V1")
+
+type rabbitVRFDKGTranscriptRootPayloadV1 struct {
+	Domain          []byte
+	SessionID       common.Hash
+	CommitmentRoots []common.Hash
+}
+
+func RabbitVRFDKGTranscriptRootV1(context RabbitVRFDKGSessionContextV1, commitmentRoots []common.Hash) (common.Hash, error) {
+	if err := ValidateRabbitVRFDKGSessionContextV1(context); err != nil {
+		return common.Hash{}, ErrInvalidRabbitVRFDKGPolynomialCommitmentV1
+	}
+	if uint64(len(commitmentRoots)) != context.CommitteeSize {
+		return common.Hash{}, ErrInvalidRabbitVRFDKGPolynomialCommitmentV1
+	}
+	for _, root := range commitmentRoots {
+		if root == (common.Hash{}) {
+			return common.Hash{}, ErrInvalidRabbitVRFDKGPolynomialCommitmentV1
+		}
+	}
+	sessionID, err := RabbitVRFDKGSessionIDV1(context)
+	if err != nil {
+		return common.Hash{}, ErrInvalidRabbitVRFDKGPolynomialCommitmentV1
+	}
+	encoded, err := rlp.EncodeToBytes(rabbitVRFDKGTranscriptRootPayloadV1{Domain: rabbitVRFDKGTranscriptRootDomainV1, SessionID: sessionID, CommitmentRoots: append([]common.Hash(nil), commitmentRoots...)})
+	if err != nil {
+		return common.Hash{}, err
+	}
+	root := crypto.Keccak256Hash(encoded)
+	if root == (common.Hash{}) {
+		return common.Hash{}, ErrInvalidRabbitVRFDKGPolynomialCommitmentV1
+	}
+	return root, nil
+}

@@ -449,3 +449,49 @@ func TestRabbitVRFKeysetRootV1RejectsInvalidStructure(
 		t.Fatal("invalid threshold public key accepted")
 	}
 }
+
+func TestRabbitVRFDKGFinalKeysetV1CanonicalAndComplete(t *testing.T) {
+	context := rabbitVRFDKGTestSessionContextV1(t, 9280, 11)
+	commitments := make([]RabbitVRFDKGPolynomialCommitmentV1, context.CommitteeSize)
+	for index := range commitments {
+		coefficients := rabbitVRFDKGTestCommitmentCoefficientsV1(context.Threshold)
+		coefficients[0] = rabbitVRFDKGTestCoefficientV1(uint64(index + 1))
+		commitment, _, err := NewRabbitVRFDKGPolynomialCommitmentV1(context, uint64(index+1), coefficients)
+		if err != nil {
+			t.Fatal(err)
+		}
+		commitments[index] = commitment
+	}
+
+	rootA, keyA, transcriptA, sharesA, err := RabbitVRFDKGFinalKeysetV1(context, commitments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootA == (common.Hash{}) || transcriptA == (common.Hash{}) || len(sharesA) != int(context.CommitteeSize) {
+		t.Fatalf("invalid final keyset root=%s transcript=%s shares=%d", rootA.Hex(), transcriptA.Hex(), len(sharesA))
+	}
+
+	reversed := append([]RabbitVRFDKGPolynomialCommitmentV1(nil), commitments...)
+	for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
+		reversed[left], reversed[right] = reversed[right], reversed[left]
+	}
+	rootB, keyB, transcriptB, sharesB, err := RabbitVRFDKGFinalKeysetV1(context, reversed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootA != rootB || keyA != keyB || transcriptA != transcriptB {
+		t.Fatal("final keyset depends on commitment arrival order")
+	}
+	if len(sharesA) != len(sharesB) {
+		t.Fatal("verification share count changed")
+	}
+	for index := range sharesA {
+		if sharesA[index] != sharesB[index] {
+			t.Fatalf("verification share differs at index %d", index)
+		}
+	}
+
+	if _, _, _, _, err := RabbitVRFDKGFinalKeysetV1(context, commitments[:len(commitments)-1]); err == nil {
+		t.Fatal("incomplete dealer set produced final keyset")
+	}
+}

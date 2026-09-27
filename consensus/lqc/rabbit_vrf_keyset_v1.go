@@ -171,3 +171,32 @@ func RabbitVRFKeysetRootV1(
 
 	return root, canonical, nil
 }
+
+func RabbitVRFDKGFinalKeysetV1(context RabbitVRFDKGSessionContextV1, commitments []RabbitVRFDKGPolynomialCommitmentV1) (common.Hash, rabbitvrf.PublicKey, common.Hash, []RabbitVRFVerificationShareV1, error) {
+	var zeroKey rabbitvrf.PublicKey
+	thresholdPublicKey, canonicalCommitments, commitmentRoots, err := RabbitVRFDKGThresholdPublicKeyV1(context, commitments)
+	if err != nil {
+		return common.Hash{}, zeroKey, common.Hash{}, nil, err
+	}
+	transcriptRoot, err := RabbitVRFDKGTranscriptRootV1(context, commitmentRoots)
+	if err != nil {
+		return common.Hash{}, zeroKey, common.Hash{}, nil, err
+	}
+	dealerCommitments := make([][]rabbitvrf.DKGCoefficientCommitmentV1, len(canonicalCommitments))
+	for index, commitment := range canonicalCommitments {
+		dealerCommitments[index] = append([]rabbitvrf.DKGCoefficientCommitmentV1(nil), commitment.Coefficients...)
+	}
+	verificationShares := make([]RabbitVRFVerificationShareV1, context.CommitteeSize)
+	for shareID := uint64(1); shareID <= context.CommitteeSize; shareID++ {
+		publicKey, err := rabbitvrf.DKGVerificationPublicKeyV1(shareID, dealerCommitments)
+		if err != nil {
+			return common.Hash{}, zeroKey, common.Hash{}, nil, ErrInvalidRabbitVRFKeysetV1
+		}
+		verificationShares[shareID-1] = RabbitVRFVerificationShareV1{ShareID: shareID, PublicKey: publicKey}
+	}
+	root, canonicalShares, err := RabbitVRFKeysetRootV1(context.ChainID, context.TargetVRFEpoch, context.CommitteeRoot, context.CommitteeSize, context.Threshold, thresholdPublicKey, transcriptRoot, verificationShares)
+	if err != nil {
+		return common.Hash{}, zeroKey, common.Hash{}, nil, err
+	}
+	return root, thresholdPublicKey, transcriptRoot, canonicalShares, nil
+}

@@ -650,3 +650,88 @@ func TestRabbitVRFDKGPolynomialCommitmentV1RejectsWrongSession(
 		t.Fatal("wrong session ID accepted")
 	}
 }
+
+func TestRabbitVRFDKGThresholdPublicKeyV1CanonicalAndComplete(t *testing.T) {
+	context := rabbitVRFDKGTestSessionContextV1(t, 9280, 11)
+	commitments := make([]RabbitVRFDKGPolynomialCommitmentV1, context.CommitteeSize)
+	for index := range commitments {
+		coefficients := rabbitVRFDKGTestCommitmentCoefficientsV1(context.Threshold)
+		coefficients[0] = rabbitVRFDKGTestCoefficientV1(uint64(index + 1))
+		commitment, _, err := NewRabbitVRFDKGPolynomialCommitmentV1(context, uint64(index+1), coefficients)
+		if err != nil {
+			t.Fatal(err)
+		}
+		commitments[index] = commitment
+	}
+
+	keyA, canonicalA, rootsA, err := RabbitVRFDKGThresholdPublicKeyV1(context, commitments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonicalA) != int(context.CommitteeSize) || len(rootsA) != int(context.CommitteeSize) {
+		t.Fatalf("canonical=%d roots=%d", len(canonicalA), len(rootsA))
+	}
+
+	reversed := append([]RabbitVRFDKGPolynomialCommitmentV1(nil), commitments...)
+	for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
+		reversed[left], reversed[right] = reversed[right], reversed[left]
+	}
+	keyB, canonicalB, rootsB, err := RabbitVRFDKGThresholdPublicKeyV1(context, reversed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keyA != keyB {
+		t.Fatal("threshold public key depends on arrival order")
+	}
+	if len(canonicalB) != len(canonicalA) || len(rootsB) != len(rootsA) {
+		t.Fatal("canonical output length changed")
+	}
+	for index := range canonicalA {
+		if canonicalA[index].DealerShareID != canonicalB[index].DealerShareID || rootsA[index] != rootsB[index] {
+			t.Fatalf("canonical output differs at index %d", index)
+		}
+	}
+
+	if _, _, _, err := RabbitVRFDKGThresholdPublicKeyV1(context, commitments[:len(commitments)-1]); err == nil {
+		t.Fatal("incomplete canonical dealer set accepted")
+	}
+}
+
+func TestRabbitVRFDKGTranscriptRootV1DeterministicAndBound(t *testing.T) {
+	context := rabbitVRFDKGTestSessionContextV1(t, 9280, 11)
+	commitments := make([]RabbitVRFDKGPolynomialCommitmentV1, context.CommitteeSize)
+	for index := range commitments {
+		commitment, _, err := NewRabbitVRFDKGPolynomialCommitmentV1(context, uint64(index+1), rabbitVRFDKGTestCommitmentCoefficientsV1(context.Threshold))
+		if err != nil {
+			t.Fatal(err)
+		}
+		commitments[index] = commitment
+	}
+	_, _, roots, err := RabbitVRFDKGThresholdPublicKeyV1(context, commitments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootA, err := RabbitVRFDKGTranscriptRootV1(context, roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootB, err := RabbitVRFDKGTranscriptRootV1(context, append([]common.Hash(nil), roots...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootA != rootB {
+		t.Fatal("transcript root is not deterministic")
+	}
+	mutated := append([]common.Hash(nil), roots...)
+	mutated[0] = common.HexToHash("0x1234")
+	rootC, err := RabbitVRFDKGTranscriptRootV1(context, mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootA == rootC {
+		t.Fatal("transcript root did not bind commitment roots")
+	}
+	if _, err := RabbitVRFDKGTranscriptRootV1(context, roots[:len(roots)-1]); err == nil {
+		t.Fatal("incomplete transcript accepted")
+	}
+}

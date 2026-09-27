@@ -47,3 +47,37 @@ func ValidateDKGCoefficientCommitmentV1(
 
 	return nil
 }
+
+func AggregateDKGConstantCommitmentsV1(commitments []DKGCoefficientCommitmentV1) (PublicKey, error) {
+	var out PublicKey
+	if len(commitments) == 0 {
+		return out, ErrInvalidDKGCoefficientCommitmentV1
+	}
+	var aggregate bls12381.G1Affine
+	for index, commitment := range commitments {
+		if err := ValidateDKGCoefficientCommitmentV1(commitment, false); err != nil {
+			return out, err
+		}
+		var point bls12381.G1Affine
+		consumed, err := point.SetBytes(commitment[:])
+		if err != nil || consumed != PublicKeySize {
+			return out, ErrInvalidDKGCoefficientCommitmentV1
+		}
+		if index == 0 {
+			aggregate = point
+		} else {
+			var sum bls12381.G1Affine
+			sum.Add(&aggregate, &point)
+			aggregate = sum
+		}
+	}
+	if aggregate.IsInfinity() || !aggregate.IsOnCurve() || !aggregate.IsInSubGroup() {
+		return out, ErrInvalidDKGCoefficientCommitmentV1
+	}
+	encoded := aggregate.Bytes()
+	copy(out[:], encoded[:])
+	if _, err := decodePublicKey(out); err != nil {
+		return PublicKey{}, err
+	}
+	return out, nil
+}
