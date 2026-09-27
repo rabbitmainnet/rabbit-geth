@@ -436,6 +436,61 @@ func (runtime *rabbitVRFDKGRuntime) buildLocalSecretShareV1(recipient lqc.Rabbit
 	return share, verification, nil
 }
 
+func (runtime *rabbitVRFDKGRuntime) validateInboundThresholdPartialV1(packet lqc.RabbitVRFThresholdPartialV1) error {
+	if runtime == nil || runtime.backend == nil || runtime.backend.vrfDKGInstanceDir == "" {
+		return fmt.Errorf("rabbit vrf threshold partial runtime unavailable")
+	}
+	context := runtime.currentContext()
+	if context.SessionID == (common.Hash{}) || packet.SessionID != context.SessionID {
+		return errRabbitVRFDKGArtifactSessionMismatch
+	}
+	if packet.KeysetRoot == (common.Hash{}) || packet.RequestID == (common.Hash{}) || packet.MessageHash == (common.Hash{}) || packet.ShareID == 0 {
+		return fmt.Errorf("invalid rabbit vrf threshold partial binding")
+	}
+	keysetStore, err := rabbitvrfstate.NewDKGFinalKeysetStoreV1(filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-final-keysets"))
+	if err != nil {
+		return fmt.Errorf("open rabbit vrf dkg final keyset store: %w", err)
+	}
+	keyset, err := keysetStore.Load(context.CanonicalSession)
+	if err != nil {
+		return fmt.Errorf("load rabbit vrf dkg final keyset: %w", err)
+	}
+	if packet.KeysetRoot != keyset.KeysetRoot {
+		return fmt.Errorf("rabbit vrf threshold partial keyset mismatch")
+	}
+	message, messageHash, err := lqc.RabbitVRFThresholdMessageV1(context.CanonicalSession, keyset.KeysetRoot, packet.RequestID)
+	if err != nil {
+		return fmt.Errorf("derive rabbit vrf threshold message: %w", err)
+	}
+	if packet.MessageHash != messageHash {
+		return fmt.Errorf("rabbit vrf threshold partial message mismatch")
+	}
+	var publicShare lqc.RabbitVRFVerificationShareV1
+	found := false
+	for _, candidate := range keyset.VerificationShares {
+		if candidate.ShareID == packet.ShareID {
+			publicShare = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("rabbit vrf threshold partial share %d is not in finalized keyset", packet.ShareID)
+	}
+	verificationShare, err := rabbitvrf.NewVerificationShare(packet.ShareID, publicShare.PublicKey)
+	if err != nil {
+		return fmt.Errorf("construct rabbit vrf threshold verification share %d: %w", packet.ShareID, err)
+	}
+	partial := rabbitvrf.PartialSignature{ShareID: packet.ShareID, Signature: packet.Signature}
+	if _, err := rabbitvrf.VerifyPartial(verificationShare, message, partial); err != nil {
+		return fmt.Errorf("verify rabbit vrf threshold partial share %d: %w", packet.ShareID, err)
+	}
+	if _, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet); err != nil {
+		return fmt.Errorf("derive rabbit vrf threshold partial message id: %w", err)
+	}
+	return nil
+}
+
 func rabbitVRFSignThresholdPartialWithKeysetV1(share *rabbitvrf.SecretShare, recipientShareID uint64, keyset rabbitvrfstate.DKGFinalKeysetV1, message []byte) (rabbitvrf.PartialSignature, rabbitvrf.VerifiedPartialSignature, error) {
 	var partialZero rabbitvrf.PartialSignature
 	var verifiedZero rabbitvrf.VerifiedPartialSignature

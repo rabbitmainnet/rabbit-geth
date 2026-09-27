@@ -6,25 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/crypto/rabbitvrf"
+	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
 	"github.com/ethereum/go-ethereum/p2p"
 )
 
 const (
 	rabbitVRFDKGProtocolName    = "rvrfdkg"
 	rabbitVRFDKGProtocolVersion = uint(1)
-	rabbitVRFDKGProtocolLength  = uint64(5)
+	rabbitVRFDKGProtocolLength  = uint64(6)
 
 	rabbitVRFDKGStatusMsg               = uint64(0)
 	rabbitVRFDKGTransportArtifactMsg    = uint64(1)
 	rabbitVRFDKGPolynomialCommitmentMsg = uint64(2)
 	rabbitVRFDKGPeerRouteMsg            = uint64(3)
 	rabbitVRFDKGEncryptedEvaluationMsg  = uint64(4)
+	rabbitVRFDKGThresholdPartialMsg     = uint64(5)
 
 	rabbitVRFDKGHandshakeTimeout = 5 * time.Second
 	rabbitVRFDKGMaxMessageSize   = 16 * 1024
@@ -59,6 +62,11 @@ type rabbitVRFDKGPolynomialCommitmentPacketV1 struct {
 	Envelope   lqc.RabbitVRFDKGEnvelopeV1
 }
 
+type rabbitVRFThresholdResultV1 struct {
+	Signature  rabbitvrf.Signature
+	Randomness common.Hash
+}
+
 type rabbitVRFDKGTransportConfig struct {
 	ChainID   *big.Int
 	NetworkID uint64
@@ -82,6 +90,11 @@ type rabbitVRFDKGTransport struct {
 
 	routeSession common.Hash
 	routes       map[uint64]string
+
+	partialSession    common.Hash
+	partialKeysetRoot common.Hash
+	partials          map[common.Hash]map[uint64]lqc.RabbitVRFThresholdPartialV1
+	partialResults    map[common.Hash]rabbitVRFThresholdResultV1
 }
 
 type rabbitVRFDKGPeer struct {
@@ -565,6 +578,18 @@ func (n *rabbitVRFDKGTransport) runPeer(
 				return fmt.Errorf("process rabbit vrf dkg encrypted evaluation: %w", err)
 			}
 
+		case rabbitVRFDKGThresholdPartialMsg:
+			var packet lqc.RabbitVRFThresholdPartialV1
+			if err := message.Decode(&packet); err != nil {
+				return fmt.Errorf("decode rabbit vrf threshold partial: %w", err)
+			}
+			if err := n.handleInboundThresholdPartialV1(peer, packet); err != nil {
+				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) {
+					continue
+				}
+				return fmt.Errorf("process rabbit vrf threshold partial: %w", err)
+			}
+
 		default:
 			return fmt.Errorf(
 				"invalid rabbit vrf dkg message code: %d",
@@ -737,6 +762,148 @@ func (peer *rabbitVRFDKGPeer) sendPolynomialCommitmentV1(
 	}
 	peer.known[hash] = struct{}{}
 
+	return nil
+}
+
+func (peer *rabbitVRFDKGPeer) sendThresholdPartialV1(packet lqc.RabbitVRFThresholdPartialV1) error {
+	if peer == nil || peer.rw == nil {
+		return errors.New("invalid rabbit vrf threshold partial peer")
+	}
+	messageID, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet)
+	if err != nil {
+		return err
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if peer.known == nil {
+		peer.known = make(map[common.Hash]struct{})
+	}
+	if _, exists := peer.known[messageID]; exists {
+		return nil
+	}
+	if err := p2p.Send(peer.rw, rabbitVRFDKGThresholdPartialMsg, packet); err != nil {
+		return err
+	}
+	if len(peer.known) >= rabbitVRFDKGMaxKnownPerPeer {
+		clear(peer.known)
+	}
+	peer.known[messageID] = struct{}{}
+	return nil
+}
+
+func (n *rabbitVRFDKGTransport) broadcastThresholdPartialV1(packet lqc.RabbitVRFThresholdPartialV1, excludePeerID string) error {
+	if n == nil {
+		return errors.New("invalid rabbit vrf threshold partial transport")
+	}
+	n.mu.RLock()
+	peers := make([]*rabbitVRFDKGPeer, 0, len(n.peers))
+	for id, peer := range n.peers {
+		if id != excludePeerID && peer != nil {
+			peers = append(peers, peer)
+		}
+	}
+	n.mu.RUnlock()
+	for _, peer := range peers {
+		if err := peer.sendThresholdPartialV1(packet); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (n *rabbitVRFDKGTransport) thresholdPartialPeerAuthenticatedV1(peer *rabbitVRFDKGPeer, packet lqc.RabbitVRFThresholdPartialV1) bool {
+	if n == nil || peer == nil || packet.SessionID == (common.Hash{}) || packet.ShareID == 0 {
+		return false
+	}
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.closed || n.routeSession != packet.SessionID {
+		return false
+	}
+	peerID, ok := n.routes[packet.ShareID]
+	return ok && peerID == peer.id()
+}
+
+func (n *rabbitVRFDKGTransport) handleInboundThresholdPartialV1(peer *rabbitVRFDKGPeer, packet lqc.RabbitVRFThresholdPartialV1) error {
+	if n == nil || n.runtime == nil {
+		return errors.New("rabbit vrf threshold partial transport unavailable")
+	}
+	if !n.thresholdPartialPeerAuthenticatedV1(peer, packet) {
+		return errors.New("rabbit vrf threshold partial sender route mismatch")
+	}
+	if err := n.runtime.validateInboundThresholdPartialV1(packet); err != nil {
+		return err
+	}
+	context := n.runtime.currentContext()
+	message, messageHash, err := lqc.RabbitVRFThresholdMessageV1(context.CanonicalSession, packet.KeysetRoot, packet.RequestID)
+	if err != nil || messageHash != packet.MessageHash {
+		return errors.New("rabbit vrf threshold partial canonical message mismatch")
+	}
+
+	n.mu.Lock()
+	if n.partialSession != packet.SessionID || n.partialKeysetRoot != packet.KeysetRoot {
+		n.partialSession = packet.SessionID
+		n.partialKeysetRoot = packet.KeysetRoot
+		n.partials = make(map[common.Hash]map[uint64]lqc.RabbitVRFThresholdPartialV1)
+		n.partialResults = make(map[common.Hash]rabbitVRFThresholdResultV1)
+	}
+	bucket := n.partials[packet.RequestID]
+	if bucket == nil {
+		bucket = make(map[uint64]lqc.RabbitVRFThresholdPartialV1)
+		n.partials[packet.RequestID] = bucket
+	}
+	if existing, ok := bucket[packet.ShareID]; ok {
+		if existing != packet {
+			n.mu.Unlock()
+			return errors.New("rabbit vrf threshold partial share conflict")
+		}
+		n.mu.Unlock()
+		return nil
+	}
+	if _, done := n.partialResults[packet.RequestID]; done {
+		n.mu.Unlock()
+		return nil
+	}
+	bucket[packet.ShareID] = packet
+	threshold := int(context.CanonicalSession.Threshold)
+	if len(bucket) < threshold {
+		n.mu.Unlock()
+		return nil
+	}
+	partials := make([]rabbitvrf.PartialSignature, 0, len(bucket))
+	for _, stored := range bucket {
+		partials = append(partials, rabbitvrf.PartialSignature{ShareID: stored.ShareID, Signature: stored.Signature})
+	}
+	n.mu.Unlock()
+
+	if n.runtime.backend == nil || n.runtime.backend.vrfDKGInstanceDir == "" {
+		return errors.New("rabbit vrf threshold keyset runtime unavailable")
+	}
+	keysetStore, err := rabbitvrfstate.NewDKGFinalKeysetStoreV1(filepath.Join(n.runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-final-keysets"))
+	if err != nil {
+		return fmt.Errorf("open rabbit vrf dkg final keyset store: %w", err)
+	}
+	keyset, err := keysetStore.Load(context.CanonicalSession)
+	if err != nil {
+		return fmt.Errorf("load rabbit vrf dkg final keyset: %w", err)
+	}
+	signature, randomness, err := rabbitVRFCombineThresholdPartialsWithKeysetV1(context.CanonicalSession.Threshold, keyset, message, partials)
+	if err != nil {
+		return fmt.Errorf("combine rabbit vrf threshold request %s: %w", packet.RequestID, err)
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.partialSession != packet.SessionID || n.partialKeysetRoot != packet.KeysetRoot {
+		return errRabbitVRFDKGArtifactSessionMismatch
+	}
+	if existing, ok := n.partialResults[packet.RequestID]; ok {
+		if existing.Signature != signature || existing.Randomness != randomness {
+			return errors.New("rabbit vrf threshold result conflict")
+		}
+		return nil
+	}
+	n.partialResults[packet.RequestID] = rabbitVRFThresholdResultV1{Signature: signature, Randomness: randomness}
 	return nil
 }
 
