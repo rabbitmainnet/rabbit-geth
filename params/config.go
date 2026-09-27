@@ -630,6 +630,7 @@ type LQCConfig struct {
 	ConsensusLivenessV3Block    uint64           `json:"consensusLivenessV3Block,omitempty"`
 	ConsensusLivenessV4Block    uint64           `json:"consensusLivenessV4Block,omitempty"`
 	ConsensusLivenessV5Block    uint64           `json:"consensusLivenessV5Block,omitempty"`
+	ConsensusLivenessV6Block    uint64           `json:"consensusLivenessV6Block,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
 	BootstrapOnlyUntil uint64   `json:"bootstrapOnlyUntil,omitempty"`
@@ -699,6 +700,13 @@ func (c *LQCConfig) consensusLivenessV5ForkBlock() *big.Int {
 	return new(big.Int).SetUint64(c.ConsensusLivenessV5Block)
 }
 
+func (c *LQCConfig) consensusLivenessV6ForkBlock() *big.Int {
+	if c == nil || c.ConsensusLivenessV6Block == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.ConsensusLivenessV6Block)
+}
+
 func (c *LQCConfig) validateConsensusLivenessV3() error {
 	if c == nil || c.ConsensusLivenessV3Block == 0 || c.ConsensusFairnessBlock == 0 {
 		return nil
@@ -731,6 +739,19 @@ func (c *LQCConfig) validateConsensusLivenessV5() error {
 	}
 	if c.ConsensusLivenessV5Block < c.ConsensusLivenessV4Block {
 		return fmt.Errorf("consensusLivenessV5Block %d precedes consensusLivenessV4Block %d", c.ConsensusLivenessV5Block, c.ConsensusLivenessV4Block)
+	}
+	return nil
+}
+
+func (c *LQCConfig) validateConsensusLivenessV6() error {
+	if c == nil || c.ConsensusLivenessV6Block == 0 {
+		return nil
+	}
+	if c.ConsensusLivenessV5Block == 0 {
+		return fmt.Errorf("consensusLivenessV6Block requires consensusLivenessV5Block")
+	}
+	if c.ConsensusLivenessV6Block < c.ConsensusLivenessV5Block {
+		return fmt.Errorf("consensusLivenessV6Block %d precedes consensusLivenessV5Block %d", c.ConsensusLivenessV6Block, c.ConsensusLivenessV5Block)
 	}
 	return nil
 }
@@ -1084,6 +1105,11 @@ func (c *ChainConfig) IsConsensusLivenessV5(num *big.Int) bool {
 	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusLivenessV5ForkBlock(), num)
 }
 
+// IsConsensusLivenessV6 reports whether the Rabbit Testnet V6 recovery-priority rules are active.
+func (c *ChainConfig) IsConsensusLivenessV6(num *big.Int) bool {
+	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusLivenessV6ForkBlock(), num)
+}
+
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	return isBlockForked(c.HomesteadBlock, num)
 }
@@ -1292,6 +1318,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if err := c.LQC.validateConsensusLivenessV5(); err != nil {
 		return err
 	}
+	if err := c.LQC.validateConsensusLivenessV6(); err != nil {
+		return err
+	}
 	type fork struct {
 		name      string
 		block     *big.Int // forks up to - and including the merge - were defined with block numbers
@@ -1443,6 +1472,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	newLivenessV5Fork := newcfg.LQC.consensusLivenessV5ForkBlock()
 	if isForkBlockIncompatible(storedLivenessV5Fork, newLivenessV5Fork, headNumber) {
 		return newBlockCompatError("LQC consensus liveness V5 fork block", storedLivenessV5Fork, newLivenessV5Fork)
+	}
+
+	storedLivenessV6Fork := c.LQC.consensusLivenessV6ForkBlock()
+	newLivenessV6Fork := newcfg.LQC.consensusLivenessV6ForkBlock()
+	if isForkBlockIncompatible(storedLivenessV6Fork, newLivenessV6Fork, headNumber) {
+		return newBlockCompatError("LQC consensus liveness V6 fork block", storedLivenessV6Fork, newLivenessV6Fork)
 	}
 
 	storedRegistryFork := c.LQC.registryProtocolForkBlock()

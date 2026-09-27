@@ -592,20 +592,14 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 			ErrWorkV1EngineLabSelectionUnavailable
 	}
 
-	// Block 1 and post-timeout recovery install a sequence-zero activation
-	// anchor. Keep that anchor's temporary production lease until its own
-	// admission becomes a canonical persistent seat. Otherwise stale offline
-	// seats could stop the recovering chain before the N+2 admission delay ends.
-	lease, err := workV2EngineLabActivationLease(
-		parentRegistry,
-		header,
-		parent.Work.SelectionSeats,
-	)
-	if err != nil {
-		return HybridSelection{}, false, err
-	}
-	if lease.Producer != nil {
-		return lease, false, nil
+	if !l.consensusLivenessV6Active(header.Number.Uint64()) {
+		lease, err := workV2EngineLabActivationLease(parentRegistry, header, parent.Work.SelectionSeats)
+		if err != nil {
+			return HybridSelection{}, false, err
+		}
+		if lease.Producer != nil {
+			return lease, false, nil
+		}
 	}
 
 	datasetNumber, err := WorkDatasetAnchorBlockV1(
@@ -654,8 +648,20 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 		l.registryRules(),
 		WorkSelectionBeaconHasherV1(state.cachedSelectionBeaconHash),
 	)
-	if err != nil || active {
-		return selection, active, err
+	if err != nil {
+		return HybridSelection{}, false, err
+	}
+	if active {
+		return selection, true, nil
+	}
+	if l.consensusLivenessV6Active(header.Number.Uint64()) {
+		lease, err := workV2EngineLabActivationLease(parentRegistry, header, parent.Work.SelectionSeats)
+		if err != nil {
+			return HybridSelection{}, false, err
+		}
+		if lease.Producer != nil {
+			return lease, false, nil
+		}
 	}
 	selection, err = workV1EngineLabActivationFallback(
 		parentRegistry,
