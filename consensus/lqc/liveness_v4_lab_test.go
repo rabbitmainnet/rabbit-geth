@@ -59,7 +59,7 @@ func TestLivenessV4ExcludesJailedSeatFromAuthorQueue(t *testing.T) {
 	}
 }
 
-func TestLivenessV4KeepsStaleNonJailedSeatAsDelayedRecovery(t *testing.T) {
+func TestLivenessV4PreservesDeterministicOrderForStaleNonJailedSeat(t *testing.T) {
 	registry := NewCanonicalRegistry()
 
 	stale := common.BigToAddress(big.NewInt(1))
@@ -93,9 +93,9 @@ func TestLivenessV4KeepsStaleNonJailedSeatAsDelayedRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(ordered) != 2 ||
-		ordered[0].Participant != ready ||
-		ordered[1].Participant != stale {
-		t.Fatalf("stale recovery ordering invalid: %+v", ordered)
+		ordered[0].Participant != stale ||
+		ordered[1].Participant != ready {
+		t.Fatalf("heartbeat changed deterministic V4 order: %+v", ordered)
 	}
 }
 
@@ -173,8 +173,9 @@ func TestLivenessV4AppliesMissedTurnsAfterFairnessFork(t *testing.T) {
 		{Address: c},
 	}
 	selection := HybridSelection{
-		Ordered:  ordered,
-		Producer: &ordered[0],
+		Ordered:   ordered,
+		Producer:  &ordered[0],
+		Fallbacks: ordered[1:],
 	}
 
 	engine := &LQC{config: &params.LQCConfig{

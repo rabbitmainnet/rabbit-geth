@@ -184,43 +184,29 @@ func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4(
 		return append([]WorkSeatV1(nil), ordered...), nil
 	}
 
-	rules := l.registryRules()
-	ready := make([]WorkSeatV1, 0, len(ordered))
-	recovery := make([]WorkSeatV1, 0, len(ordered))
+	// Fairness invariant:
+	// heartbeat age must never change normal deterministic WorkSeat priority.
+	// A participant that was not selected recently did not necessarily miss
+	// an assigned production opportunity.
+	final := make([]WorkSeatV1, 0, len(ordered))
 
 	for _, seat := range ordered {
 		participant, exists := registry.Participant(seat.Participant)
 
-		// Missing/never-live registry identities cannot author a normal V4 block.
-		// Persistent WorkSeat ownership is not deleted.
+		// Missing or never-live identities cannot author yet.
 		if !exists || participant.LastHeartbeat == 0 {
 			continue
 		}
 
-		// Active jail is a hard authorization exclusion. V4 authorizes the
-		// whole Ordered queue, so jailed seats must not be present in Ordered.
+		// A real active jail remains a hard authorization exclusion.
 		if participant.JailedUntil > blockNumber {
 			continue
 		}
 
-		availableUntil, ok := checkedRegistryBlockAdd(
-			participant.LastHeartbeat,
-			rules.HeartbeatWindow,
-			rules.HeartbeatGrace,
-		)
-		if ok && blockNumber <= availableUntil {
-			ready = append(ready, seat)
-			continue
-		}
-
-		// A stale but non-jailed persistent seat remains a delayed recovery
-		// candidate. Successful production refreshes LastHeartbeat.
-		recovery = append(recovery, seat)
+		// Preserve the deterministic selection order exactly.
+		final = append(final, seat)
 	}
 
-	final := make([]WorkSeatV1, 0, len(ready)+len(recovery))
-	final = append(final, ready...)
-	final = append(final, recovery...)
 	return final, nil
 }
 
@@ -467,7 +453,15 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		fallbackCount,
 		committeeSize,
 	)
-	if l.consensusLivenessV3Active(blockNumber) {
+	if l.consensusLivenessV4Active(blockNumber) {
+		// V4 fairness: heartbeat age must not remove or demote a selected
+		// committee WorkSeat. Only an active jail excludes committee duty.
+		workSelection = workV1EngineLabFilterCommitteeByLiveness(
+			workSelection,
+			registry,
+			blockNumber,
+		)
+	} else if l.consensusLivenessV3Active(blockNumber) {
 		workSelection = workV1EngineLabFilterCommitteeByAvailabilityV3(
 			workSelection,
 			registry,

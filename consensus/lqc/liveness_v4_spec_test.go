@@ -8,7 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
-func TestLivenessV4WholeQueueFailoverForkBoundary(t *testing.T) {
+func TestLivenessV4KeepsNormalAuthorizationBoundedAtForkBoundary(t *testing.T) {
 	ordered := make([]HybridParticipant, 8)
 	for i := range ordered {
 		ordered[i].Address = common.BigToAddress(big.NewInt(int64(i + 1)))
@@ -31,9 +31,18 @@ func TestLivenessV4WholeQueueFailoverForkBoundary(t *testing.T) {
 
 	if allowed, pos := engine.isAuthorAllowedAt(
 		200, selection, ordered[6].Address,
-	); !allowed || pos != 6 {
+	); allowed || pos != -1 {
 		t.Fatalf(
-			"V4 full-queue failover rejected: allowed=%v pos=%d",
+			"V4 authorized seat outside bounded fallbacks: allowed=%v pos=%d",
+			allowed, pos,
+		)
+	}
+
+	if allowed, pos := engine.isAuthorAllowedAt(
+		200, selection, ordered[2].Address,
+	); !allowed || pos != 2 {
+		t.Fatalf(
+			"V4 rejected configured fallback: allowed=%v pos=%d",
 			allowed, pos,
 		)
 	}
