@@ -447,6 +447,9 @@ func (runtime *rabbitVRFDKGRuntime) validateInboundThresholdPartialV1(packet lqc
 	if packet.KeysetRoot == (common.Hash{}) || packet.RequestID == (common.Hash{}) || packet.MessageHash == (common.Hash{}) || packet.ShareID == 0 {
 		return fmt.Errorf("invalid rabbit vrf threshold partial binding")
 	}
+	if _, err := runtime.canonicalPendingRequestV1(packet.RequestID); err != nil {
+		return fmt.Errorf("validate rabbit vrf canonical pending request: %w", err)
+	}
 	keysetStore, err := rabbitvrfstate.NewDKGFinalKeysetStoreV1(filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-final-keysets"))
 	if err != nil {
 		return fmt.Errorf("open rabbit vrf dkg final keyset store: %w", err)

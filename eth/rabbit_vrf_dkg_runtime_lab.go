@@ -64,6 +64,8 @@ type rabbitVRFDKGRuntime struct {
 	stop        chan struct{}
 	done        chan struct{}
 	current     rabbitVRFDKGLocalContextV1
+
+	canonicalRequestLookup func(common.Hash) (rabbitVRFCanonicalRequestV1, error)
 }
 
 func newRabbitVRFDKGRuntimeMaybeLab(

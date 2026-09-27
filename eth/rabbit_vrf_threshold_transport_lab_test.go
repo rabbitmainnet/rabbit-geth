@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"errors"
 	"math/big"
 	"path/filepath"
 	"strings"
@@ -96,6 +97,8 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	requestID := gethcrypto.Keccak256Hash([]byte("rabbit-vrf-threshold-wire-request"))
+
 	runtime := &rabbitVRFDKGRuntime{
 		backend: &Ethereum{
 			vrfDKGInstanceDir: instanceDir,
@@ -103,6 +106,17 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 		current: rabbitVRFDKGLocalContextV1{
 			SessionID:        sessionID,
 			CanonicalSession: context,
+		},
+		canonicalRequestLookup: func(got common.Hash) (rabbitVRFCanonicalRequestV1, error) {
+			if got != requestID {
+				return rabbitVRFCanonicalRequestV1{}, errors.New("request not canonical")
+			}
+			return rabbitVRFCanonicalRequestV1{
+				RequestID:    got,
+				Requester:    common.Address{1},
+				RequestBlock: 1,
+				Status:       rabbitVRFRequestStatusPendingV1,
+			}, nil
 		},
 	}
 
@@ -127,7 +141,6 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	receiver.routes[2] = remotePeerID
 	receiver.mu.Unlock()
 
-	requestID := gethcrypto.Keccak256Hash([]byte("rabbit-vrf-threshold-wire-request"))
 	message, _, err := lqc.RabbitVRFThresholdMessageV1(
 		context,
 		keysetRoot,
@@ -154,6 +167,12 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	nonCanonical := packet1
+	nonCanonical.RequestID = gethcrypto.Keccak256Hash([]byte("rabbit-vrf-non-canonical-request"))
+	if err := runtime.validateInboundThresholdPartialV1(nonCanonical); err == nil || !strings.Contains(err.Error(), "request not canonical") {
+		t.Fatalf("non-canonical request was not rejected: %v", err)
 	}
 
 	if err := p2p.Send(rw, rabbitVRFDKGThresholdPartialMsg, packet1); err != nil {
