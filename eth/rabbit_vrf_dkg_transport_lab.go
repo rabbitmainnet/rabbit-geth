@@ -18,11 +18,13 @@ import (
 const (
 	rabbitVRFDKGProtocolName    = "rvrfdkg"
 	rabbitVRFDKGProtocolVersion = uint(1)
-	rabbitVRFDKGProtocolLength  = uint64(3)
+	rabbitVRFDKGProtocolLength  = uint64(5)
 
 	rabbitVRFDKGStatusMsg               = uint64(0)
 	rabbitVRFDKGTransportArtifactMsg    = uint64(1)
 	rabbitVRFDKGPolynomialCommitmentMsg = uint64(2)
+	rabbitVRFDKGPeerRouteMsg            = uint64(3)
+	rabbitVRFDKGEncryptedEvaluationMsg  = uint64(4)
 
 	rabbitVRFDKGHandshakeTimeout = 5 * time.Second
 	rabbitVRFDKGMaxMessageSize   = 16 * 1024
@@ -77,6 +79,9 @@ type rabbitVRFDKGTransport struct {
 	remoteSession     common.Hash
 	remoteArtifacts   map[uint64]rabbitVRFDKGTransportArtifactPacketV1
 	remoteCommitments map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1
+
+	routeSession common.Hash
+	routes       map[uint64]string
 }
 
 type rabbitVRFDKGPeer struct {
@@ -108,6 +113,7 @@ func newRabbitVRFDKGTransport(
 		peers:             make(map[string]*rabbitVRFDKGPeer),
 		remoteArtifacts:   make(map[uint64]rabbitVRFDKGTransportArtifactPacketV1),
 		remoteCommitments: make(map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1),
+		routes:            make(map[uint64]string),
 	}, nil
 }
 
@@ -433,6 +439,12 @@ func (n *rabbitVRFDKGTransport) runPeer(
 	defer n.unregister(peer.id())
 
 	go func() {
+		if err := n.sendLocalPeerRouteProofsV1(peer); err != nil {
+			if peer.peer != nil {
+				peer.peer.Log().Debug("Rabbit VRF DKG peer route proof sync failed", "err", err)
+			}
+			return
+		}
 		if err := n.sendPendingTransportArtifactsV1(peer); err != nil {
 			if peer.peer != nil {
 				peer.peer.Log().Debug(
@@ -521,6 +533,30 @@ func (n *rabbitVRFDKGTransport) runPeer(
 					packet,
 					peer.id(),
 				)
+			}
+
+		case rabbitVRFDKGPeerRouteMsg:
+			var packet rabbitVRFDKGPeerRouteProofPacketV1
+			if err := message.Decode(&packet); err != nil {
+				return fmt.Errorf("decode rabbit vrf dkg peer route proof: %w", err)
+			}
+			if err := n.storePeerRouteProofV1(peer, packet); err != nil {
+				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) {
+					continue
+				}
+				return fmt.Errorf("validate rabbit vrf dkg peer route proof: %w", err)
+			}
+
+		case rabbitVRFDKGEncryptedEvaluationMsg:
+			var packet lqc.RabbitVRFDKGEncryptedEvaluationV1
+			if err := message.Decode(&packet); err != nil {
+				return fmt.Errorf("decode rabbit vrf dkg encrypted evaluation: %w", err)
+			}
+			if err := n.runtime.validateInboundEncryptedEvaluationV1(packet); err != nil {
+				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) {
+					continue
+				}
+				return fmt.Errorf("validate rabbit vrf dkg encrypted evaluation: %w", err)
 			}
 
 		default:
@@ -728,6 +764,11 @@ func (n *rabbitVRFDKGTransport) register(
 func (n *rabbitVRFDKGTransport) unregister(id string) {
 	n.mu.Lock()
 	delete(n.peers, id)
+	for shareID, peerID := range n.routes {
+		if peerID == id {
+			delete(n.routes, shareID)
+		}
+	}
 	n.mu.Unlock()
 }
 
