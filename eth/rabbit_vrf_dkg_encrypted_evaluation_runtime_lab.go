@@ -368,5 +368,12 @@ func (runtime *rabbitVRFDKGRuntime) decryptInboundEncryptedEvaluationV1(message 
 	if err != nil {
 		return zero, fmt.Errorf("decrypt rabbit vrf dkg encrypted evaluation: %w", err)
 	}
+	evaluationStore, err := rabbitvrfstate.NewStandardDKGVerifiedEvaluationStoreV1(filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-evaluations"))
+	if err != nil {
+		return zero, fmt.Errorf("open rabbit vrf dkg verified evaluation store: %w", err)
+	}
+	if err := evaluationStore.Store(context.CanonicalSession, recipient, dealer, evaluation, password); err != nil {
+		return zero, fmt.Errorf("persist rabbit vrf dkg verified evaluation: %w", err)
+	}
 	return evaluation, nil
 }

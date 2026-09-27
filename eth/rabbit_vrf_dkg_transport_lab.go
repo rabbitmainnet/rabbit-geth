@@ -558,6 +558,12 @@ func (n *rabbitVRFDKGTransport) runPeer(
 				}
 				return fmt.Errorf("validate rabbit vrf dkg encrypted evaluation: %w", err)
 			}
+			if _, err := n.runtime.decryptInboundEncryptedEvaluationV1(packet); err != nil {
+				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) {
+					continue
+				}
+				return fmt.Errorf("process rabbit vrf dkg encrypted evaluation: %w", err)
+			}
 
 		default:
 			return fmt.Errorf(
