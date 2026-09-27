@@ -16,8 +16,9 @@ func TestLivenessV4ExcludesJailedSeatFromAuthorQueue(t *testing.T) {
 	a := common.BigToAddress(big.NewInt(1))
 	b := common.BigToAddress(big.NewInt(2))
 	c := common.BigToAddress(big.NewInt(3))
+	d := common.BigToAddress(big.NewInt(4))
 
-	for _, address := range []common.Address{a, b, c} {
+	for _, address := range []common.Address{a, b, c, d} {
 		if err := registry.MarkWorkSeatProducerHeartbeat(address, 100); err != nil {
 			t.Fatal(err)
 		}
@@ -160,8 +161,9 @@ func TestLivenessV4AppliesMissedTurnsAfterFairnessFork(t *testing.T) {
 	a := common.BigToAddress(big.NewInt(1))
 	b := common.BigToAddress(big.NewInt(2))
 	c := common.BigToAddress(big.NewInt(3))
+	d := common.BigToAddress(big.NewInt(4))
 
-	for _, address := range []common.Address{a, b, c} {
+	for _, address := range []common.Address{a, b, c, d} {
 		if err := registry.MarkWorkSeatProducerHeartbeat(address, 9); err != nil {
 			t.Fatal(err)
 		}
@@ -171,6 +173,7 @@ func TestLivenessV4AppliesMissedTurnsAfterFairnessFork(t *testing.T) {
 		{Address: a},
 		{Address: b},
 		{Address: c},
+		{Address: d},
 	}
 	selection := HybridSelection{
 		Ordered:   ordered,
@@ -205,12 +208,16 @@ func TestLivenessV4AppliesMissedTurnsAfterFairnessFork(t *testing.T) {
 	pa, _ := registry.Participant(a)
 	pb, _ := registry.Participant(b)
 	pc, _ := registry.Participant(c)
+	pd, _ := registry.Participant(d)
 
 	if pa.JailedUntil <= 12 || pb.JailedUntil <= 12 {
 		t.Fatalf("offline prefix was not jailed: a=%+v b=%+v", pa, pb)
 	}
 	if pc.LastHeartbeat != 12 || pc.JailedUntil != 0 {
 		t.Fatalf("live producer state invalid: %+v", pc)
+	}
+	if pd.LastHeartbeat != 9 || pd.MissedTurns != 0 || pd.JailedUntil != 0 {
+		t.Fatalf("future fallback was penalized: %+v", pd)
 	}
 }
 
