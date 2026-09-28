@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
@@ -2410,4 +2411,251 @@ func TestRabbitVRFRequestRandomnessConsecutiveAndEvents(
 			got,
 		)
 	}
+}
+
+func rabbitVRFTestRequestFinalizationStateV1(
+	t *testing.T,
+	sdb *state.StateDB,
+	timestamp uint64,
+	requestID common.Hash,
+) (
+	requestBlock uint64,
+	epoch uint64,
+	round uint64,
+	randomness common.Hash,
+	proofHash common.Hash,
+	status uint8,
+) {
+	t.Helper()
+
+	selector := crypto.Keccak256(
+		[]byte("getRequest(bytes32)"),
+	)[:4]
+
+	input := make([]byte, 4+32)
+	copy(input[:4], selector)
+	copy(input[4:], requestID[:])
+
+	ret, _, err := rabbitVRFTestEVM(
+		sdb,
+		timestamp,
+	).Call(
+		common.Address{0x01},
+		params.RabbitVRFCoordinatorV1Address,
+		input,
+		vm.NewGasBudget(30_000_000, 30_000_000),
+		common.U2560,
+	)
+	if err != nil {
+		t.Fatalf("getRequest failed: %v", err)
+	}
+	if len(ret) != 32*11 {
+		t.Fatalf("getRequest returned %d bytes, want %d", len(ret), 32*11)
+	}
+
+	requestBlock = new(big.Int).SetBytes(ret[64:96]).Uint64()
+	epoch = new(big.Int).SetBytes(ret[96:128]).Uint64()
+	round = new(big.Int).SetBytes(ret[128:160]).Uint64()
+	randomness = common.BytesToHash(ret[256:288])
+	proofHash = common.BytesToHash(ret[288:320])
+	status = uint8(new(big.Int).SetBytes(ret[320:352]).Uint64())
+
+	return
+}
+
+func TestRabbitVRFSystemFinalizationStateTransition(t *testing.T) {
+	makePending := func(t *testing.T) (
+		*state.StateDB,
+		common.Hash,
+		uint64,
+	) {
+		t.Helper()
+
+		sdb := mkState(nil)
+		misc.ApplyRabbitVRFCoordinatorV1(sdb)
+
+		rabbitVRFTestPrepareRequestPricing(t, sdb)
+
+		caller := common.HexToAddress(
+			"0x1111111111111111111111111111111111111111",
+		)
+		sdb.SetBalance(
+			caller,
+			uint256.NewInt(1_000_000),
+			tracing.BalanceChangeUnspecified,
+		)
+
+		timestamp := uint64(2800)
+		fee := uint64(2_000)
+
+		ret, err := rabbitVRFTestRequestRandomness(
+			sdb,
+			timestamp,
+			caller,
+			0,
+			crypto.Keccak256Hash(
+				[]byte("rabbit-vrf-request-test"),
+			),
+			fee,
+		)
+		if err != nil {
+			t.Fatalf("requestRandomness failed: %v", err)
+		}
+		if len(ret) != 32 {
+			t.Fatalf(
+				"requestRandomness returned %d bytes, want 32",
+				len(ret),
+			)
+		}
+
+		requestID := common.BytesToHash(ret)
+
+		requestBlock, epoch, round, randomness, proofHash, status :=
+			rabbitVRFTestRequestFinalizationStateV1(
+				t,
+				sdb,
+				timestamp,
+				requestID,
+			)
+
+		if requestBlock == 0 {
+			t.Fatal("pending request has zero requestBlock")
+		}
+		if epoch != 0 ||
+			round != 0 ||
+			randomness != (common.Hash{}) ||
+			proofHash != (common.Hash{}) ||
+			status != 1 {
+			t.Fatalf(
+				"unexpected pending request state: block=%d epoch=%d round=%d randomness=%s proof=%s status=%d",
+				requestBlock,
+				epoch,
+				round,
+				randomness,
+				proofHash,
+				status,
+			)
+		}
+
+		return sdb, requestID, requestBlock
+	}
+
+	t.Run("pending_to_completed", func(t *testing.T) {
+		sdb, requestID, requestBlock := makePending(t)
+
+		randomness := crypto.Keccak256Hash(
+			[]byte("rabbit-vrf-randomness"),
+		)
+		proofHash := crypto.Keccak256Hash(
+			[]byte("rabbit-vrf-proof"),
+		)
+
+		err := ProcessRabbitVRFFinalizations(
+			rabbitVRFTestEVM(sdb, 1001),
+			nil,
+			[]consensus.RabbitVRFValidatedFinalization{
+				{
+					RequestID:  requestID,
+					Epoch:      7,
+					Round:      requestBlock,
+					Randomness: randomness,
+					ProofHash:  proofHash,
+				},
+			},
+		)
+		if err != nil {
+			t.Fatalf("finalization failed: %v", err)
+		}
+
+		gotBlock, gotEpoch, gotRound, gotRandomness, gotProof, status :=
+			rabbitVRFTestRequestFinalizationStateV1(
+				t,
+				sdb,
+				1001,
+				requestID,
+			)
+
+		if gotBlock != requestBlock {
+			t.Fatalf(
+				"requestBlock=%d want=%d",
+				gotBlock,
+				requestBlock,
+			)
+		}
+		if gotEpoch != 7 {
+			t.Fatalf("epoch=%d want=7", gotEpoch)
+		}
+		if gotRound != requestBlock {
+			t.Fatalf(
+				"round=%d want=%d",
+				gotRound,
+				requestBlock,
+			)
+		}
+		if gotRandomness != randomness {
+			t.Fatalf(
+				"randomness=%s want=%s",
+				gotRandomness,
+				randomness,
+			)
+		}
+		if gotProof != proofHash {
+			t.Fatalf(
+				"proofHash=%s want=%s",
+				gotProof,
+				proofHash,
+			)
+		}
+		if status != 2 {
+			t.Fatalf("status=%d want=2 COMPLETED", status)
+		}
+	})
+
+	t.Run("wrong_round_reverts_and_stays_pending", func(t *testing.T) {
+		sdb, requestID, requestBlock := makePending(t)
+
+		err := ProcessRabbitVRFFinalizations(
+			rabbitVRFTestEVM(sdb, 1001),
+			nil,
+			[]consensus.RabbitVRFValidatedFinalization{
+				{
+					RequestID: requestID,
+					Epoch:     7,
+					Round:     requestBlock + 1,
+					Randomness: crypto.Keccak256Hash(
+						[]byte("wrong-round-randomness"),
+					),
+					ProofHash: crypto.Keccak256Hash(
+						[]byte("wrong-round-proof"),
+					),
+				},
+			},
+		)
+		if err == nil {
+			t.Fatal("wrong Round was accepted")
+		}
+
+		_, epoch, round, randomness, proofHash, status :=
+			rabbitVRFTestRequestFinalizationStateV1(
+				t,
+				sdb,
+				1001,
+				requestID,
+			)
+
+		if epoch != 0 ||
+			round != 0 ||
+			randomness != (common.Hash{}) ||
+			proofHash != (common.Hash{}) ||
+			status != 1 {
+			t.Fatalf(
+				"failed finalization mutated request: epoch=%d round=%d randomness=%s proof=%s status=%d",
+				epoch,
+				round,
+				randomness,
+				proofHash,
+				status,
+			)
+		}
+	})
 }

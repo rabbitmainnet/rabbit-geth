@@ -31,14 +31,14 @@ func TestRabbitVRFCoordinatorV1Artifact(t *testing.T) {
 		t.Fatalf("coordinator address = %s, want %s", params.RabbitVRFCoordinatorV1Address, wantAddr)
 	}
 
-	wantHash := common.HexToHash("0xfc4f7e4e983b299c0f03c388c64920a123312f6bde669f0e5787551cd8e97cba")
+	wantHash := common.HexToHash("0x71d50b4b953bbfcb4eb6d8217e46cb80d2bcf718a2087ea76e4e1cf811621f8c")
 	gotHash := crypto.Keccak256Hash(params.RabbitVRFCoordinatorV1Code)
 	if gotHash != wantHash {
 		t.Fatalf("runtime code hash = %s, want %s", gotHash, wantHash)
 	}
 
-	if got := len(params.RabbitVRFCoordinatorV1Code); got != 5080 {
-		t.Fatalf("runtime byte length = %d, want 5080", got)
+	if got := len(params.RabbitVRFCoordinatorV1Code); got != 5643 {
+		t.Fatalf("runtime byte length = %d, want 5643", got)
 	}
 }
 

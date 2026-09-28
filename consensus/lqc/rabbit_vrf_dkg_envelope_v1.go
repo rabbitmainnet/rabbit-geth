@@ -15,6 +15,7 @@ const (
 	RabbitVRFDKGMessagePolynomialCommitmentV1 uint8 = 1
 	RabbitVRFDKGMessageTransportKeyBindingV1  uint8 = 2
 	RabbitVRFDKGMessagePeerRouteV1            uint8 = 3
+	RabbitVRFDKGMessageKeysetCertificateV1    uint8 = 4
 )
 
 var (
@@ -93,7 +94,9 @@ func validRabbitVRFDKGMessageTypeV1(
 		messageType ==
 			RabbitVRFDKGMessageTransportKeyBindingV1 ||
 		messageType ==
-			RabbitVRFDKGMessagePeerRouteV1
+			RabbitVRFDKGMessagePeerRouteV1 ||
+		messageType ==
+			RabbitVRFDKGMessageKeysetCertificateV1
 }
 
 func validateRabbitVRFDKGEnvelopeContextV1(

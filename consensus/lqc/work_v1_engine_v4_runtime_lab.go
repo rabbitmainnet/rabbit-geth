@@ -7,7 +7,61 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/core/types"
 )
+
+func (l *LQC) workV1EngineLabRememberRabbitVRFFinalizations(headerHash common.Hash, values []RabbitVRFFinalizationV1) error {
+	if headerHash == (common.Hash{}) {
+		return ErrWorkV1EngineLabUnavailable
+	}
+	state, err := workV1EngineLabRuntimeFor(l)
+	if err != nil {
+		return err
+	}
+	cloned := append([]RabbitVRFFinalizationV1(nil), values...)
+	state.mu.Lock()
+	if state.validatedFinalizations == nil {
+		state.validatedFinalizations = make(map[common.Hash][]RabbitVRFFinalizationV1)
+	}
+	state.validatedFinalizations[headerHash] = cloned
+	state.mu.Unlock()
+	return nil
+}
+
+func (l *LQC) RabbitVRFValidatedFinalizationsV1(headerHash common.Hash) ([]RabbitVRFFinalizationV1, bool, error) {
+	if headerHash == (common.Hash{}) {
+		return nil, false, ErrWorkV1EngineLabUnavailable
+	}
+	state, err := workV1EngineLabRuntimeFor(l)
+	if err != nil {
+		return nil, false, err
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	values, ok := state.validatedFinalizations[headerHash]
+	if !ok {
+		return nil, false, nil
+	}
+	return append([]RabbitVRFFinalizationV1(nil), values...), true, nil
+}
+
+func (l *LQC) RabbitVRFValidatedFinalizations(headerHash common.Hash) ([]consensus.RabbitVRFValidatedFinalization, bool, error) {
+	values, ok, err := l.RabbitVRFValidatedFinalizationsV1(headerHash)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	out := make([]consensus.RabbitVRFValidatedFinalization, len(values))
+	for i, value := range values {
+		out[i] = consensus.RabbitVRFValidatedFinalization{
+			RequestID:  value.RequestID,
+			Epoch:      value.Epoch,
+			Round:      value.Round,
+			Randomness: value.Randomness,
+			ProofHash:  value.ProofHash,
+		}
+	}
+	return out, true, nil
+}
 
 func (l *LQC) workV1EngineLabRememberClaimLedger(
 	headerHash common.Hash,
@@ -233,4 +287,41 @@ func (l *LQC) workV1EngineLabV4Context(
 			parentHash,
 		),
 	}, nil
+}
+
+func (l *LQC) RabbitVRFPreparedFinalizations(
+	header *types.Header,
+) ([]consensus.RabbitVRFValidatedFinalization, error) {
+	if header == nil || header.Number == nil || !header.Number.IsUint64() {
+		return nil, ErrWorkV1EngineLabUnavailable
+	}
+
+	envelope, err := DecodeLQCHeaderExtraV5(
+		header.Extra,
+		MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if envelope.BlockNumber != header.Number.Uint64() {
+		return nil, ErrInvalidLQCHeaderExtraV5
+	}
+
+	out := make(
+		[]consensus.RabbitVRFValidatedFinalization,
+		len(envelope.RabbitVRFFinalizations),
+	)
+	for index, value := range envelope.RabbitVRFFinalizations {
+		if err := value.Validate(); err != nil {
+			return nil, err
+		}
+		out[index] = consensus.RabbitVRFValidatedFinalization{
+			RequestID:  value.RequestID,
+			Epoch:      value.Epoch,
+			Round:      value.Round,
+			Randomness: value.Randomness,
+			ProofHash:  value.ProofHash,
+		}
+	}
+	return out, nil
 }

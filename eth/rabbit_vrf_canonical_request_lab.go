@@ -16,6 +16,8 @@ import (
 
 const rabbitVRFRequestStatusPendingV1 = uint8(1)
 
+var errRabbitVRFRequestNotPendingV1 = errors.New("rabbit vrf request not pending")
+
 type rabbitVRFCanonicalRequestV1 struct {
 	RequestID        common.Hash
 	Requester        common.Address
@@ -112,7 +114,7 @@ func (runtime *rabbitVRFDKGRuntime) canonicalPendingRequestV1(requestID common.H
 		return rabbitVRFCanonicalRequestV1{}, errors.New("rabbit vrf request does not exist")
 	}
 	if out.Status != rabbitVRFRequestStatusPendingV1 {
-		return rabbitVRFCanonicalRequestV1{}, fmt.Errorf("rabbit vrf request status %d is not pending", out.Status)
+		return rabbitVRFCanonicalRequestV1{}, fmt.Errorf("%w: rabbit vrf request status %d is not pending", errRabbitVRFRequestNotPendingV1, out.Status)
 	}
 	if out.Randomness != (common.Hash{}) || out.ProofHash != (common.Hash{}) {
 		return rabbitVRFCanonicalRequestV1{}, errors.New("rabbit vrf pending request already has result")

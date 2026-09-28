@@ -74,6 +74,22 @@ type LocalParticipantResolver interface {
 	) LocalParticipant
 }
 
+type RabbitVRFValidatedFinalization struct {
+	RequestID  common.Hash
+	Epoch      uint64
+	Round      uint64
+	Randomness common.Hash
+	ProofHash  common.Hash
+}
+
+type RabbitVRFValidatedFinalizationReader interface {
+	RabbitVRFValidatedFinalizations(headerHash common.Hash) ([]RabbitVRFValidatedFinalization, bool, error)
+}
+
+type RabbitVRFPreparedFinalizationReader interface {
+	RabbitVRFPreparedFinalizations(header *types.Header) ([]RabbitVRFValidatedFinalization, error)
+}
+
 // HeaderSignerFn signs the exact consensus-defined byte payload for a block
 // producer. Implementations must return a canonical 65-byte secp256k1
 // signature with recovery id 0 or 1.

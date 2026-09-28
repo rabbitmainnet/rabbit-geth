@@ -32,6 +32,7 @@ contract RabbitVRFCoordinatorV1 {
         keccak256("RABBIT_VRF_REQUEST_V1");
 
     uint8 private constant REQUEST_STATUS_PENDING = 1;
+    uint8 private constant REQUEST_STATUS_COMPLETED = 2;
 
     bytes4 private constant GET_RESERVES_SELECTOR =
         bytes4(keccak256("getReserves()"));
@@ -78,6 +79,8 @@ contract RabbitVRFCoordinatorV1 {
     error RequestNonceOverflow(address requester);
     error IncorrectRequestFee(uint256 expected, uint256 actual);
     error RequestAlreadyExists(bytes32 requestId);
+    error RequestNotPending(bytes32 requestId, uint8 status);
+    error InvalidRequestFinalization(bytes32 requestId);
 
     event RandomnessRequested(
         bytes32 indexed requestId,
@@ -143,6 +146,42 @@ contract RabbitVRFCoordinatorV1 {
             observation.observedAt,
             observation.price0Cumulative
         );
+    }
+
+    /// @notice Finalizes one canonical Rabbit VRF request exactly once.
+    /// @dev Consensus-facing system call. The caller must already have validated
+    ///      the canonical threshold result before invoking this function.
+    function systemFinalizeRequest(
+        bytes32 requestId,
+        uint64 epoch,
+        uint64 round,
+        bytes32 randomness,
+        bytes32 proofHash
+    ) external onlySystem {
+        Request storage request = _requests[requestId];
+
+        if (request.status != REQUEST_STATUS_PENDING) {
+            revert RequestNotPending(requestId, request.status);
+        }
+        if (
+            request.requestBlock == 0 ||
+            request.epoch != 0 ||
+            request.round != 0 ||
+            request.randomness != bytes32(0) ||
+            request.proofHash != bytes32(0) ||
+            epoch == 0 ||
+            round != request.requestBlock ||
+            randomness == bytes32(0) ||
+            proofHash == bytes32(0)
+        ) {
+            revert InvalidRequestFinalization(requestId);
+        }
+
+        request.epoch = epoch;
+        request.round = round;
+        request.randomness = randomness;
+        request.proofHash = proofHash;
+        request.status = REQUEST_STATUS_COMPLETED;
     }
 
     /// @notice Returns the nonce that will be used by the requester's next

@@ -17,6 +17,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
@@ -130,6 +131,44 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		return nil, err
 	}
 	blockAccessList.Merge(bal)
+
+	if config.IsRabbitVRF(block.Number()) {
+		engine := p.chain.Engine()
+		reader, ok := engine.(consensus.RabbitVRFValidatedFinalizationReader)
+		if !ok {
+			return nil, fmt.Errorf("Rabbit VRF validated finalization reader unavailable")
+		}
+
+		finalizations, found, err := reader.RabbitVRFValidatedFinalizations(blockHash)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			if err := engine.VerifyHeader(p.chain, header); err != nil {
+				return nil, fmt.Errorf(
+					"verify Rabbit VRF header before execution: %w",
+					err,
+				)
+			}
+			finalizations, found, err =
+				reader.RabbitVRFValidatedFinalizations(blockHash)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf(
+				"Rabbit VRF validated finalizations unavailable",
+			)
+		}
+		if err := ProcessRabbitVRFFinalizations(
+			evm,
+			blockAccessList,
+			finalizations,
+		); err != nil {
+			return nil, err
+		}
+	}
 
 	// Finalize the block, applying any consensus engine specific extras
 	// (e.g. block rewards).
@@ -322,6 +361,8 @@ func systemCallGasBudget(evm *vm.EVM) (gasLimit uint64, gasBudget vm.GasBudget) 
 
 var rabbitVRFPriceObservationSelector = crypto.Keccak256([]byte("systemObservePrice()"))[:4]
 
+var rabbitVRFFinalizeRequestSelector = crypto.Keccak256([]byte("systemFinalizeRequest(bytes32,uint64,uint64,bytes32,bytes32)"))[:4]
+
 // ProcessRabbitVRFPriceObservation advances the consensus-driven RabbitSwap
 // observation used by Rabbit VRF pricing.
 func ProcessRabbitVRFPriceObservation(
@@ -382,6 +423,97 @@ func ProcessRabbitVRFPriceObservation(
 	if blockAccessList != nil {
 		blockAccessList.Merge(systemBAL)
 	}
+}
+
+// ProcessRabbitVRFFinalizations applies consensus-selected Rabbit VRF
+// finalizations through the coordinator system contract.
+func ProcessRabbitVRFFinalizations(
+	evm *vm.EVM,
+	blockAccessList *bal.ConstructionBlockAccessList,
+	values []consensus.RabbitVRFValidatedFinalization,
+) error {
+	var previous common.Hash
+
+	for index, value := range values {
+		if value.RequestID == (common.Hash{}) ||
+			value.Epoch == 0 ||
+			value.Round == 0 ||
+			value.Randomness == (common.Hash{}) ||
+			value.ProofHash == (common.Hash{}) {
+			return fmt.Errorf("invalid rabbit vrf finalization")
+		}
+		if index > 0 && bytes.Compare(previous[:], value.RequestID[:]) >= 0 {
+			return fmt.Errorf("non-canonical rabbit vrf finalization order")
+		}
+		previous = value.RequestID
+
+		data := make([]byte, 4+32*5)
+		copy(data[:4], rabbitVRFFinalizeRequestSelector)
+		copy(data[4:36], value.RequestID[:])
+		new(big.Int).SetUint64(value.Epoch).FillBytes(data[36:68])
+		new(big.Int).SetUint64(value.Round).FillBytes(data[68:100])
+		copy(data[100:132], value.Randomness[:])
+		copy(data[132:164], value.ProofHash[:])
+
+		gasLimit, gasBudget := systemCallGasBudget(evm)
+		msg := &Message{
+			From:      params.SystemAddress,
+			GasLimit:  gasLimit,
+			GasPrice:  uint256.NewInt(0),
+			GasFeeCap: uint256.NewInt(0),
+			GasTipCap: uint256.NewInt(0),
+			To:        &params.RabbitVRFCoordinatorV1Address,
+			Data:      data,
+		}
+
+		if tracer := evm.Config.Tracer; tracer != nil {
+			onSystemCallStart(tracer, evm.GetVMContext())
+		}
+
+		evm.SetTxContext(NewEVMTxContext(msg))
+		evm.StateDB.Prepare(
+			evm.GetRules(),
+			common.Address{},
+			common.Address{},
+			nil,
+			nil,
+			nil,
+		)
+		evm.StateDB.SetTxContext(common.Hash{}, 0, 0)
+		evm.StateDB.AddAddressToAccessList(
+			params.RabbitVRFCoordinatorV1Address,
+		)
+
+		_, _, err := evm.Call(
+			msg.From,
+			*msg.To,
+			msg.Data,
+			gasBudget,
+			common.U2560,
+		)
+
+		if tracer := evm.Config.Tracer; tracer != nil &&
+			tracer.OnSystemCallEnd != nil {
+			tracer.OnSystemCallEnd()
+		}
+
+		if err != nil {
+			return fmt.Errorf(
+				"rabbit vrf finalization system call %s failed: %w",
+				value.RequestID,
+				err,
+			)
+		}
+
+		if evm.StateDB.AccessEvents() != nil {
+			evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
+		}
+		systemBAL := evm.StateDB.Finalise(true)
+		if blockAccessList != nil {
+			blockAccessList.Merge(systemBAL)
+		}
+	}
+	return nil
 }
 
 // ProcessBeaconBlockRoot applies the EIP-4788 system call to the beacon block root

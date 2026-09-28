@@ -21,7 +21,7 @@ import (
 const (
 	rabbitVRFDKGProtocolName    = "rvrfdkg"
 	rabbitVRFDKGProtocolVersion = uint(1)
-	rabbitVRFDKGProtocolLength  = uint64(6)
+	rabbitVRFDKGProtocolLength  = uint64(7)
 
 	rabbitVRFDKGStatusMsg               = uint64(0)
 	rabbitVRFDKGTransportArtifactMsg    = uint64(1)
@@ -29,6 +29,7 @@ const (
 	rabbitVRFDKGPeerRouteMsg            = uint64(3)
 	rabbitVRFDKGEncryptedEvaluationMsg  = uint64(4)
 	rabbitVRFDKGThresholdPartialMsg     = uint64(5)
+	rabbitVRFDKGKeysetCertificateMsg    = uint64(6)
 
 	rabbitVRFDKGHandshakeTimeout = 5 * time.Second
 	rabbitVRFDKGMaxMessageSize   = 16 * 1024
@@ -96,6 +97,12 @@ type rabbitVRFDKGTransport struct {
 	partialKeysetRoot common.Hash
 	partials          map[common.Hash]map[uint64]lqc.RabbitVRFThresholdPartialV1
 	partialResults    map[common.Hash]rabbitVRFThresholdResultV1
+	finalizations     map[common.Hash]lqc.RabbitVRFFinalizationV1
+
+	keysetCertificateSession    common.Hash
+	keysetCertificateRoot       common.Hash
+	keysetCertificateSignatures map[uint64][]byte
+	keysetCertificate           lqc.RabbitVRFKeysetCertificateV1
 }
 
 type rabbitVRFDKGPeer struct {
@@ -119,7 +126,7 @@ func newRabbitVRFDKGTransport(
 		return nil, errors.New("zero rabbit vrf dkg genesis")
 	}
 
-	return &rabbitVRFDKGTransport{
+	transport := &rabbitVRFDKGTransport{
 		chainID:           new(big.Int).Set(config.ChainID),
 		networkID:         config.NetworkID,
 		genesis:           config.Genesis,
@@ -128,7 +135,23 @@ func newRabbitVRFDKGTransport(
 		remoteArtifacts:   make(map[uint64]rabbitVRFDKGTransportArtifactPacketV1),
 		remoteCommitments: make(map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1),
 		routes:            make(map[uint64]string),
-	}, nil
+		finalizations:     make(map[common.Hash]lqc.RabbitVRFFinalizationV1),
+	}
+	if config.Runtime != nil && config.Runtime.engine != nil {
+		if err := lqc.SetWorkV1EngineLabRabbitVRFFinalizationProvider(
+			config.Runtime.engine,
+			transport.rabbitVRFFinalizationsForBlockV1,
+		); err != nil {
+			return nil, fmt.Errorf("register rabbit vrf finalization provider: %w", err)
+		}
+		if err := lqc.SetWorkV1EngineLabRabbitVRFKeysetCertificateProvider(
+			config.Runtime.engine,
+			transport.rabbitVRFKeysetCertificateForBlockV1,
+		); err != nil {
+			return nil, fmt.Errorf("register rabbit vrf keyset certificate provider: %w", err)
+		}
+	}
+	return transport, nil
 }
 
 func newRabbitVRFDKGTransportMaybeLab(
@@ -591,6 +614,40 @@ func (n *rabbitVRFDKGTransport) runPeer(
 				return fmt.Errorf("process rabbit vrf threshold partial: %w", err)
 			}
 
+		case rabbitVRFDKGKeysetCertificateMsg:
+			var envelope lqc.RabbitVRFDKGEnvelopeV1
+			if err := message.Decode(&envelope); err != nil {
+				return fmt.Errorf(
+					"decode rabbit vrf keyset certificate signature: %w",
+					err,
+				)
+			}
+
+			inserted, err :=
+				n.handleInboundKeysetCertificateEnvelopeV1(
+					peer,
+					envelope,
+				)
+			if err != nil {
+				if errors.Is(
+					err,
+					errRabbitVRFDKGArtifactSessionMismatch,
+				) {
+					continue
+				}
+				return fmt.Errorf(
+					"process rabbit vrf keyset certificate signature: %w",
+					err,
+				)
+			}
+
+			if inserted {
+				n.broadcastKeysetCertificateEnvelopeV1(
+					envelope,
+					peer.id(),
+				)
+			}
+
 		default:
 			return fmt.Errorf(
 				"invalid rabbit vrf dkg message code: %d",
@@ -792,6 +849,61 @@ func (peer *rabbitVRFDKGPeer) sendThresholdPartialV1(packet lqc.RabbitVRFThresho
 	return nil
 }
 
+func (n *rabbitVRFDKGTransport) rabbitVRFFinalizationsForBlockV1(blockNumber uint64) ([]lqc.RabbitVRFFinalizationV1, error) {
+	if n == nil || n.runtime == nil {
+		return nil, nil
+	}
+
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) ||
+		context.CanonicalSession.TargetVRFEpoch == 0 {
+		return nil, nil
+	}
+
+	n.mu.RLock()
+	candidates := make([]lqc.RabbitVRFFinalizationV1, 0, len(n.finalizations))
+	for _, finalization := range n.finalizations {
+		if finalization.Epoch == context.CanonicalSession.TargetVRFEpoch {
+			candidates = append(candidates, finalization)
+		}
+	}
+	n.mu.RUnlock()
+
+	pending := make([]lqc.RabbitVRFFinalizationV1, 0, len(candidates))
+	for _, finalization := range candidates {
+		request, err := n.runtime.canonicalPendingRequestV1(finalization.RequestID)
+		if err != nil {
+			if errors.Is(err, errRabbitVRFRequestNotPendingV1) {
+				continue
+			}
+			return nil, fmt.Errorf(
+				"resolve rabbit vrf finalization request %s for block %d: %w",
+				finalization.RequestID,
+				blockNumber,
+				err,
+			)
+		}
+
+		if request.RequestBlock == 0 ||
+			request.RequestBlock >= blockNumber ||
+			finalization.Round != request.RequestBlock ||
+			finalization.Epoch != context.CanonicalSession.TargetVRFEpoch {
+			return nil, errors.New("rabbit vrf finalization canonical epoch/round mismatch")
+		}
+
+		pending = append(pending, finalization)
+	}
+
+	canonical, err := lqc.CanonicalRabbitVRFFinalizationsV1(pending)
+	if err != nil {
+		return nil, err
+	}
+	if len(canonical) > lqc.MaxRabbitVRFFinalizationsPerBlockV1 {
+		canonical = canonical[:lqc.MaxRabbitVRFFinalizationsPerBlockV1]
+	}
+	return canonical, nil
+}
+
 func (n *rabbitVRFDKGTransport) processCanonicalPendingRequestV1(requestID common.Hash) error {
 	if n == nil || n.runtime == nil || n.runtime.backend == nil || n.runtime.backend.vrfDKGInstanceDir == "" {
 		return errors.New("rabbit vrf threshold local flow unavailable")
@@ -961,6 +1073,38 @@ func (n *rabbitVRFDKGTransport) collectThresholdPartialV1(packet lqc.RabbitVRFTh
 		return fmt.Errorf("combine rabbit vrf threshold request %s: %w", packet.RequestID, err)
 	}
 
+	request, err := n.runtime.canonicalPendingRequestV1(packet.RequestID)
+	if err != nil {
+		return fmt.Errorf("resolve rabbit vrf request for finalization: %w", err)
+	}
+	epoch := context.CanonicalSession.TargetVRFEpoch
+	round := request.RequestBlock
+	if epoch == 0 || round == 0 {
+		return errors.New("rabbit vrf finalization canonical epoch/round unavailable")
+	}
+	proofHash, err := lqc.RabbitVRFFinalizationProofHashV1(
+		packet.RequestID,
+		epoch,
+		round,
+		signature[:],
+	)
+	if err != nil {
+		return fmt.Errorf("build rabbit vrf finalization proof hash: %w", err)
+	}
+	finalization := lqc.RabbitVRFFinalizationV1{
+		Version:    lqc.RabbitVRFFinalizationVersionV1,
+		RequestID:  packet.RequestID,
+		KeysetRoot: packet.KeysetRoot,
+		Epoch:      epoch,
+		Round:      round,
+		Randomness: randomness,
+		ProofHash:  proofHash,
+		Signature:  signature,
+	}
+	if err := finalization.Validate(); err != nil {
+		return fmt.Errorf("validate locally produced rabbit vrf finalization: %w", err)
+	}
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.partialSession != packet.SessionID || n.partialKeysetRoot != packet.KeysetRoot {
@@ -970,9 +1114,24 @@ func (n *rabbitVRFDKGTransport) collectThresholdPartialV1(packet lqc.RabbitVRFTh
 		if existing.Signature != signature || existing.Randomness != randomness {
 			return errors.New("rabbit vrf threshold result conflict")
 		}
+		if existingFinalization, ok := n.finalizations[packet.RequestID]; ok &&
+			existingFinalization != finalization {
+			return errors.New("rabbit vrf finalization conflict")
+		}
 		return nil
 	}
-	n.partialResults[packet.RequestID] = rabbitVRFThresholdResultV1{Signature: signature, Randomness: randomness}
+	if existingFinalization, ok := n.finalizations[packet.RequestID]; ok &&
+		existingFinalization != finalization {
+		return errors.New("rabbit vrf finalization conflict")
+	}
+	if n.finalizations == nil {
+		n.finalizations = make(map[common.Hash]lqc.RabbitVRFFinalizationV1)
+	}
+	n.partialResults[packet.RequestID] = rabbitVRFThresholdResultV1{
+		Signature:  signature,
+		Randomness: randomness,
+	}
+	n.finalizations[packet.RequestID] = finalization
 	return nil
 }
 
