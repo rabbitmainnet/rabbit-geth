@@ -23,6 +23,16 @@ type rabbitVRFThresholdMessagePayloadV1 struct {
 }
 
 type RabbitVRFThresholdPartialV1 struct {
+	SessionID              common.Hash
+	KeysetRoot             common.Hash
+	RequestID              common.Hash
+	MessageHash            common.Hash
+	ShareID                uint64
+	Signature              rabbitvrf.Signature
+	ParticipationSignature RabbitVRFParticipationSignatureV1
+}
+
+type rabbitVRFThresholdPartialMessageIDPayloadV1 struct {
 	SessionID   common.Hash
 	KeysetRoot  common.Hash
 	RequestID   common.Hash
@@ -110,7 +120,14 @@ func RabbitVRFThresholdPartialMessageIDV1(
 		return common.Hash{}, ErrInvalidRabbitVRFThresholdPartialV1
 	}
 
-	encoded, err := rlp.EncodeToBytes(partial)
+	encoded, err := rlp.EncodeToBytes(rabbitVRFThresholdPartialMessageIDPayloadV1{
+		SessionID:   partial.SessionID,
+		KeysetRoot:  partial.KeysetRoot,
+		RequestID:   partial.RequestID,
+		MessageHash: partial.MessageHash,
+		ShareID:     partial.ShareID,
+		Signature:   partial.Signature,
+	})
 	if err != nil {
 		return common.Hash{}, ErrInvalidRabbitVRFThresholdPartialV1
 	}
@@ -121,4 +138,38 @@ func RabbitVRFThresholdPartialMessageIDV1(
 	}
 
 	return messageID, nil
+}
+
+func ValidateRabbitVRFThresholdPartialParticipationV1(
+	context RabbitVRFDKGSessionContextV1,
+	transportKeySetRoot common.Hash,
+	member RabbitVRFCommitteeMemberV1,
+	binding RabbitVRFDKGTransportKeyBindingV1,
+	partial RabbitVRFThresholdPartialV1,
+) error {
+	if partial.ShareID != member.ShareID ||
+		partial.SessionID == (common.Hash{}) ||
+		partial.KeysetRoot == (common.Hash{}) ||
+		partial.RequestID == (common.Hash{}) ||
+		partial.MessageHash == (common.Hash{}) {
+		return ErrInvalidRabbitVRFThresholdPartialV1
+	}
+	partialMessageID, err := RabbitVRFThresholdPartialMessageIDV1(partial)
+	if err != nil {
+		return err
+	}
+	if err := ValidateRabbitVRFParticipationAttestationV1(
+		context,
+		transportKeySetRoot,
+		member,
+		binding,
+		partial.KeysetRoot,
+		partial.RequestID,
+		partial.MessageHash,
+		partialMessageID,
+		partial.ParticipationSignature[:],
+	); err != nil {
+		return ErrInvalidRabbitVRFThresholdPartialV1
+	}
+	return nil
 }

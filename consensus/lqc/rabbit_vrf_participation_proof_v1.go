@@ -18,6 +18,8 @@ var ErrInvalidRabbitVRFParticipationProofV1 = errors.New("invalid rabbit vrf par
 
 var rabbitVRFParticipationSignDomainV1 = []byte("RABBIT-VRF-PARTICIPATION-SIGN-V1")
 
+type RabbitVRFParticipationSignatureV1 [RabbitVRFParticipationSignatureSizeV1]byte
+
 type RabbitVRFParticipationProofV1 struct {
 	Version           uint8
 	Bitmap            []byte
@@ -117,6 +119,47 @@ func rabbitVRFParticipationShareIDsV1(context RabbitVRFDKGSessionContextV1, bitm
 	return shareIDs, nil
 }
 
+func ValidateRabbitVRFParticipationAttestationV1(
+	context RabbitVRFDKGSessionContextV1,
+	transportKeySetRoot common.Hash,
+	member RabbitVRFCommitteeMemberV1,
+	binding RabbitVRFDKGTransportKeyBindingV1,
+	keysetRoot common.Hash,
+	requestID common.Hash,
+	messageHash common.Hash,
+	partialMessageID common.Hash,
+	signature []byte,
+) error {
+	if len(signature) != RabbitVRFParticipationSignatureSizeV1 ||
+		partialMessageID == (common.Hash{}) {
+		return ErrInvalidRabbitVRFParticipationProofV1
+	}
+	if _, err := VerifyRabbitVRFDKGTransportKeyBindingV1(context, member, binding); err != nil {
+		return ErrInvalidRabbitVRFParticipationProofV1
+	}
+	signingHash, err := RabbitVRFParticipationSigningHashV1(
+		context,
+		transportKeySetRoot,
+		keysetRoot,
+		requestID,
+		messageHash,
+		partialMessageID,
+		member,
+	)
+	if err != nil {
+		return err
+	}
+	publicKey, err := parseRabbitVRFDKGTransportPublicKeyV1(binding.PublicKey)
+	if err != nil || !crypto.VerifySignature(
+		crypto.FromECDSAPub(publicKey),
+		signingHash[:],
+		signature,
+	) {
+		return ErrInvalidRabbitVRFParticipationProofV1
+	}
+	return nil
+}
+
 func ValidateRabbitVRFParticipationProofV1(
 	context RabbitVRFDKGSessionContextV1,
 	transportKeySetRoot common.Hash,
@@ -153,35 +196,21 @@ func ValidateRabbitVRFParticipationProofV1(
 
 		if member.ShareID != shareID ||
 			member.TicketHash == (common.Hash{}) ||
-			member.Participant == (common.Address{}) ||
-			partialMessageID == (common.Hash{}) ||
-			len(signature) != RabbitVRFParticipationSignatureSizeV1 {
+			member.Participant == (common.Address{}) {
 			return nil, ErrInvalidRabbitVRFParticipationProofV1
 		}
-		if _, err := VerifyRabbitVRFDKGTransportKeyBindingV1(context, member, binding); err != nil {
-			return nil, ErrInvalidRabbitVRFParticipationProofV1
-		}
-
-		signingHash, err := RabbitVRFParticipationSigningHashV1(
+		if err := ValidateRabbitVRFParticipationAttestationV1(
 			context,
 			transportKeySetRoot,
+			member,
+			binding,
 			keysetRoot,
 			requestID,
 			messageHash,
 			partialMessageID,
-			member,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		publicKey, err := parseRabbitVRFDKGTransportPublicKeyV1(binding.PublicKey)
-		if err != nil || !crypto.VerifySignature(
-			crypto.FromECDSAPub(publicKey),
-			signingHash[:],
 			signature,
-		) {
-			return nil, ErrInvalidRabbitVRFParticipationProofV1
+		); err != nil {
+			return nil, err
 		}
 		participants[index] = member
 	}

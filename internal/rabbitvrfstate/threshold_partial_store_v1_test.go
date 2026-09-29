@@ -36,6 +36,7 @@ func TestThresholdPartialStoreV1RestartDuplicateConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	packet.ParticipationSignature[0] = 9
 
 	dir := t.TempDir()
 

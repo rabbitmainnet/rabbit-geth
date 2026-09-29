@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
+	gethcrypto "github.com/ethereum/go-ethereum/crypto"
 	rabbitvrf "github.com/ethereum/go-ethereum/crypto/rabbitvrf"
 	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -491,6 +492,24 @@ func (runtime *rabbitVRFDKGRuntime) validateInboundThresholdPartialV1(packet lqc
 	if _, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet); err != nil {
 		return fmt.Errorf("derive rabbit vrf threshold partial message id: %w", err)
 	}
+	if context.CanonicalTransportKeySetRoot == (common.Hash{}) ||
+		uint64(len(context.CanonicalMembers)) != context.CanonicalSession.CommitteeSize ||
+		len(context.CanonicalTransportBindings) != len(context.CanonicalMembers) ||
+		packet.ShareID > uint64(len(context.CanonicalMembers)) {
+		return fmt.Errorf("rabbit vrf canonical participation context unavailable")
+	}
+	index := packet.ShareID - 1
+	member := context.CanonicalMembers[index]
+	binding := context.CanonicalTransportBindings[index]
+	if err := lqc.ValidateRabbitVRFThresholdPartialParticipationV1(
+		context.CanonicalSession,
+		context.CanonicalTransportKeySetRoot,
+		member,
+		binding,
+		packet,
+	); err != nil {
+		return fmt.Errorf("verify rabbit vrf threshold participation share %d: %w", packet.ShareID, err)
+	}
 	return nil
 }
 
@@ -618,6 +637,105 @@ func (runtime *rabbitVRFDKGRuntime) signLocalThresholdPartialV1(recipient lqc.Ra
 	}
 
 	return rabbitVRFSignThresholdPartialWithKeysetV1(share, recipient.ShareID, keyset, message)
+}
+
+func (runtime *rabbitVRFDKGRuntime) signLocalThresholdParticipationV1(
+	recipient lqc.RabbitVRFCommitteeMemberV1,
+	packet lqc.RabbitVRFThresholdPartialV1,
+) (lqc.RabbitVRFParticipationSignatureV1, error) {
+	var zero lqc.RabbitVRFParticipationSignatureV1
+	if runtime == nil ||
+		runtime.backend == nil ||
+		runtime.backend.config == nil ||
+		runtime.backend.vrfDKGInstanceDir == "" ||
+		recipient.ShareID == 0 ||
+		packet.ShareID != recipient.ShareID {
+		return zero, fmt.Errorf("rabbit vrf participation signing runtime unavailable")
+	}
+	if !runtime.beginSecretOperationV1() {
+		return zero, fmt.Errorf("rabbit vrf participation secret operation unavailable")
+	}
+	defer runtime.endSecretOperationV1()
+
+	context := runtime.currentContext()
+	if context.SessionID == (common.Hash{}) ||
+		packet.SessionID != context.SessionID ||
+		context.CanonicalTransportKeySetRoot == (common.Hash{}) ||
+		uint64(len(context.CanonicalMembers)) != context.CanonicalSession.CommitteeSize ||
+		len(context.CanonicalTransportBindings) != len(context.CanonicalMembers) ||
+		recipient.ShareID > uint64(len(context.CanonicalMembers)) {
+		return zero, fmt.Errorf("rabbit vrf canonical participation context unavailable")
+	}
+
+	index := recipient.ShareID - 1
+	member := context.CanonicalMembers[index]
+	binding := context.CanonicalTransportBindings[index]
+	if member != recipient ||
+		binding.ShareID != recipient.ShareID ||
+		binding.Participant != recipient.Participant {
+		return zero, fmt.Errorf("rabbit vrf canonical participation member mismatch")
+	}
+
+	partialMessageID, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet)
+	if err != nil {
+		return zero, fmt.Errorf("derive rabbit vrf threshold partial message id: %w", err)
+	}
+	signingHash, err := lqc.RabbitVRFParticipationSigningHashV1(
+		context.CanonicalSession,
+		context.CanonicalTransportKeySetRoot,
+		packet.KeysetRoot,
+		packet.RequestID,
+		packet.MessageHash,
+		partialMessageID,
+		member,
+	)
+	if err != nil {
+		return zero, fmt.Errorf("derive rabbit vrf participation signing hash: %w", err)
+	}
+
+	password, err := readRabbitVRFDKGPasswordFileV1(runtime.backend.config.RabbitVRFDKGPasswordFile)
+	if err != nil {
+		return zero, fmt.Errorf("read rabbit vrf dkg password file: %w", err)
+	}
+	store, err := rabbitvrfstate.NewStandardDKGTransportKeyStoreV1(
+		filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-transport"),
+	)
+	if err != nil {
+		return zero, fmt.Errorf("open rabbit vrf dkg transport store: %w", err)
+	}
+	privateKey, persistedBinding, err := store.Load(context.CanonicalSession, member, password)
+	if err != nil {
+		return zero, fmt.Errorf("load rabbit vrf participation transport key: %w", err)
+	}
+	if privateKey == nil {
+		return zero, fmt.Errorf("nil rabbit vrf participation transport key")
+	}
+	defer zeroRabbitVRFDKGPrivateKeyV1(privateKey)
+	if persistedBinding != binding {
+		return zero, fmt.Errorf("rabbit vrf participation transport binding mismatch")
+	}
+
+	signature, err := gethcrypto.Sign(signingHash[:], privateKey)
+	if err != nil {
+		return zero, fmt.Errorf("sign rabbit vrf participation receipt: %w", err)
+	}
+	if len(signature) != gethcrypto.SignatureLength {
+		return zero, fmt.Errorf("invalid rabbit vrf participation signature size")
+	}
+	copy(zero[:], signature[:lqc.RabbitVRFParticipationSignatureSizeV1])
+
+	verifiedPacket := packet
+	verifiedPacket.ParticipationSignature = zero
+	if err := lqc.ValidateRabbitVRFThresholdPartialParticipationV1(
+		context.CanonicalSession,
+		context.CanonicalTransportKeySetRoot,
+		member,
+		binding,
+		verifiedPacket,
+	); err != nil {
+		return lqc.RabbitVRFParticipationSignatureV1{}, fmt.Errorf("verify local rabbit vrf participation receipt: %w", err)
+	}
+	return zero, nil
 }
 
 func (runtime *rabbitVRFDKGRuntime) combineThresholdPartialsV1(message []byte, partials []rabbitvrf.PartialSignature) (rabbitvrf.Signature, common.Hash, error) {

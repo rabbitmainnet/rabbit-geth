@@ -3,6 +3,7 @@
 package eth
 
 import (
+	"crypto/ecdsa"
 	"errors"
 	"math/big"
 	"os"
@@ -43,6 +44,24 @@ func TestRabbitVRFThresholdLocalFlowV1RestartReuse(t *testing.T) {
 		ShareID:     1,
 		TicketHash:  gethcrypto.Keccak256Hash([]byte("rabbit-vrf-local-flow-ticket")),
 		Participant: gethcrypto.PubkeyToAddress(memberKey.PublicKey),
+	}
+
+	participantKeys := make([]*ecdsa.PrivateKey, context.CommitteeSize)
+	canonicalMembers := make([]lqc.RabbitVRFCommitteeMemberV1, context.CommitteeSize)
+	participantKeys[0] = memberKey
+	canonicalMembers[0] = member
+	for index := 1; index < int(context.CommitteeSize); index++ {
+		participantKey, err := gethcrypto.GenerateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		shareID := uint64(index + 1)
+		participantKeys[index] = participantKey
+		canonicalMembers[index] = lqc.RabbitVRFCommitteeMemberV1{
+			ShareID:     shareID,
+			TicketHash:  gethcrypto.Keccak256Hash([]byte{byte(shareID), 0x73}),
+			Participant: gethcrypto.PubkeyToAddress(participantKey.PublicKey),
+		}
 	}
 
 	makeShare := func(id uint64, value byte) *rabbitvrf.SecretShare {
@@ -119,6 +138,77 @@ func TestRabbitVRFThresholdLocalFlowV1RestartReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	transportStore, err := rabbitvrfstate.NewStandardDKGTransportKeyStoreV1(
+		filepath.Join(instanceDir, "rabbit-vrf", "dkg-transport"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2pKey, err := gethcrypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zeroRabbitVRFDKGPrivateKeyV1(p2pKey)
+
+	canonicalBindings := make([]lqc.RabbitVRFDKGTransportKeyBindingV1, context.CommitteeSize)
+	canonicalEnvelopes := make([]lqc.RabbitVRFDKGEnvelopeV1, context.CommitteeSize)
+	for index, canonicalMember := range canonicalMembers {
+		binding, err := rabbitVRFDKGLoadOrCreateTransportBindingV1(
+			transportStore,
+			context,
+			canonicalMember,
+			password,
+			p2pKey,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bindingRoot, err := lqc.VerifyRabbitVRFDKGTransportKeyBindingV1(
+			context,
+			canonicalMember,
+			binding,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		envelope, err := lqc.NewRabbitVRFDKGEnvelopeV1(
+			context,
+			canonicalMember,
+			lqc.RabbitVRFDKGMessageTransportKeyBindingV1,
+			bindingRoot,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signingHash, err := lqc.RabbitVRFDKGEnvelopeSigningHashV1(context, envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		envelope.Signature, err = gethcrypto.Sign(signingHash[:], participantKeys[index])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lqc.VerifyRabbitVRFDKGTransportKeyEnvelopeV1(
+			context,
+			canonicalMember,
+			binding,
+			envelope,
+		); err != nil {
+			t.Fatal(err)
+		}
+		canonicalBindings[index] = binding
+		canonicalEnvelopes[index] = envelope
+	}
+	transportKeySetRoot, err := lqc.RabbitVRFDKGTransportKeySetRootV1(
+		context,
+		canonicalMembers,
+		canonicalBindings,
+		canonicalEnvelopes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	shareStore, err := rabbitvrfstate.NewDKGSecretShareStoreV1(
 		filepath.Join(instanceDir, "rabbit-vrf", "dkg-secret-shares"),
 		2,
@@ -157,7 +247,26 @@ func TestRabbitVRFThresholdLocalFlowV1RestartReuse(t *testing.T) {
 			current: rabbitVRFDKGLocalContextV1{
 				SessionID:        sessionID,
 				CanonicalSession: context,
-				Members:          []lqc.RabbitVRFCommitteeMemberV1{member},
+				CanonicalMembers: append(
+					[]lqc.RabbitVRFCommitteeMemberV1(nil),
+					canonicalMembers...,
+				),
+				Members: []lqc.RabbitVRFCommitteeMemberV1{member},
+				TransportBindings: []lqc.RabbitVRFDKGTransportKeyBindingV1{
+					canonicalBindings[0],
+				},
+				TransportEnvelopes: []lqc.RabbitVRFDKGEnvelopeV1{
+					canonicalEnvelopes[0],
+				},
+				CanonicalTransportKeySetRoot: transportKeySetRoot,
+				CanonicalTransportBindings: append(
+					[]lqc.RabbitVRFDKGTransportKeyBindingV1(nil),
+					canonicalBindings...,
+				),
+				CanonicalTransportEnvelopes: append(
+					[]lqc.RabbitVRFDKGEnvelopeV1(nil),
+					canonicalEnvelopes...,
+				),
 			},
 			canonicalRequestLookup: lookup,
 		}
@@ -212,6 +321,70 @@ func TestRabbitVRFThresholdLocalFlowV1RestartReuse(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		index := int(share.ID() - 1)
+		remoteMember := canonicalMembers[index]
+		remoteBinding := canonicalBindings[index]
+
+		partialMessageID, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signingHash, err := lqc.RabbitVRFParticipationSigningHashV1(
+			context,
+			transportKeySetRoot,
+			keysetRoot,
+			requestID,
+			packet.MessageHash,
+			partialMessageID,
+			remoteMember,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		transportPrivateKey, persistedBinding, err := transportStore.Load(
+			context,
+			remoteMember,
+			password,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if transportPrivateKey == nil {
+			t.Fatal("nil remote rabbit vrf transport private key")
+		}
+		if persistedBinding != remoteBinding {
+			zeroRabbitVRFDKGPrivateKeyV1(transportPrivateKey)
+			t.Fatal("remote rabbit vrf transport binding mismatch")
+		}
+
+		participationSignature, err := gethcrypto.Sign(
+			signingHash[:],
+			transportPrivateKey,
+		)
+		zeroRabbitVRFDKGPrivateKeyV1(transportPrivateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(participationSignature) != gethcrypto.SignatureLength {
+			t.Fatal("invalid remote rabbit vrf participation signature size")
+		}
+		copy(
+			packet.ParticipationSignature[:],
+			participationSignature[:lqc.RabbitVRFParticipationSignatureSizeV1],
+		)
+
+		if err := lqc.ValidateRabbitVRFThresholdPartialParticipationV1(
+			context,
+			transportKeySetRoot,
+			remoteMember,
+			remoteBinding,
+			packet,
+		); err != nil {
+			t.Fatal(err)
+		}
+
 		if err := partialStore.Store(context, packet); err != nil {
 			t.Fatal(err)
 		}

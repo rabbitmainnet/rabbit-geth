@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"crypto/ecdsa"
 	"errors"
 	"math/big"
 	"path/filepath"
@@ -39,6 +40,38 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	members := make([]lqc.RabbitVRFCommitteeMemberV1, 3)
+	bindings := make([]lqc.RabbitVRFDKGTransportKeyBindingV1, 3)
+	transportPrivateKeys := make([]*ecdsa.PrivateKey, 3)
+	for index := range members {
+		participantKey, err := gethcrypto.GenerateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		transportKey, err := gethcrypto.GenerateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		members[index] = lqc.RabbitVRFCommitteeMemberV1{
+			ShareID:     uint64(index + 1),
+			TicketHash:  gethcrypto.Keccak256Hash([]byte{byte(index + 1), 0x51}),
+			Participant: gethcrypto.PubkeyToAddress(participantKey.PublicKey),
+		}
+		transportPublic, err := lqc.RabbitVRFDKGTransportPublicKeyV1FromBytes(
+			gethcrypto.CompressPubkey(&transportKey.PublicKey),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding, _, err := lqc.NewRabbitVRFDKGTransportKeyBindingV1(context, members[index], transportPublic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bindings[index] = binding
+		transportPrivateKeys[index] = transportKey
+	}
+	transportKeySetRoot := gethcrypto.Keccak256Hash([]byte("rabbit-vrf-threshold-wire-transport-set"))
 
 	master := rabbitVRFTestSecretShareV1(t, 99, 7)
 	thresholdPublicKey, err := master.PublicKey()
@@ -104,8 +137,11 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 			vrfDKGInstanceDir: instanceDir,
 		},
 		current: rabbitVRFDKGLocalContextV1{
-			SessionID:        sessionID,
-			CanonicalSession: context,
+			SessionID:                    sessionID,
+			CanonicalSession:             context,
+			CanonicalMembers:             append([]lqc.RabbitVRFCommitteeMemberV1(nil), members...),
+			CanonicalTransportKeySetRoot: transportKeySetRoot,
+			CanonicalTransportBindings:   append([]lqc.RabbitVRFDKGTransportKeyBindingV1(nil), bindings...),
 		},
 		canonicalRequestLookup: func(got common.Hash) (rabbitVRFCanonicalRequestV1, error) {
 			if got != requestID {
@@ -149,6 +185,31 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attachParticipation := func(packet lqc.RabbitVRFThresholdPartialV1, index int) lqc.RabbitVRFThresholdPartialV1 {
+		t.Helper()
+		partialMessageID, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signingHash, err := lqc.RabbitVRFParticipationSigningHashV1(
+			context,
+			transportKeySetRoot,
+			packet.KeysetRoot,
+			packet.RequestID,
+			packet.MessageHash,
+			partialMessageID,
+			members[index],
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signature, err := gethcrypto.Sign(signingHash[:], transportPrivateKeys[index])
+		if err != nil {
+			t.Fatal(err)
+		}
+		copy(packet.ParticipationSignature[:], signature[:lqc.RabbitVRFParticipationSignatureSizeV1])
+		return packet
+	}
 
 	partial1, _, err := rabbitVRFSignThresholdPartialWithKeysetV1(
 		shares[0],
@@ -168,6 +229,7 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	packet1 = attachParticipation(packet1, 0)
 
 	nonCanonical := packet1
 	nonCanonical.RequestID = gethcrypto.Keccak256Hash([]byte("rabbit-vrf-non-canonical-request"))
@@ -227,6 +289,7 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	packet2 = attachParticipation(packet2, 1)
 	if err := p2p.Send(rw, rabbitVRFDKGThresholdPartialMsg, packet2); err != nil {
 		t.Fatal(err)
 	}
@@ -249,6 +312,7 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	packet3 = attachParticipation(packet3, 2)
 	receiver.mu.Lock()
 	receiver.routes[3] = remotePeerID
 	receiver.mu.Unlock()

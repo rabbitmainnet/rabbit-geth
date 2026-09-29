@@ -1004,6 +1004,11 @@ func (n *rabbitVRFDKGTransport) processCanonicalPendingRequestV1(requestID commo
 		if signErr != nil {
 			return fmt.Errorf("build rabbit vrf threshold partial share %d: %w", member.ShareID, signErr)
 		}
+		participationSignature, signErr := n.runtime.signLocalThresholdParticipationV1(member, packet)
+		if signErr != nil {
+			return fmt.Errorf("sign rabbit vrf threshold participation share %d: %w", member.ShareID, signErr)
+		}
+		packet.ParticipationSignature = participationSignature
 		if signErr := partialStore.Store(context.CanonicalSession, packet); signErr != nil {
 			return fmt.Errorf("persist rabbit vrf threshold partial share %d: %w", member.ShareID, signErr)
 		}
