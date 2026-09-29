@@ -70,8 +70,15 @@ func equalRabbitVRFKeysetCertificatesV1(
 		a.KeysetRoot != b.KeysetRoot ||
 		a.ThresholdPublicKey != b.ThresholdPublicKey ||
 		a.TranscriptRoot != b.TranscriptRoot ||
+		len(a.VerificationShareSamples) != len(b.VerificationShareSamples) ||
 		len(a.Signatures) != len(b.Signatures) {
 		return false
+	}
+
+	for index := range a.VerificationShareSamples {
+		if a.VerificationShareSamples[index] != b.VerificationShareSamples[index] {
+			return false
+		}
 	}
 
 	for index := range a.Signatures {

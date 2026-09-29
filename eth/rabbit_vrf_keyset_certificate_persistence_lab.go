@@ -68,10 +68,19 @@ func (n *rabbitVRFDKGTransport) restorePersistedKeysetCertificateV1() error {
 	if persisted.SessionID != base.SessionID ||
 		persisted.KeysetRoot != base.KeysetRoot ||
 		persisted.ThresholdPublicKey != base.ThresholdPublicKey ||
-		persisted.TranscriptRoot != base.TranscriptRoot {
+		persisted.TranscriptRoot != base.TranscriptRoot ||
+		len(persisted.VerificationShareSamples) != len(base.VerificationShareSamples) {
 		return errors.New(
 			"rabbit vrf persisted keyset certificate mismatch",
 		)
+	}
+	for index := range persisted.VerificationShareSamples {
+		if persisted.VerificationShareSamples[index] !=
+			base.VerificationShareSamples[index] {
+			return errors.New(
+				"rabbit vrf persisted keyset certificate verification shares mismatch",
+			)
+		}
 	}
 
 	signatures := make(map[uint64][]byte, len(members))

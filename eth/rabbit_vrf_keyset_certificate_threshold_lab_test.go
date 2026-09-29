@@ -77,16 +77,55 @@ func TestRabbitVRFKeysetCertificateThresholdQuorumV1(
 		t.Fatal(err)
 	}
 
+	// f(x) = 7 + 3x + 5x^2 gives the canonical 3-of-4 verification shares.
+	verificationScalars := []byte{15, 33, 61, 99}
+	verificationShares := make(
+		[]lqc.RabbitVRFVerificationShareV1,
+		len(verificationScalars),
+	)
+	for index, scalar := range verificationScalars {
+		share := rabbitVRFTestSecretShareV1(
+			t,
+			uint64(index+1),
+			uint64(scalar),
+		)
+		publicKey, err := share.PublicKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		verificationShares[index] = lqc.RabbitVRFVerificationShareV1{
+			ShareID:   uint64(index + 1),
+			PublicKey: publicKey,
+		}
+	}
+
+	transcriptRoot := gethcrypto.Keccak256Hash(
+		[]byte("threshold-transcript"),
+	)
+	keysetRoot, canonicalShares, err := lqc.RabbitVRFKeysetRootV1(
+		session.ChainID,
+		session.TargetVRFEpoch,
+		session.CommitteeRoot,
+		session.CommitteeSize,
+		session.Threshold,
+		thresholdPublicKey,
+		transcriptRoot,
+		verificationShares,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	certificate :=
 		lqc.RabbitVRFKeysetCertificateV1{
-			Version:   lqc.RabbitVRFKeysetCertificateVersionV1,
-			SessionID: sessionID,
-			KeysetRoot: gethcrypto.Keccak256Hash(
-				[]byte("threshold-keyset"),
-			),
+			Version:            lqc.RabbitVRFKeysetCertificateVersionV1,
+			SessionID:          sessionID,
+			KeysetRoot:         keysetRoot,
 			ThresholdPublicKey: thresholdPublicKey,
-			TranscriptRoot: gethcrypto.Keccak256Hash(
-				[]byte("threshold-transcript"),
+			TranscriptRoot:     transcriptRoot,
+			VerificationShareSamples: append(
+				[]lqc.RabbitVRFVerificationShareV1(nil),
+				canonicalShares[:int(session.Threshold)]...,
 			),
 			Signatures: make([][]byte, 4),
 		}
@@ -172,6 +211,10 @@ func TestRabbitVRFKeysetCertificateThresholdQuorumV1(
 		input lqc.RabbitVRFKeysetCertificateV1,
 	) lqc.RabbitVRFKeysetCertificateV1 {
 		out := input
+		out.VerificationShareSamples = append(
+			[]lqc.RabbitVRFVerificationShareV1(nil),
+			input.VerificationShareSamples...,
+		)
 		out.Signatures =
 			make([][]byte, len(input.Signatures))
 		for index := range input.Signatures {

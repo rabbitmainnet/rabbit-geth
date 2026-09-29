@@ -85,12 +85,23 @@ func (n *rabbitVRFDKGTransport) currentKeysetCertificateBaseV1() (
 		return session, nil, certificate, common.Hash{}, false, err
 	}
 
+	if session.Threshold == 0 ||
+		uint64(len(keyset.VerificationShares)) != session.CommitteeSize ||
+		session.Threshold > uint64(len(keyset.VerificationShares)) {
+		return session, nil, certificate, common.Hash{}, false,
+			errors.New("rabbit vrf finalized keyset verification shares mismatch")
+	}
+
 	certificate = lqc.RabbitVRFKeysetCertificateV1{
 		Version:            lqc.RabbitVRFKeysetCertificateVersionV1,
 		SessionID:          sessionID,
 		KeysetRoot:         keyset.KeysetRoot,
 		ThresholdPublicKey: keyset.ThresholdPublicKey,
 		TranscriptRoot:     keyset.TranscriptRoot,
+		VerificationShareSamples: append(
+			[]lqc.RabbitVRFVerificationShareV1(nil),
+			keyset.VerificationShares[:int(session.Threshold)]...,
+		),
 	}
 
 	payloadHash, err :=
@@ -566,6 +577,10 @@ func cloneRabbitVRFKeysetCertificateV1(
 	certificate lqc.RabbitVRFKeysetCertificateV1,
 ) lqc.RabbitVRFKeysetCertificateV1 {
 	out := certificate
+	out.VerificationShareSamples = append(
+		[]lqc.RabbitVRFVerificationShareV1(nil),
+		certificate.VerificationShareSamples...,
+	)
 	out.Signatures =
 		make([][]byte, len(certificate.Signatures))
 

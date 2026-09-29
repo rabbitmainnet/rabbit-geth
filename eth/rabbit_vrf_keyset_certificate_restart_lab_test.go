@@ -141,7 +141,11 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 		KeysetRoot:         keysetRoot,
 		ThresholdPublicKey: thresholdPublicKey,
 		TranscriptRoot:     transcriptRoot,
-		Signatures:         make([][]byte, 4),
+		VerificationShareSamples: append(
+			[]lqc.RabbitVRFVerificationShareV1(nil),
+			canonicalShares[:int(session.Threshold)]...,
+		),
+		Signatures: make([][]byte, 4),
 	}
 
 	payloadHash, err :=

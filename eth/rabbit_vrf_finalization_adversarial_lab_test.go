@@ -30,15 +30,31 @@ func TestRabbitVRFFinalizationAdversarialV1(t *testing.T) {
 	p1, _ := s1.PublicKey()
 	p2, _ := s2.PublicKey()
 
+	verificationShares := []lqc.RabbitVRFVerificationShareV1{
+		{ShareID: 1, PublicKey: p1},
+		{ShareID: 2, PublicKey: p2},
+	}
+	transcriptRoot := common.HexToHash("0x4444")
+	root, canonicalShares, err := lqc.RabbitVRFKeysetRootV1(
+		ctx.ChainID,
+		ctx.TargetVRFEpoch,
+		ctx.CommitteeRoot,
+		ctx.CommitteeSize,
+		ctx.Threshold,
+		pub,
+		transcriptRoot,
+		verificationShares,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	keyset := rabbitvrfstate.DKGFinalKeysetV1{
+		KeysetRoot:         root,
 		ThresholdPublicKey: pub,
-		VerificationShares: []lqc.RabbitVRFVerificationShareV1{
-			{ShareID: 1, PublicKey: p1},
-			{ShareID: 2, PublicKey: p2},
-		},
+		TranscriptRoot:     transcriptRoot,
+		VerificationShares: canonicalShares,
 	}
 
-	root := common.HexToHash("0x2222")
 	request := common.HexToHash("0x3333")
 	message, _, err := lqc.RabbitVRFThresholdMessageV1(ctx, root, request)
 	if err != nil {
@@ -73,8 +89,12 @@ func TestRabbitVRFFinalizationAdversarialV1(t *testing.T) {
 		SessionID:          sessionID,
 		KeysetRoot:         root,
 		ThresholdPublicKey: pub,
-		TranscriptRoot:     common.HexToHash("0x4444"),
-		Signatures:         [][]byte{make([]byte, 65), nil},
+		TranscriptRoot:     transcriptRoot,
+		VerificationShareSamples: append(
+			[]lqc.RabbitVRFVerificationShareV1(nil),
+			canonicalShares[:int(ctx.Threshold)]...,
+		),
+		Signatures: [][]byte{make([]byte, 65), nil},
 	}
 
 	round := uint64(1234)

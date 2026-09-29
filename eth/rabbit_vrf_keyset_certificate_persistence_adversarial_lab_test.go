@@ -219,13 +219,38 @@ func TestRabbitVRFKeysetCertificatePersistenceAdversarialV1(
 		}
 
 		conflict := cloneRabbitVRFCertificateV1(certificate)
-		conflict.KeysetRoot =
-			gethcrypto.Keccak256Hash(
-				[]byte("conflicting-valid-keyset"),
+
+		verificationShares, err :=
+			lqc.RabbitVRFKeysetCertificateVerificationSharesV1(
+				session,
+				conflict,
 			)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		conflict.TranscriptRoot =
+			gethcrypto.Keccak256Hash(
+				[]byte("conflicting-valid-transcript"),
+			)
+
+		conflictRoot, _, err := lqc.RabbitVRFKeysetRootV1(
+			session.ChainID,
+			session.TargetVRFEpoch,
+			session.CommitteeRoot,
+			session.CommitteeSize,
+			session.Threshold,
+			conflict.ThresholdPublicKey,
+			conflict.TranscriptRoot,
+			verificationShares,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conflict.KeysetRoot = conflictRoot
 		conflict = resign(t, conflict)
 
-		err := store.Store(
+		err = store.Store(
 			session,
 			members,
 			conflict,

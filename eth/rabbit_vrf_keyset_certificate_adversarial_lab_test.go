@@ -98,7 +98,7 @@ func rabbitVRFAdversarialCertificateV1(
 		[]byte("cert-adversarial-transcript"),
 	)
 
-	keysetRoot, _, err := lqc.RabbitVRFKeysetRootV1(
+	keysetRoot, canonicalShares, err := lqc.RabbitVRFKeysetRootV1(
 		chainID,
 		epoch,
 		committeeRoot,
@@ -118,7 +118,11 @@ func rabbitVRFAdversarialCertificateV1(
 		KeysetRoot:         keysetRoot,
 		ThresholdPublicKey: thresholdPublicKey,
 		TranscriptRoot:     transcriptRoot,
-		Signatures:         make([][]byte, 3),
+		VerificationShareSamples: append(
+			[]lqc.RabbitVRFVerificationShareV1(nil),
+			canonicalShares[:int(session.Threshold)]...,
+		),
+		Signatures: make([][]byte, 3),
 	}
 
 	payloadHash, err :=
