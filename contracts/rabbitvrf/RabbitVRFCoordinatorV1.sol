@@ -157,7 +157,7 @@ contract RabbitVRFCoordinatorV1 {
         uint64 round,
         bytes32 randomness,
         bytes32 proofHash
-    ) external onlySystem {
+    ) external onlySystem returns (uint256 feePaid) {
         Request storage request = _requests[requestId];
 
         if (request.status != REQUEST_STATUS_PENDING) {
@@ -174,6 +174,11 @@ contract RabbitVRFCoordinatorV1 {
             randomness == bytes32(0) ||
             proofHash == bytes32(0)
         ) {
+            revert InvalidRequestFinalization(requestId);
+        }
+
+        feePaid = request.feePaid;
+        if (feePaid == 0) {
             revert InvalidRequestFinalization(requestId);
         }
 

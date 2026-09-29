@@ -2551,15 +2551,16 @@ func TestRabbitVRFSystemFinalizationStateTransition(t *testing.T) {
 		)
 
 		err := ProcessRabbitVRFFinalizations(
-			rabbitVRFTestEVM(sdb, 1001),
+			rabbitVRFTestSettlementEVMV1(sdb, 1001),
 			nil,
 			[]consensus.RabbitVRFValidatedFinalization{
 				{
-					RequestID:  requestID,
-					Epoch:      7,
-					Round:      requestBlock,
-					Randomness: randomness,
-					ProofHash:  proofHash,
+					Participants: append([]common.Address(nil), rabbitVRFTestSettlementParticipantsV1...),
+					RequestID:    requestID,
+					Epoch:        7,
+					Round:        requestBlock,
+					Randomness:   randomness,
+					ProofHash:    proofHash,
 				},
 			},
 		)
@@ -2615,13 +2616,14 @@ func TestRabbitVRFSystemFinalizationStateTransition(t *testing.T) {
 		sdb, requestID, requestBlock := makePending(t)
 
 		err := ProcessRabbitVRFFinalizations(
-			rabbitVRFTestEVM(sdb, 1001),
+			rabbitVRFTestSettlementEVMV1(sdb, 1001),
 			nil,
 			[]consensus.RabbitVRFValidatedFinalization{
 				{
-					RequestID: requestID,
-					Epoch:     7,
-					Round:     requestBlock + 1,
+					Participants: append([]common.Address(nil), rabbitVRFTestSettlementParticipantsV1...),
+					RequestID:    requestID,
+					Epoch:        7,
+					Round:        requestBlock + 1,
 					Randomness: crypto.Keccak256Hash(
 						[]byte("wrong-round-randomness"),
 					),

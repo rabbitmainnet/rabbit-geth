@@ -224,17 +224,17 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	work.bal.Merge(bal)
 
 	if miner.chainConfig.IsRabbitVRF(work.header.Number) {
-		reader, ok := miner.engine.(consensus.RabbitVRFPreparedFinalizationReader)
+		reader, ok := miner.engine.(consensus.RabbitVRFExecutionFinalizationReader)
 		if !ok {
 			return &newPayloadResult{
 				err: errors.New(
-					"Rabbit VRF prepared finalization reader unavailable",
+					"Rabbit VRF execution finalization reader unavailable",
 				),
 			}
 		}
 
 		finalizations, err :=
-			reader.RabbitVRFPreparedFinalizations(work.header)
+			reader.RabbitVRFExecutionFinalizations(miner.chain, work.header)
 		if err != nil {
 			return &newPayloadResult{err: err}
 		}

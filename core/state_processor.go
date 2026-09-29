@@ -134,14 +134,9 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 
 	if config.IsRabbitVRF(block.Number()) {
 		engine := p.chain.Engine()
-		reader, ok := engine.(consensus.RabbitVRFValidatedFinalizationReader)
-		if !ok {
-			return nil, fmt.Errorf("Rabbit VRF validated finalization reader unavailable")
-		}
 
-		finalizations, err := rabbitVRFValidatedFinalizationsForExecution(
-			reader,
-			engine.VerifyHeader,
+		finalizations, err := rabbitVRFFinalizationsForEngineExecution(
+			engine,
 			p.chain,
 			header,
 			blockHash,
@@ -351,6 +346,70 @@ var rabbitVRFPriceObservationSelector = crypto.Keccak256([]byte("systemObservePr
 
 var rabbitVRFFinalizeRequestSelector = crypto.Keccak256([]byte("systemFinalizeRequest(bytes32,uint64,uint64,bytes32,bytes32)"))[:4]
 
+const (
+	rabbitVRFProducerBPSV1     = uint64(3000)
+	rabbitVRFParticipantsBPSV1 = uint64(5000)
+	rabbitVRFBPSDenominatorV1  = uint64(10000)
+)
+
+func rabbitVRFSplitProtocolFeeV1(
+	fee *big.Int,
+	participantCount int,
+) (
+	producer *big.Int,
+	eachParticipant *big.Int,
+	rabbitAllocation *big.Int,
+	err error,
+) {
+	if fee == nil || fee.Sign() < 0 || participantCount <= 0 {
+		return nil, nil, nil, fmt.Errorf(
+			"invalid rabbit vrf settlement input",
+		)
+	}
+
+	denominator := new(big.Int).SetUint64(
+		rabbitVRFBPSDenominatorV1,
+	)
+
+	producer = new(big.Int).Mul(
+		new(big.Int).Set(fee),
+		new(big.Int).SetUint64(rabbitVRFProducerBPSV1),
+	)
+	producer.Div(producer, denominator)
+
+	participantPool := new(big.Int).Mul(
+		new(big.Int).Set(fee),
+		new(big.Int).SetUint64(rabbitVRFParticipantsBPSV1),
+	)
+	participantPool.Div(participantPool, denominator)
+
+	eachParticipant = new(big.Int).Div(
+		participantPool,
+		new(big.Int).SetUint64(uint64(participantCount)),
+	)
+	paidParticipants := new(big.Int).Mul(
+		new(big.Int).Set(eachParticipant),
+		new(big.Int).SetUint64(uint64(participantCount)),
+	)
+
+	// Rabbit Allocation receives the base 20% plus every integer
+	// remainder from BPS flooring and equal participant division.
+	rabbitAllocation = new(big.Int).Sub(
+		new(big.Int).Set(fee),
+		producer,
+	)
+	rabbitAllocation.Sub(
+		rabbitAllocation,
+		paidParticipants,
+	)
+	if rabbitAllocation.Sign() < 0 {
+		return nil, nil, nil, fmt.Errorf(
+			"invalid rabbit vrf settlement conservation",
+		)
+	}
+	return producer, eachParticipant, rabbitAllocation, nil
+}
+
 // ProcessRabbitVRFPriceObservation advances the consensus-driven RabbitSwap
 // observation used by Rabbit VRF pricing.
 func ProcessRabbitVRFPriceObservation(
@@ -422,24 +481,56 @@ func ProcessRabbitVRFFinalizations(
 ) error {
 	var previous common.Hash
 
+	if len(values) > 0 &&
+		evm.Context.Coinbase == (common.Address{}) {
+		return fmt.Errorf("invalid rabbit vrf settlement producer")
+	}
+
 	for index, value := range values {
 		if value.RequestID == (common.Hash{}) ||
 			value.Epoch == 0 ||
 			value.Round == 0 ||
 			value.Randomness == (common.Hash{}) ||
-			value.ProofHash == (common.Hash{}) {
+			value.ProofHash == (common.Hash{}) ||
+			len(value.Participants) == 0 ||
+			len(value.Participants) > 128 {
 			return fmt.Errorf("invalid rabbit vrf finalization")
 		}
-		if index > 0 && bytes.Compare(previous[:], value.RequestID[:]) >= 0 {
-			return fmt.Errorf("non-canonical rabbit vrf finalization order")
+		if index > 0 &&
+			bytes.Compare(previous[:], value.RequestID[:]) >= 0 {
+			return fmt.Errorf(
+				"non-canonical rabbit vrf finalization order",
+			)
 		}
 		previous = value.RequestID
+
+		seenParticipants := make(
+			map[common.Address]struct{},
+			len(value.Participants),
+		)
+		for _, participant := range value.Participants {
+			if participant == (common.Address{}) {
+				return fmt.Errorf(
+					"invalid rabbit vrf settlement participant",
+				)
+			}
+			if _, duplicate := seenParticipants[participant]; duplicate {
+				return fmt.Errorf(
+					"duplicate rabbit vrf settlement participant",
+				)
+			}
+			seenParticipants[participant] = struct{}{}
+		}
 
 		data := make([]byte, 4+32*5)
 		copy(data[:4], rabbitVRFFinalizeRequestSelector)
 		copy(data[4:36], value.RequestID[:])
-		new(big.Int).SetUint64(value.Epoch).FillBytes(data[36:68])
-		new(big.Int).SetUint64(value.Round).FillBytes(data[68:100])
+		new(big.Int).SetUint64(value.Epoch).FillBytes(
+			data[36:68],
+		)
+		new(big.Int).SetUint64(value.Round).FillBytes(
+			data[68:100],
+		)
 		copy(data[100:132], value.Randomness[:])
 		copy(data[132:164], value.ProofHash[:])
 
@@ -472,7 +563,7 @@ func ProcessRabbitVRFFinalizations(
 			params.RabbitVRFCoordinatorV1Address,
 		)
 
-		_, _, err := evm.Call(
+		ret, _, callErr := evm.Call(
 			msg.From,
 			*msg.To,
 			msg.Data,
@@ -485,16 +576,85 @@ func ProcessRabbitVRFFinalizations(
 			tracer.OnSystemCallEnd()
 		}
 
-		if err != nil {
+		if callErr != nil {
 			return fmt.Errorf(
 				"rabbit vrf finalization system call %s failed: %w",
 				value.RequestID,
-				err,
+				callErr,
+			)
+		}
+		if len(ret) != 32 {
+			return fmt.Errorf(
+				"rabbit vrf finalization fee return for %s has %d bytes",
+				value.RequestID,
+				len(ret),
+			)
+		}
+
+		feePaid := new(uint256.Int).SetBytes(ret)
+		if feePaid.IsZero() {
+			return fmt.Errorf(
+				"rabbit vrf finalization returned zero fee",
+			)
+		}
+		if evm.StateDB.GetBalance(
+			params.RabbitVRFCoordinatorV1Address,
+		).Cmp(feePaid) < 0 {
+			return fmt.Errorf(
+				"rabbit vrf coordinator settlement balance insufficient",
+			)
+		}
+
+		producerBig, participantBig, rabbitBig, err :=
+			rabbitVRFSplitProtocolFeeV1(
+				feePaid.ToBig(),
+				len(value.Participants),
+			)
+		if err != nil {
+			return err
+		}
+
+		producerReward := uint256.MustFromBig(producerBig)
+		participantReward := uint256.MustFromBig(
+			participantBig,
+		)
+		rabbitReward := uint256.MustFromBig(rabbitBig)
+
+		// This is a native consensus settlement, not an EVM callback:
+		// no recipient code executes and gas/tips remain separate.
+		evm.StateDB.SubBalance(
+			params.RabbitVRFCoordinatorV1Address,
+			feePaid,
+			tracing.BalanceChangeTransfer,
+		)
+		if !producerReward.IsZero() {
+			evm.StateDB.AddBalance(
+				evm.Context.Coinbase,
+				producerReward,
+				tracing.BalanceChangeTransfer,
+			)
+		}
+		if !participantReward.IsZero() {
+			for _, participant := range value.Participants {
+				evm.StateDB.AddBalance(
+					participant,
+					participantReward,
+					tracing.BalanceChangeTransfer,
+				)
+			}
+		}
+		if !rabbitReward.IsZero() {
+			evm.StateDB.AddBalance(
+				params.RabbitVRFAllocationV1Address,
+				rabbitReward,
+				tracing.BalanceChangeTransfer,
 			)
 		}
 
 		if evm.StateDB.AccessEvents() != nil {
-			evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
+			evm.StateDB.AccessEvents().Merge(
+				evm.AccessEvents,
+			)
 		}
 		systemBAL := evm.StateDB.Finalise(true)
 		if blockAccessList != nil {

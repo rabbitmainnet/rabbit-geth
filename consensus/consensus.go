@@ -75,11 +75,12 @@ type LocalParticipantResolver interface {
 }
 
 type RabbitVRFValidatedFinalization struct {
-	RequestID  common.Hash
-	Epoch      uint64
-	Round      uint64
-	Randomness common.Hash
-	ProofHash  common.Hash
+	RequestID    common.Hash
+	Epoch        uint64
+	Round        uint64
+	Randomness   common.Hash
+	ProofHash    common.Hash
+	Participants []common.Address
 }
 
 type RabbitVRFValidatedFinalizationReader interface {
@@ -88,6 +89,14 @@ type RabbitVRFValidatedFinalizationReader interface {
 
 type RabbitVRFPreparedFinalizationReader interface {
 	RabbitVRFPreparedFinalizations(header *types.Header) ([]RabbitVRFValidatedFinalization, error)
+}
+
+type RabbitVRFExecutionFinalizationReader interface {
+	RabbitVRFValidatedFinalizationReader
+	RabbitVRFExecutionFinalizations(
+		chain ChainHeaderReader,
+		header *types.Header,
+	) ([]RabbitVRFValidatedFinalization, error)
 }
 
 // HeaderSignerFn signs the exact consensus-defined byte payload for a block

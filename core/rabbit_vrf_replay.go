@@ -39,3 +39,47 @@ func rabbitVRFValidatedFinalizationsForExecution(
 	}
 	return finalizations, nil
 }
+
+func rabbitVRFFinalizationsForEngineExecution(
+	engine consensus.Engine,
+	chain consensus.ChainHeaderReader,
+	header *types.Header,
+	blockHash common.Hash,
+) ([]consensus.RabbitVRFValidatedFinalization, error) {
+	if reader, ok := engine.(consensus.RabbitVRFExecutionFinalizationReader); ok {
+		if _, err := rabbitVRFValidatedFinalizationsForExecution(
+			reader,
+			engine.VerifyHeader,
+			chain,
+			header,
+			blockHash,
+		); err != nil {
+			return nil, err
+		}
+		return reader.RabbitVRFExecutionFinalizations(chain, header)
+	}
+
+	reader, ok := engine.(consensus.RabbitVRFValidatedFinalizationReader)
+	if !ok {
+		return nil, fmt.Errorf(
+			"Rabbit VRF validated finalization reader unavailable",
+		)
+	}
+
+	finalizations, err := rabbitVRFValidatedFinalizationsForExecution(
+		reader,
+		engine.VerifyHeader,
+		chain,
+		header,
+		blockHash,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(finalizations) != 0 {
+		return nil, fmt.Errorf(
+			"Rabbit VRF economic finalizations require execution reader",
+		)
+	}
+	return finalizations, nil
+}

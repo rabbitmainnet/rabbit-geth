@@ -325,3 +325,124 @@ func (l *LQC) RabbitVRFPreparedFinalizations(
 	}
 	return out, nil
 }
+
+// RabbitVRFExecutionFinalizations reconstructs the exact payout recipients from
+// the compact participation proof committed in Header V5. ShareIDs come only
+// from the verified bitmap and are mapped through the canonical DKG committee.
+func (l *LQC) RabbitVRFExecutionFinalizations(
+	chain consensus.ChainHeaderReader,
+	header *types.Header,
+) ([]consensus.RabbitVRFValidatedFinalization, error) {
+	if chain == nil ||
+		header == nil ||
+		header.Number == nil ||
+		!header.Number.IsUint64() ||
+		header.Number.Uint64() == 0 {
+		return nil, ErrWorkV1EngineLabUnavailable
+	}
+	config := chain.Config()
+	if config == nil ||
+		config.LQC == nil ||
+		config.LQC.EpochLength == 0 {
+		return nil, ErrWorkV1EngineLabUnavailable
+	}
+
+	envelope, err := DecodeLQCHeaderExtraV5(
+		header.Extra,
+		MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if envelope.BlockNumber != header.Number.Uint64() {
+		return nil, ErrInvalidLQCHeaderExtraV5
+	}
+	if len(envelope.RabbitVRFFinalizations) == 0 {
+		return nil, nil
+	}
+
+	epochLength := config.LQC.EpochLength
+	bridge, exists, err := l.rabbitVRFDKGBridgeForTargetBlockV1(
+		chain,
+		header.Number.Uint64()-1,
+		header.ParentHash,
+		header.Number.Uint64(),
+		epochLength,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrInvalidRabbitVRFKeysetCertificateV1
+	}
+
+	out := make(
+		[]consensus.RabbitVRFValidatedFinalization,
+		len(envelope.RabbitVRFFinalizations),
+	)
+	for index, value := range envelope.RabbitVRFFinalizations {
+		certificate, found, err := l.rabbitVRFKeysetCertificateForRootV1(
+			chain,
+			header.Number.Uint64()-1,
+			header.ParentHash,
+			epochLength,
+			envelope,
+			bridge,
+			value.KeysetRoot,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, ErrInvalidRabbitVRFFinalizationV1
+		}
+		if err := ValidateRabbitVRFFinalizationProofV1(
+			bridge.Session,
+			bridge.Members,
+			certificate,
+			value,
+		); err != nil {
+			return nil, err
+		}
+
+		shareIDs, err :=
+			RabbitVRFCompactParticipationShareIDsFromFixedBitmapV1(
+				bridge.Session,
+				value.ParticipationBitmap,
+			)
+		if err != nil {
+			return nil, err
+		}
+		if uint64(len(shareIDs)) != bridge.Session.Threshold {
+			return nil, ErrInvalidRabbitVRFFinalizationV1
+		}
+
+		participants := make([]common.Address, len(shareIDs))
+		seen := make(map[common.Address]struct{}, len(shareIDs))
+		for participantIndex, shareID := range shareIDs {
+			if shareID == 0 || shareID > uint64(len(bridge.Members)) {
+				return nil, ErrInvalidRabbitVRFFinalizationV1
+			}
+			member := bridge.Members[shareID-1]
+			if member.ShareID != shareID ||
+				member.Participant == (common.Address{}) {
+				return nil, ErrInvalidRabbitVRFFinalizationV1
+			}
+			if _, duplicate := seen[member.Participant]; duplicate {
+				return nil, ErrInvalidRabbitVRFFinalizationV1
+			}
+			seen[member.Participant] = struct{}{}
+			participants[participantIndex] = member.Participant
+		}
+
+		out[index] = consensus.RabbitVRFValidatedFinalization{
+			RequestID:    value.RequestID,
+			Epoch:        value.Epoch,
+			Round:        value.Round,
+			Randomness:   value.Randomness,
+			ProofHash:    value.ProofHash,
+			Participants: participants,
+		}
+	}
+	return out, nil
+}

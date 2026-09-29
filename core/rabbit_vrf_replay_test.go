@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -66,7 +67,7 @@ func TestRabbitVRFValidatedFinalizationsReplayV1(t *testing.T) {
 		if reader.calls != 2 {
 			t.Fatalf("reader calls=%d want=2", reader.calls)
 		}
-		if len(got) != 1 || got[0] != expected[0] {
+		if len(got) != 1 || !reflect.DeepEqual(got[0], expected[0]) {
 			t.Fatalf("finalizations=%+v want=%+v", got, expected)
 		}
 	})
