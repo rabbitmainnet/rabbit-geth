@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
+	gethcrypto "github.com/ethereum/go-ethereum/crypto"
 	rabbitvrf "github.com/ethereum/go-ethereum/crypto/rabbitvrf"
 	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
 )
@@ -55,8 +56,21 @@ func TestRabbitVRFFinalizationAdversarialV1(t *testing.T) {
 		VerificationShares: canonicalShares,
 	}
 
+	members := []lqc.RabbitVRFCommitteeMemberV1{
+		{
+			ShareID:     1,
+			TicketHash:  gethcrypto.Keccak256Hash([]byte("rabbit-vrf-finalization-ticket-1")),
+			Participant: common.HexToAddress("0x0000000000000000000000000000000000000011"),
+		},
+		{
+			ShareID:     2,
+			TicketHash:  gethcrypto.Keccak256Hash([]byte("rabbit-vrf-finalization-ticket-2")),
+			Participant: common.HexToAddress("0x0000000000000000000000000000000000000022"),
+		},
+	}
+
 	request := common.HexToHash("0x3333")
-	message, _, err := lqc.RabbitVRFThresholdMessageV1(ctx, root, request)
+	message, messageHash, err := lqc.RabbitVRFThresholdMessageV1(ctx, root, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +88,41 @@ func TestRabbitVRFFinalizationAdversarialV1(t *testing.T) {
 
 	sig, randomness, err := rabbitVRFCombineThresholdPartialsWithKeysetV1(
 		2, keyset, message, partials,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	participationSignatures := make([]rabbitvrf.Signature, 0, 2)
+	for index, share := range []*rabbitvrf.SecretShare{s1, s2} {
+		participationMessage, _, err := lqc.RabbitVRFCompactParticipationMessageV1(
+			ctx,
+			root,
+			request,
+			messageHash,
+			members[index],
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		participationPartial, err := share.SignPartial(participationMessage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		participationSignatures = append(
+			participationSignatures,
+			participationPartial.Signature,
+		)
+	}
+	participationAggregateSignature, err := rabbitvrf.AggregateSignaturesV1(
+		participationSignatures,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	participationBitmap, err := lqc.RabbitVRFCompactParticipationFixedBitmapV1(
+		ctx,
+		[]uint64{1, 2},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -98,25 +147,32 @@ func TestRabbitVRFFinalizationAdversarialV1(t *testing.T) {
 	}
 
 	round := uint64(1234)
-	proof, err := lqc.RabbitVRFFinalizationProofHashV1(
-		request, 11, round, sig[:],
+	proof, err := lqc.RabbitVRFFinalizationProofHashWithParticipationV1(
+		request,
+		11,
+		round,
+		sig[:],
+		participationBitmap,
+		participationAggregateSignature,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	valid := lqc.RabbitVRFFinalizationV1{
-		Version:    lqc.RabbitVRFFinalizationVersionV1,
-		RequestID:  request,
-		KeysetRoot: root,
-		Epoch:      11,
-		Round:      round,
-		Randomness: randomness,
-		ProofHash:  proof,
-		Signature:  sig,
+		Version:                         lqc.RabbitVRFFinalizationVersionV1,
+		RequestID:                       request,
+		KeysetRoot:                      root,
+		Epoch:                           11,
+		Round:                           round,
+		Randomness:                      randomness,
+		ProofHash:                       proof,
+		Signature:                       sig,
+		ParticipationBitmap:             participationBitmap,
+		ParticipationAggregateSignature: participationAggregateSignature,
 	}
 
-	if err := lqc.ValidateRabbitVRFFinalizationProofV1(ctx, cert, valid); err != nil {
+	if err := lqc.ValidateRabbitVRFFinalizationProofV1(ctx, members, cert, valid); err != nil {
 		t.Fatalf("valid finalization rejected: %v", err)
 	}
 
@@ -127,14 +183,20 @@ func TestRabbitVRFFinalizationAdversarialV1(t *testing.T) {
 		"bad_randomness": func(v *lqc.RabbitVRFFinalizationV1) { v.Randomness[0] ^= 1 },
 		"bad_proof":      func(v *lqc.RabbitVRFFinalizationV1) { v.ProofHash[0] ^= 1 },
 		"bad_signature":  func(v *lqc.RabbitVRFFinalizationV1) { v.Signature[0] ^= 1 },
-		"wrong_round":    func(v *lqc.RabbitVRFFinalizationV1) { v.Round++ },
+		"bad_participation_bitmap": func(v *lqc.RabbitVRFFinalizationV1) {
+			v.ParticipationBitmap[0] ^= 0x01
+		},
+		"bad_participation_signature": func(v *lqc.RabbitVRFFinalizationV1) {
+			v.ParticipationAggregateSignature[0] ^= 1
+		},
+		"wrong_round": func(v *lqc.RabbitVRFFinalizationV1) { v.Round++ },
 	}
 
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			bad := valid
 			mutate(&bad)
-			err := lqc.ValidateRabbitVRFFinalizationProofV1(ctx, cert, bad)
+			err := lqc.ValidateRabbitVRFFinalizationProofV1(ctx, members, cert, bad)
 			if !errors.Is(err, lqc.ErrInvalidRabbitVRFFinalizationV1) {
 				t.Fatalf("error=%v", err)
 			}

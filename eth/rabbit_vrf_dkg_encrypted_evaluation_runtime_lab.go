@@ -489,6 +489,34 @@ func (runtime *rabbitVRFDKGRuntime) validateInboundThresholdPartialV1(packet lqc
 	if _, err := rabbitvrf.VerifyPartial(verificationShare, message, partial); err != nil {
 		return fmt.Errorf("verify rabbit vrf threshold partial share %d: %w", packet.ShareID, err)
 	}
+
+	if uint64(len(context.CanonicalMembers)) != context.CanonicalSession.CommitteeSize ||
+		packet.ShareID > uint64(len(context.CanonicalMembers)) {
+		return fmt.Errorf("rabbit vrf compact participation member unavailable")
+	}
+	compactMember := context.CanonicalMembers[packet.ShareID-1]
+	if compactMember.ShareID != packet.ShareID ||
+		compactMember.Participant == (common.Address{}) {
+		return fmt.Errorf("rabbit vrf compact participation member mismatch")
+	}
+	compactMessage, _, err := lqc.RabbitVRFCompactParticipationMessageV1(
+		context.CanonicalSession,
+		packet.KeysetRoot,
+		packet.RequestID,
+		packet.MessageHash,
+		compactMember,
+	)
+	if err != nil {
+		return fmt.Errorf("build rabbit vrf compact participation message share %d: %w", packet.ShareID, err)
+	}
+	compactPartial := rabbitvrf.PartialSignature{
+		ShareID:   packet.ShareID,
+		Signature: packet.CompactParticipationSignature,
+	}
+	if _, err := rabbitvrf.VerifyPartial(verificationShare, compactMessage, compactPartial); err != nil {
+		return fmt.Errorf("verify rabbit vrf compact participation share %d: %w", packet.ShareID, err)
+	}
+
 	if _, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet); err != nil {
 		return fmt.Errorf("derive rabbit vrf threshold partial message id: %w", err)
 	}
@@ -637,6 +665,48 @@ func (runtime *rabbitVRFDKGRuntime) signLocalThresholdPartialV1(recipient lqc.Ra
 	}
 
 	return rabbitVRFSignThresholdPartialWithKeysetV1(share, recipient.ShareID, keyset, message)
+}
+
+func (runtime *rabbitVRFDKGRuntime) signLocalCompactThresholdParticipationV1(
+	recipient lqc.RabbitVRFCommitteeMemberV1,
+	packet lqc.RabbitVRFThresholdPartialV1,
+) (rabbitvrf.Signature, error) {
+	var zero rabbitvrf.Signature
+	if runtime == nil ||
+		recipient.ShareID == 0 ||
+		packet.ShareID != recipient.ShareID {
+		return zero, fmt.Errorf("rabbit vrf compact participation signing runtime unavailable")
+	}
+
+	context := runtime.currentContext()
+	if context.SessionID == (common.Hash{}) ||
+		packet.SessionID != context.SessionID ||
+		packet.KeysetRoot == (common.Hash{}) ||
+		packet.RequestID == (common.Hash{}) ||
+		packet.MessageHash == (common.Hash{}) {
+		return zero, fmt.Errorf("rabbit vrf compact participation canonical context unavailable")
+	}
+
+	message, _, err := lqc.RabbitVRFCompactParticipationMessageV1(
+		context.CanonicalSession,
+		packet.KeysetRoot,
+		packet.RequestID,
+		packet.MessageHash,
+		recipient,
+	)
+	if err != nil {
+		return zero, fmt.Errorf("build rabbit vrf compact participation message: %w", err)
+	}
+
+	partial, _, err := runtime.signLocalThresholdPartialV1(recipient, message)
+	if err != nil {
+		return zero, fmt.Errorf("sign rabbit vrf compact participation share %d: %w", recipient.ShareID, err)
+	}
+	if partial.ShareID != recipient.ShareID ||
+		partial.Signature == (rabbitvrf.Signature{}) {
+		return zero, fmt.Errorf("invalid rabbit vrf compact participation signature")
+	}
+	return partial.Signature, nil
 }
 
 func (runtime *rabbitVRFDKGRuntime) signLocalThresholdParticipationV1(

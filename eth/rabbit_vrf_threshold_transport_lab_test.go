@@ -187,6 +187,26 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	}
 	attachParticipation := func(packet lqc.RabbitVRFThresholdPartialV1, index int) lqc.RabbitVRFThresholdPartialV1 {
 		t.Helper()
+
+		compactMessage, _, err := lqc.RabbitVRFCompactParticipationMessageV1(
+			context,
+			packet.KeysetRoot,
+			packet.RequestID,
+			packet.MessageHash,
+			members[index],
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		compactPartial, err := shares[index].SignPartial(compactMessage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if compactPartial.ShareID != members[index].ShareID {
+			t.Fatal("wire compact participation share id mismatch")
+		}
+		packet.CompactParticipationSignature = compactPartial.Signature
+
 		partialMessageID, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet)
 		if err != nil {
 			t.Fatal(err)

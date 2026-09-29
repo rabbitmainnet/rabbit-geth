@@ -1400,7 +1400,7 @@ func (l *LQC) verifyCanonicalRegistryHeaderMaybeWorkV1Lab(
 								err = ErrInvalidRabbitVRFFinalizationV1
 								break
 							}
-							if err = ValidateRabbitVRFFinalizationProofV1(bridge.Session, certificate, finalization); err != nil {
+							if err = ValidateRabbitVRFFinalizationProofV1(bridge.Session, bridge.Members, certificate, finalization); err != nil {
 								break
 							}
 						}

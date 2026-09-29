@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -1004,6 +1005,12 @@ func (n *rabbitVRFDKGTransport) processCanonicalPendingRequestV1(requestID commo
 		if signErr != nil {
 			return fmt.Errorf("build rabbit vrf threshold partial share %d: %w", member.ShareID, signErr)
 		}
+		compactParticipationSignature, signErr := n.runtime.signLocalCompactThresholdParticipationV1(member, packet)
+		if signErr != nil {
+			return fmt.Errorf("sign rabbit vrf compact participation share %d: %w", member.ShareID, signErr)
+		}
+		packet.CompactParticipationSignature = compactParticipationSignature
+
 		participationSignature, signErr := n.runtime.signLocalThresholdParticipationV1(member, packet)
 		if signErr != nil {
 			return fmt.Errorf("sign rabbit vrf threshold participation share %d: %w", member.ShareID, signErr)
@@ -1121,9 +1128,29 @@ func (n *rabbitVRFDKGTransport) collectThresholdPartialV1(packet lqc.RabbitVRFTh
 		n.mu.Unlock()
 		return nil
 	}
-	partials := make([]rabbitvrf.PartialSignature, 0, len(bucket))
-	for _, stored := range bucket {
-		partials = append(partials, rabbitvrf.PartialSignature{ShareID: stored.ShareID, Signature: stored.Signature})
+	shareIDs := make([]uint64, 0, len(bucket))
+	for shareID := range bucket {
+		shareIDs = append(shareIDs, shareID)
+	}
+	sort.Slice(shareIDs, func(i, j int) bool { return shareIDs[i] < shareIDs[j] })
+	if len(shareIDs) > threshold {
+		shareIDs = shareIDs[:threshold]
+	}
+
+	selectedPackets := make([]lqc.RabbitVRFThresholdPartialV1, 0, threshold)
+	partials := make([]rabbitvrf.PartialSignature, 0, threshold)
+	compactSignatures := make([]rabbitvrf.Signature, 0, threshold)
+	for _, shareID := range shareIDs {
+		stored := bucket[shareID]
+		selectedPackets = append(selectedPackets, stored)
+		partials = append(partials, rabbitvrf.PartialSignature{
+			ShareID:   stored.ShareID,
+			Signature: stored.Signature,
+		})
+		compactSignatures = append(
+			compactSignatures,
+			stored.CompactParticipationSignature,
+		)
 	}
 	n.mu.Unlock()
 
@@ -1143,6 +1170,22 @@ func (n *rabbitVRFDKGTransport) collectThresholdPartialV1(packet lqc.RabbitVRFTh
 		return fmt.Errorf("combine rabbit vrf threshold request %s: %w", packet.RequestID, err)
 	}
 
+	participationAggregateSignature, err := rabbitvrf.AggregateSignaturesV1(compactSignatures)
+	if err != nil {
+		return fmt.Errorf("aggregate rabbit vrf compact participation request %s: %w", packet.RequestID, err)
+	}
+	selectedShareIDs := make([]uint64, len(selectedPackets))
+	for index, selected := range selectedPackets {
+		selectedShareIDs[index] = selected.ShareID
+	}
+	participationBitmap, err := lqc.RabbitVRFCompactParticipationFixedBitmapV1(
+		context.CanonicalSession,
+		selectedShareIDs,
+	)
+	if err != nil {
+		return fmt.Errorf("build rabbit vrf compact participation bitmap request %s: %w", packet.RequestID, err)
+	}
+
 	request, err := n.runtime.canonicalPendingRequestV1(packet.RequestID)
 	if err != nil {
 		return fmt.Errorf("resolve rabbit vrf request for finalization: %w", err)
@@ -1152,24 +1195,28 @@ func (n *rabbitVRFDKGTransport) collectThresholdPartialV1(packet lqc.RabbitVRFTh
 	if epoch == 0 || round == 0 {
 		return errors.New("rabbit vrf finalization canonical epoch/round unavailable")
 	}
-	proofHash, err := lqc.RabbitVRFFinalizationProofHashV1(
+	proofHash, err := lqc.RabbitVRFFinalizationProofHashWithParticipationV1(
 		packet.RequestID,
 		epoch,
 		round,
 		signature[:],
+		participationBitmap,
+		participationAggregateSignature,
 	)
 	if err != nil {
 		return fmt.Errorf("build rabbit vrf finalization proof hash: %w", err)
 	}
 	finalization := lqc.RabbitVRFFinalizationV1{
-		Version:    lqc.RabbitVRFFinalizationVersionV1,
-		RequestID:  packet.RequestID,
-		KeysetRoot: packet.KeysetRoot,
-		Epoch:      epoch,
-		Round:      round,
-		Randomness: randomness,
-		ProofHash:  proofHash,
-		Signature:  signature,
+		Version:                         lqc.RabbitVRFFinalizationVersionV1,
+		RequestID:                       packet.RequestID,
+		KeysetRoot:                      packet.KeysetRoot,
+		Epoch:                           epoch,
+		Round:                           round,
+		Randomness:                      randomness,
+		ProofHash:                       proofHash,
+		Signature:                       signature,
+		ParticipationBitmap:             participationBitmap,
+		ParticipationAggregateSignature: participationAggregateSignature,
 	}
 	if err := finalization.Validate(); err != nil {
 		return fmt.Errorf("validate locally produced rabbit vrf finalization: %w", err)

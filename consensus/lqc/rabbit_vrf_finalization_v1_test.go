@@ -10,24 +10,28 @@ import (
 
 func TestRabbitVRFFinalizationV1CanonicalAndProofHash(t *testing.T) {
 	a := RabbitVRFFinalizationV1{
-		Version:    RabbitVRFFinalizationVersionV1,
-		RequestID:  common.HexToHash("0x01"),
-		KeysetRoot: common.HexToHash("0x1001"),
-		Epoch:      11,
-		Round:      2,
-		Randomness: common.HexToHash("0x11"),
-		Signature:  rabbitvrf.Signature{1},
-		ProofHash:  common.HexToHash("0x21"),
+		Version:                         RabbitVRFFinalizationVersionV1,
+		RequestID:                       common.HexToHash("0x01"),
+		KeysetRoot:                      common.HexToHash("0x1001"),
+		Epoch:                           11,
+		Round:                           2,
+		Randomness:                      common.HexToHash("0x11"),
+		Signature:                       rabbitvrf.Signature{1},
+		ProofHash:                       common.HexToHash("0x21"),
+		ParticipationBitmap:             [RabbitVRFCompactParticipationBitmapBytesV1]byte{1},
+		ParticipationAggregateSignature: rabbitvrf.Signature{2},
 	}
 	b := RabbitVRFFinalizationV1{
-		Version:    RabbitVRFFinalizationVersionV1,
-		RequestID:  common.HexToHash("0x02"),
-		KeysetRoot: common.HexToHash("0x1001"),
-		Epoch:      11,
-		Round:      3,
-		Randomness: common.HexToHash("0x12"),
-		Signature:  rabbitvrf.Signature{1},
-		ProofHash:  common.HexToHash("0x22"),
+		Version:                         RabbitVRFFinalizationVersionV1,
+		RequestID:                       common.HexToHash("0x02"),
+		KeysetRoot:                      common.HexToHash("0x1001"),
+		Epoch:                           11,
+		Round:                           3,
+		Randomness:                      common.HexToHash("0x12"),
+		Signature:                       rabbitvrf.Signature{1},
+		ProofHash:                       common.HexToHash("0x22"),
+		ParticipationBitmap:             [RabbitVRFCompactParticipationBitmapBytesV1]byte{1},
+		ParticipationAggregateSignature: rabbitvrf.Signature{2},
 	}
 
 	canonical, err := CanonicalRabbitVRFFinalizationsV1([]RabbitVRFFinalizationV1{b, a})

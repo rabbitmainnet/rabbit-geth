@@ -23,22 +23,24 @@ type rabbitVRFThresholdMessagePayloadV1 struct {
 }
 
 type RabbitVRFThresholdPartialV1 struct {
-	SessionID              common.Hash
-	KeysetRoot             common.Hash
-	RequestID              common.Hash
-	MessageHash            common.Hash
-	ShareID                uint64
-	Signature              rabbitvrf.Signature
-	ParticipationSignature RabbitVRFParticipationSignatureV1
+	SessionID                     common.Hash
+	KeysetRoot                    common.Hash
+	RequestID                     common.Hash
+	MessageHash                   common.Hash
+	ShareID                       uint64
+	Signature                     rabbitvrf.Signature
+	CompactParticipationSignature rabbitvrf.Signature
+	ParticipationSignature        RabbitVRFParticipationSignatureV1
 }
 
 type rabbitVRFThresholdPartialMessageIDPayloadV1 struct {
-	SessionID   common.Hash
-	KeysetRoot  common.Hash
-	RequestID   common.Hash
-	MessageHash common.Hash
-	ShareID     uint64
-	Signature   rabbitvrf.Signature
+	SessionID                     common.Hash
+	KeysetRoot                    common.Hash
+	RequestID                     common.Hash
+	MessageHash                   common.Hash
+	ShareID                       uint64
+	Signature                     rabbitvrf.Signature
+	CompactParticipationSignature rabbitvrf.Signature
 }
 
 func RabbitVRFThresholdMessageV1(
@@ -121,12 +123,13 @@ func RabbitVRFThresholdPartialMessageIDV1(
 	}
 
 	encoded, err := rlp.EncodeToBytes(rabbitVRFThresholdPartialMessageIDPayloadV1{
-		SessionID:   partial.SessionID,
-		KeysetRoot:  partial.KeysetRoot,
-		RequestID:   partial.RequestID,
-		MessageHash: partial.MessageHash,
-		ShareID:     partial.ShareID,
-		Signature:   partial.Signature,
+		SessionID:                     partial.SessionID,
+		KeysetRoot:                    partial.KeysetRoot,
+		RequestID:                     partial.RequestID,
+		MessageHash:                   partial.MessageHash,
+		ShareID:                       partial.ShareID,
+		Signature:                     partial.Signature,
+		CompactParticipationSignature: partial.CompactParticipationSignature,
 	})
 	if err != nil {
 		return common.Hash{}, ErrInvalidRabbitVRFThresholdPartialV1

@@ -326,6 +326,25 @@ func TestRabbitVRFThresholdLocalFlowV1RestartReuse(t *testing.T) {
 		remoteMember := canonicalMembers[index]
 		remoteBinding := canonicalBindings[index]
 
+		compactMessage, _, err := lqc.RabbitVRFCompactParticipationMessageV1(
+			context,
+			keysetRoot,
+			requestID,
+			packet.MessageHash,
+			remoteMember,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		compactPartial, err := share.SignPartial(compactMessage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if compactPartial.ShareID != share.ID() {
+			t.Fatal("remote compact participation share id mismatch")
+		}
+		packet.CompactParticipationSignature = compactPartial.Signature
+
 		partialMessageID, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet)
 		if err != nil {
 			t.Fatal(err)
