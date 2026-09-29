@@ -197,6 +197,25 @@ func TestRabbitVRFThresholdLocalFlowV1RestartReuse(t *testing.T) {
 		t.Fatal("local partial was not collected canonically")
 	}
 
+	// Persist valid remote partials before restart. The restarted node must
+	// recover them from disk together with its local partial.
+	message, _, err := lqc.RabbitVRFThresholdMessageV1(context, keysetRoot, requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, share := range shares[1:] {
+		partial, _, err := rabbitVRFSignThresholdPartialWithKeysetV1(share, share.ID(), keyset, message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packet, err := lqc.NewRabbitVRFThresholdPartialV1(context, keysetRoot, requestID, partial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := partialStore.Store(context, packet); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.Remove(passwordPath); err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +241,13 @@ func TestRabbitVRFThresholdLocalFlowV1RestartReuse(t *testing.T) {
 
 	if restartedCollected != stored {
 		t.Fatal("restart changed persisted threshold partial")
+	}
+
+	transport2.mu.RLock()
+	_, thresholdRecovered := transport2.partialResults[requestID]
+	restoredCount := len(transport2.partials[requestID])
+	transport2.mu.RUnlock()
+	if !thresholdRecovered {
+		t.Fatalf("restart did not restore persisted remote partials: restored=%d want>=3", restoredCount)
 	}
 }

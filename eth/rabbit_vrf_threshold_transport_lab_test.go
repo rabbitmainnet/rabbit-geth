@@ -182,6 +182,33 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A verified inbound partial must survive process restart.
+	partialStore, err := rabbitvrfstate.NewThresholdPartialStoreV1(
+		filepath.Join(instanceDir, "rabbit-vrf", "threshold-partials"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistDeadline := time.Now().Add(2 * time.Second)
+	for {
+		persisted, loadErr := partialStore.Load(
+			context,
+			keysetRoot,
+			requestID,
+			packet1.ShareID,
+		)
+		if loadErr == nil {
+			if persisted != packet1 {
+				t.Fatal("persisted inbound threshold partial differs from canonical packet")
+			}
+			break
+		}
+		if time.Now().After(persistDeadline) {
+			t.Fatalf("verified inbound threshold partial was not persisted: %v", loadErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	partial2, _, err := rabbitVRFSignThresholdPartialWithKeysetV1(
 		shares[1],
 		2,
