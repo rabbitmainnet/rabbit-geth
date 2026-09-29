@@ -73,7 +73,7 @@ func buildLQCHeaderExtraV5WithCanonicalRuntimeV1(
 	if err != nil {
 		return nil, common.Hash{}, common.Hash{}, err
 	}
-	extra, err := encodeLQCHeaderExtraV5(
+	extra, err := encodeLQCHeaderExtraV5FittingFinalizationsV1(
 		ctx.Work.BlockNumber,
 		ctx.Work.RegistryRoot,
 		nextWork.StateRoot,
@@ -89,4 +89,54 @@ func buildLQCHeaderExtraV5WithCanonicalRuntimeV1(
 		return nil, common.Hash{}, common.Hash{}, err
 	}
 	return extra, nextWork.StateRoot, claimRoot, nil
+}
+
+// encodeLQCHeaderExtraV5FittingFinalizationsV1 keeps the strict V5 encoder
+// unchanged while deterministically fitting the largest canonical prefix of
+// Rabbit VRF finalizations into the fixed header-extra budget. Every supplied
+// finalization is validated before trimming, so an invalid suffix cannot be
+// hidden by capacity handling.
+func encodeLQCHeaderExtraV5FittingFinalizationsV1(
+	blockNumber uint64,
+	registryRoot common.Hash,
+	workStateRoot common.Hash,
+	committeeClaimRoot common.Hash,
+	registryOperations []RegistryOperation,
+	workTickets []SignedRandomXWorkTicketV1,
+	committeeClaims []CommitteeParticipationClaimGroupV1,
+	vrfKeysetCertificates []RabbitVRFKeysetCertificateV1,
+	vrfFinalizations []RabbitVRFFinalizationV1,
+	maxWorkTickets uint64,
+) ([]byte, error) {
+	if len(vrfFinalizations) > MaxRabbitVRFFinalizationsPerBlockV1 {
+		return nil, ErrTooManyRabbitVRFFinalizationsPerBlock
+	}
+
+	canonicalFinalizations, err := CanonicalRabbitVRFFinalizationsV1(vrfFinalizations)
+	if err != nil {
+		return nil, err
+	}
+
+	for count := len(canonicalFinalizations); count >= 0; count-- {
+		extra, encodeErr := encodeLQCHeaderExtraV5(
+			blockNumber,
+			registryRoot,
+			workStateRoot,
+			committeeClaimRoot,
+			registryOperations,
+			workTickets,
+			committeeClaims,
+			vrfKeysetCertificates,
+			canonicalFinalizations[:count],
+			maxWorkTickets,
+		)
+		if encodeErr == nil {
+			return extra, nil
+		}
+		if count == 0 {
+			return nil, encodeErr
+		}
+	}
+
+	return nil, ErrInvalidLQCHeaderExtraV5
 }
