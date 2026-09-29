@@ -860,10 +860,24 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 
+		requestScan := rabbitVRFRequestScanCursorV1{
+			Next: runtime.rabbitVRFRequestScanStartV1(),
+		}
+
 		process := func() {
 			if err := runtime.processCurrentHead(); err != nil {
 				log.Debug(
 					"Rabbit VRF DKG local runtime waiting",
+					"err", err,
+				)
+			}
+		}
+
+		processRequests := func() {
+			if err := runtime.processCanonicalPendingRequestsV1(&requestScan); err != nil {
+				log.Debug(
+					"Rabbit VRF canonical request worker waiting",
+					"next", requestScan.Next,
 					"err", err,
 				)
 			}
@@ -880,6 +894,7 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 
 		process()
 		refresh()
+		processRequests()
 
 		for {
 			select {
@@ -895,6 +910,7 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 			case <-headCh:
 				process()
 				refresh()
+				processRequests()
 
 			case ev, ok := <-syncCh:
 				if !ok {
@@ -913,10 +929,12 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 				case downloader.SyncCompleted:
 					runtime.setSyncingV1(false)
 					refresh()
+					processRequests()
 				}
 
 			case <-ticker.C:
 				refresh()
+				processRequests()
 			}
 		}
 	}()
