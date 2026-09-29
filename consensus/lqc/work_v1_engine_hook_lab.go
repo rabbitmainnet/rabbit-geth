@@ -884,64 +884,125 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 		current := header.Number.Uint64()
 
 		if l.consensusLivenessV3Active(current) {
-			envelopeV4, decodeErr := DecodeLQCHeaderExtraV4(
-				header.Extra,
-				MaxWorkTicketsPerBlockV1,
-			)
-			if decodeErr != nil {
-				return nil, decodeErr
-			}
-			envelopeV3 := LQCHeaderEnvelopeV3{
-				Version:            LQCHeaderEnvelopeVersionV3,
-				BlockNumber:        envelopeV4.BlockNumber,
-				RegistryRoot:       envelopeV4.RegistryRoot,
-				WorkStateRoot:      envelopeV4.WorkStateRoot,
-				RegistryOperations: envelopeV4.RegistryOperations,
-				WorkTickets:        envelopeV4.WorkTickets,
-			}
-			registrySnapshot, err := l.workV1EngineLabReplayRegistryV3(
-				chain,
-				runtime,
-				header,
-				envelopeV3,
-			)
-			if err != nil {
-				return nil, err
-			}
-			ctx, err := l.workV1EngineLabContext(
-				chain,
-				runtime,
-				current,
-				envelopeV4.RegistryRoot,
-			)
-			if err != nil {
-				return nil, err
-			}
-			v4ctx, err := l.workV1EngineLabV4Context(
-				chain,
-				ctx,
-				header.ParentHash,
-			)
-			if err != nil {
-				return nil, err
-			}
-			_, next, nextClaims, _, err :=
-				ValidateAndApplyLQCHeaderExtraV4WithCanonicalRuntimeV1(
-					v4ctx,
-					header.Hash(),
+			if chain.Config() != nil && chain.Config().IsRabbitVRF(header.Number) {
+				envelopeV5, decodeErr := DecodeLQCHeaderExtraV5(
 					header.Extra,
+					MaxWorkTicketsPerBlockV1,
 				)
-			if err != nil {
-				return nil, err
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				envelopeV3 := LQCHeaderEnvelopeV3{
+					Version:            LQCHeaderEnvelopeVersionV3,
+					BlockNumber:        envelopeV5.BlockNumber,
+					RegistryRoot:       envelopeV5.RegistryRoot,
+					WorkStateRoot:      envelopeV5.WorkStateRoot,
+					RegistryOperations: envelopeV5.RegistryOperations,
+					WorkTickets:        envelopeV5.WorkTickets,
+				}
+				registrySnapshot, err := l.workV1EngineLabReplayRegistryV3(
+					chain,
+					runtime,
+					header,
+					envelopeV3,
+				)
+				if err != nil {
+					return nil, err
+				}
+				ctx, err := l.workV1EngineLabContext(
+					chain,
+					runtime,
+					current,
+					envelopeV5.RegistryRoot,
+				)
+				if err != nil {
+					return nil, err
+				}
+				v4ctx, err := l.workV1EngineLabV4Context(
+					chain,
+					ctx,
+					header.ParentHash,
+				)
+				if err != nil {
+					return nil, err
+				}
+				_, next, nextClaims, _, err :=
+					ValidateAndApplyLQCHeaderExtraV5WithCanonicalRuntimeV1(
+						v4ctx,
+						header.Hash(),
+						header.Extra,
+					)
+				if err != nil {
+					return nil, err
+				}
+				runtime = next
+				if err := l.workV1EngineLabRememberClaimLedger(
+					header.Hash(),
+					nextClaims,
+				); err != nil {
+					return nil, err
+				}
+				l.rememberRegistrySnapshot(registrySnapshot)
+			} else {
+				envelopeV4, decodeErr := DecodeLQCHeaderExtraV4(
+					header.Extra,
+					MaxWorkTicketsPerBlockV1,
+				)
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				envelopeV3 := LQCHeaderEnvelopeV3{
+					Version:            LQCHeaderEnvelopeVersionV3,
+					BlockNumber:        envelopeV4.BlockNumber,
+					RegistryRoot:       envelopeV4.RegistryRoot,
+					WorkStateRoot:      envelopeV4.WorkStateRoot,
+					RegistryOperations: envelopeV4.RegistryOperations,
+					WorkTickets:        envelopeV4.WorkTickets,
+				}
+				registrySnapshot, err := l.workV1EngineLabReplayRegistryV3(
+					chain,
+					runtime,
+					header,
+					envelopeV3,
+				)
+				if err != nil {
+					return nil, err
+				}
+				ctx, err := l.workV1EngineLabContext(
+					chain,
+					runtime,
+					current,
+					envelopeV4.RegistryRoot,
+				)
+				if err != nil {
+					return nil, err
+				}
+				v4ctx, err := l.workV1EngineLabV4Context(
+					chain,
+					ctx,
+					header.ParentHash,
+				)
+				if err != nil {
+					return nil, err
+				}
+				_, next, nextClaims, _, err :=
+					ValidateAndApplyLQCHeaderExtraV4WithCanonicalRuntimeV1(
+						v4ctx,
+						header.Hash(),
+						header.Extra,
+					)
+				if err != nil {
+					return nil, err
+				}
+				runtime = next
+				if err := l.workV1EngineLabRememberClaimLedger(
+					header.Hash(),
+					nextClaims,
+				); err != nil {
+					return nil, err
+				}
+				l.rememberRegistrySnapshot(registrySnapshot)
 			}
-			runtime = next
-			if err := l.workV1EngineLabRememberClaimLedger(
-				header.Hash(),
-				nextClaims,
-			); err != nil {
-				return nil, err
-			}
-			l.rememberRegistrySnapshot(registrySnapshot)
 		} else if envelope, decodeErr := DecodeLQCHeaderExtraV3(
 			header.Extra,
 			MaxWorkTicketsPerBlockV1,
@@ -1026,9 +1087,37 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 		return nil
 	}
 
-	registryEnvelope, err := DecodeRegistryHeaderExtra(header.Extra)
-	if err != nil {
-		return err
+	registryEnvelope, registryErr := DecodeRegistryHeaderExtra(header.Extra)
+	var (
+		registryRoot       common.Hash
+		registryOperations []RegistryOperation
+	)
+	if registryErr == nil {
+		registryRoot = registryEnvelope.RegistryRoot
+		registryOperations = registryEnvelope.Operations
+	} else if l.consensusLivenessV3Active(header.Number.Uint64()) &&
+		chain != nil && chain.Config() != nil &&
+		chain.Config().IsRabbitVRF(header.Number) {
+		envelope, err := DecodeLQCHeaderExtraV5(header.Extra, MaxWorkTicketsPerBlockV1)
+		if err != nil {
+			return err
+		}
+		registryRoot = envelope.RegistryRoot
+		registryOperations = envelope.RegistryOperations
+	} else if l.consensusLivenessV3Active(header.Number.Uint64()) {
+		envelope, err := DecodeLQCHeaderExtraV4(header.Extra, MaxWorkTicketsPerBlockV1)
+		if err != nil {
+			return err
+		}
+		registryRoot = envelope.RegistryRoot
+		registryOperations = envelope.RegistryOperations
+	} else {
+		envelope, err := DecodeLQCHeaderExtraV3(header.Extra, MaxWorkTicketsPerBlockV1)
+		if err != nil {
+			return err
+		}
+		registryRoot = envelope.RegistryRoot
+		registryOperations = envelope.RegistryOperations
 	}
 
 	parent, err := l.workV1EngineLabRuntimeAt(
@@ -1043,7 +1132,7 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 		chain,
 		parent,
 		header.Number.Uint64(),
-		registryEnvelope.RegistryRoot,
+		registryRoot,
 	)
 	if err != nil {
 		return err
@@ -1117,14 +1206,14 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 				finalizations = nil
 			}
 			if hasCertificate {
-				extra, _, _, err = BuildLQCHeaderExtraV5WithCanonicalRuntimeAndKeysetCertificateV1(v4ctx, registryEnvelope.Operations, tickets, claims, certificate, finalizations)
+				extra, _, _, err = BuildLQCHeaderExtraV5WithCanonicalRuntimeAndKeysetCertificateV1(v4ctx, registryOperations, tickets, claims, certificate, finalizations)
 			} else {
-				extra, _, _, err = BuildLQCHeaderExtraV5WithCanonicalRuntimeV1(v4ctx, registryEnvelope.Operations, tickets, claims, finalizations)
+				extra, _, _, err = BuildLQCHeaderExtraV5WithCanonicalRuntimeV1(v4ctx, registryOperations, tickets, claims, finalizations)
 			}
 		} else {
 			extra, _, _, err = BuildLQCHeaderExtraV4WithCanonicalRuntimeV1(
 				v4ctx,
-				registryEnvelope.Operations,
+				registryOperations,
 				tickets,
 				claims,
 			)
@@ -1132,7 +1221,7 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 	} else {
 		extra, _, err = BuildLQCHeaderExtraV3WithCanonicalWorkV1(
 			ctx,
-			registryEnvelope.Operations,
+			registryOperations,
 			tickets,
 		)
 	}

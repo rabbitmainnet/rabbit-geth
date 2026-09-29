@@ -238,6 +238,13 @@ func (n *rabbitVRFDKGTransport) collectKeysetCertificateEnvelopeV1(
 			lqc.RabbitVRFKeysetCertificateV1{}
 	}
 
+	if n.keysetCertificate.Version ==
+		lqc.RabbitVRFKeysetCertificateVersionV1 &&
+		n.keysetCertificate.SessionID == certificate.SessionID &&
+		n.keysetCertificate.KeysetRoot == certificate.KeysetRoot {
+		return false, nil
+	}
+
 	if n.keysetCertificateSignatures == nil {
 		n.keysetCertificateSignatures =
 			make(map[uint64][]byte)
@@ -250,7 +257,7 @@ func (n *rabbitVRFDKGTransport) collectKeysetCertificateEnvelopeV1(
 
 	n.keysetCertificateSignatures[envelope.SenderShareID] = append([]byte(nil), envelope.Signature...)
 
-	if len(n.keysetCertificateSignatures) != len(members) {
+	if uint64(len(n.keysetCertificateSignatures)) < session.Threshold {
 		return true, nil
 	}
 
@@ -261,7 +268,7 @@ func (n *rabbitVRFDKGTransport) collectKeysetCertificateEnvelopeV1(
 		signature, ok :=
 			n.keysetCertificateSignatures[expected.ShareID]
 		if !ok {
-			return true, nil
+			continue
 		}
 
 		certificate.Signatures[index] =
@@ -393,6 +400,64 @@ func (n *rabbitVRFDKGTransport) broadcastKeysetCertificateEnvelopeV1(
 	for _, peer := range peers {
 		_ = peer.sendKeysetCertificateEnvelopeV1(envelope)
 	}
+}
+
+func (n *rabbitVRFDKGTransport) sendRetainedKeysetCertificateSignaturesV1(
+	peer *rabbitVRFDKGPeer,
+) error {
+	if n == nil || peer == nil {
+		return nil
+	}
+
+	if err := n.restorePersistedKeysetCertificateV1(); err != nil {
+		return err
+	}
+
+	session, members, certificate, payloadHash, ready, err :=
+		n.currentKeysetCertificateBaseV1()
+	if err != nil || !ready {
+		return err
+	}
+
+	n.mu.RLock()
+	signatures := make(map[uint64][]byte)
+
+	if n.keysetCertificateSession == certificate.SessionID &&
+		n.keysetCertificateRoot == certificate.KeysetRoot {
+		for shareID, signature := range n.keysetCertificateSignatures {
+			signatures[shareID] =
+				append([]byte(nil), signature...)
+		}
+	}
+	n.mu.RUnlock()
+
+	for _, member := range members {
+		signature, ok := signatures[member.ShareID]
+		if !ok {
+			continue
+		}
+
+		envelope, err := lqc.NewRabbitVRFDKGEnvelopeV1(
+			session,
+			member,
+			lqc.RabbitVRFDKGMessageKeysetCertificateV1,
+			payloadHash,
+		)
+		if err != nil {
+			return err
+		}
+
+		envelope.Signature =
+			append([]byte(nil), signature...)
+
+		if err := peer.sendKeysetCertificateEnvelopeV1(
+			envelope,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (n *rabbitVRFDKGTransport) publishLocalKeysetCertificateSignaturesV1() error {

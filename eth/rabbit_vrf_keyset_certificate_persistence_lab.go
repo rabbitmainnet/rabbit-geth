@@ -76,8 +76,12 @@ func (n *rabbitVRFDKGTransport) restorePersistedKeysetCertificateV1() error {
 
 	signatures := make(map[uint64][]byte, len(members))
 	for index, member := range members {
+		signature := persisted.Signatures[index]
+		if len(signature) == 0 {
+			continue
+		}
 		signatures[member.ShareID] =
-			append([]byte(nil), persisted.Signatures[index]...)
+			append([]byte(nil), signature...)
 	}
 
 	n.mu.Lock()

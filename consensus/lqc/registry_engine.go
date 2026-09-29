@@ -148,27 +148,65 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 		header.ParentHash != parent.Hash {
 		return nil, ErrRegistrySnapshotChainMismatch
 	}
-	if envelope, err := DecodeLQCHeaderExtraV3(
+
+	var (
+		envelopeBlockNumber  uint64
+		envelopeRegistryRoot common.Hash
+		envelopeOperations   []RegistryOperation
+		blockMismatchErr     error
+		decoded              bool
+	)
+
+	if envelope, err := DecodeLQCHeaderExtraV5(
 		header.Extra,
 		MaxWorkTicketsPerBlockV1,
 	); err == nil {
+		envelopeBlockNumber = envelope.BlockNumber
+		envelopeRegistryRoot = envelope.RegistryRoot
+		envelopeOperations = envelope.RegistryOperations
+		blockMismatchErr = ErrLQCHeaderBlockMismatchV5
+		decoded = true
+	} else if envelope, err := DecodeLQCHeaderExtraV4(
+		header.Extra,
+		MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		envelopeBlockNumber = envelope.BlockNumber
+		envelopeRegistryRoot = envelope.RegistryRoot
+		envelopeOperations = envelope.RegistryOperations
+		blockMismatchErr = ErrLQCHeaderBlockMismatchV4
+		decoded = true
+	} else if envelope, err := DecodeLQCHeaderExtraV3(
+		header.Extra,
+		MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		envelopeBlockNumber = envelope.BlockNumber
+		envelopeRegistryRoot = envelope.RegistryRoot
+		envelopeOperations = envelope.RegistryOperations
+		blockMismatchErr = ErrLQCHeaderBlockMismatchV3
+		decoded = true
+	}
+
+	if decoded {
 		blockNumber := header.Number.Uint64()
-		if envelope.BlockNumber != blockNumber {
-			return nil, ErrLQCHeaderBlockMismatchV3
+		if envelopeBlockNumber != blockNumber {
+			return nil, blockMismatchErr
 		}
+
 		chainID, err := registryChainID(chain)
 		if err != nil {
 			return nil, err
 		}
 		rules := l.registryRules()
+
 		v2Extra, err := EncodeRegistryHeaderExtra(
-			envelope.BlockNumber,
-			envelope.RegistryRoot,
-			envelope.RegistryOperations,
+			envelopeBlockNumber,
+			envelopeRegistryRoot,
+			envelopeOperations,
 		)
 		if err != nil {
 			return nil, err
 		}
+
 		validated, err := ValidateRegistryHeaderExtra(
 			chainID,
 			blockNumber,
@@ -179,16 +217,11 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 			return nil, err
 		}
 
-		// Header V3 has two canonical registry-state modes. When Work V2
-		// seats are active, registry state changes only through committed
-		// operations. During zero-work/open-registry fallback, the legacy
-		// heartbeat/missed-turn transition is used. The committed registry
-		// root lets historical replay select the correct transition without
-		// requiring transient Work runtime caches.
 		registry, err := parent.Registry()
 		if err != nil {
 			return nil, err
 		}
+
 		for _, operation := range validated.Operations {
 			if err := registry.ApplyOperation(
 				chainID,
@@ -199,13 +232,20 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 				return nil, err
 			}
 		}
-		if registry.Root() == envelope.RegistryRoot {
-			return newRegistrySnapshot(blockNumber, header.Hash(), registry), nil
+
+		if registry.Root() == envelopeRegistryRoot {
+			return newRegistrySnapshot(
+				blockNumber,
+				header.Hash(),
+				registry,
+			), nil
 		}
 
 		synthetic := types.CopyHeader(header)
 		synthetic.Extra = v2Extra
-		legacy, err := l.applyRegistryHeaderWithOpenActivation(parent,
+
+		legacy, err := l.applyRegistryHeaderWithOpenActivation(
+			parent,
 			chainID,
 			rules,
 			synthetic,
@@ -214,20 +254,28 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 		if err != nil {
 			return nil, err
 		}
+
 		legacyRegistry, err := legacy.Registry()
 		if err != nil {
 			return nil, err
 		}
-		if legacyRegistry.Root() != envelope.RegistryRoot {
+		if legacyRegistry.Root() != envelopeRegistryRoot {
 			return nil, ErrRegistryRootMismatch
 		}
-		return newRegistrySnapshot(blockNumber, header.Hash(), legacyRegistry), nil
+
+		return newRegistrySnapshot(
+			blockNumber,
+			header.Hash(),
+			legacyRegistry,
+		), nil
 	}
+
 	chainID, err := registryChainID(chain)
 	if err != nil {
 		return nil, err
 	}
-	return l.applyRegistryHeaderWithOpenActivation(parent,
+	return l.applyRegistryHeaderWithOpenActivation(
+		parent,
 		chainID,
 		l.registryRules(),
 		header,

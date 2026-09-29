@@ -79,7 +79,9 @@ func RabbitVRFKeysetCertificatePayloadHashV1(
 	return hash, nil
 }
 
-func ValidateRabbitVRFKeysetCertificateShapeV1(certificate RabbitVRFKeysetCertificateV1) error {
+func ValidateRabbitVRFKeysetCertificateShapeV1(
+	certificate RabbitVRFKeysetCertificateV1,
+) error {
 	if certificate.Version != RabbitVRFKeysetCertificateVersionV1 ||
 		certificate.SessionID == (common.Hash{}) ||
 		certificate.KeysetRoot == (common.Hash{}) ||
@@ -87,14 +89,23 @@ func ValidateRabbitVRFKeysetCertificateShapeV1(certificate RabbitVRFKeysetCertif
 		len(certificate.Signatures) == 0 {
 		return ErrInvalidRabbitVRFKeysetCertificateV1
 	}
-	if _, err := rabbitvrf.NewVerificationShare(1, certificate.ThresholdPublicKey); err != nil {
+
+	if _, err := rabbitvrf.NewVerificationShare(
+		1,
+		certificate.ThresholdPublicKey,
+	); err != nil {
 		return ErrInvalidRabbitVRFKeysetCertificateV1
 	}
+
 	for _, signature := range certificate.Signatures {
+		if len(signature) == 0 {
+			continue
+		}
 		if len(signature) != crypto.SignatureLength {
 			return ErrInvalidRabbitVRFKeysetCertificateV1
 		}
 	}
+
 	return nil
 }
 
@@ -105,24 +116,43 @@ func ValidateRabbitVRFKeysetCertificateV1(
 ) (RabbitVRFKeysetCertificateV1, error) {
 	if uint64(len(members)) != context.CommitteeSize ||
 		uint64(len(certificate.Signatures)) != context.CommitteeSize {
-		return RabbitVRFKeysetCertificateV1{}, ErrInvalidRabbitVRFKeysetCertificateV1
+		return RabbitVRFKeysetCertificateV1{},
+			ErrInvalidRabbitVRFKeysetCertificateV1
 	}
-	payloadHash, err := RabbitVRFKeysetCertificatePayloadHashV1(context, certificate)
+
+	payloadHash, err := RabbitVRFKeysetCertificatePayloadHashV1(
+		context,
+		certificate,
+	)
 	if err != nil {
 		return RabbitVRFKeysetCertificateV1{}, err
 	}
+
 	canonical := make([][]byte, len(certificate.Signatures))
+	var validSignatures uint64
+
 	for index, member := range members {
 		expectedShareID := uint64(index) + 1
+
 		if member.ShareID != expectedShareID ||
 			member.TicketHash == (common.Hash{}) ||
 			member.Participant == (common.Address{}) {
-			return RabbitVRFKeysetCertificateV1{}, ErrInvalidRabbitVRFKeysetCertificateV1
+			return RabbitVRFKeysetCertificateV1{},
+				ErrInvalidRabbitVRFKeysetCertificateV1
 		}
+
 		signature := certificate.Signatures[index]
-		if len(signature) != crypto.SignatureLength {
-			return RabbitVRFKeysetCertificateV1{}, ErrInvalidRabbitVRFKeysetCertificateV1
+
+		// Empty slot means this canonical member did not sign.
+		if len(signature) == 0 {
+			continue
 		}
+
+		if len(signature) != crypto.SignatureLength {
+			return RabbitVRFKeysetCertificateV1{},
+				ErrInvalidRabbitVRFKeysetCertificateV1
+		}
+
 		envelope := RabbitVRFDKGEnvelopeV1{
 			Version:       RabbitVRFDKGEnvelopeVersionV1,
 			SessionID:     certificate.SessionID,
@@ -132,11 +162,26 @@ func ValidateRabbitVRFKeysetCertificateV1(
 			PayloadHash:   payloadHash,
 			Signature:     append([]byte(nil), signature...),
 		}
-		if err := VerifyRabbitVRFDKGEnvelopeV1(context, member, envelope); err != nil {
-			return RabbitVRFKeysetCertificateV1{}, ErrInvalidRabbitVRFKeysetCertificateV1
+
+		if err := VerifyRabbitVRFDKGEnvelopeV1(
+			context,
+			member,
+			envelope,
+		); err != nil {
+			return RabbitVRFKeysetCertificateV1{},
+				ErrInvalidRabbitVRFKeysetCertificateV1
 		}
-		canonical[index] = append([]byte(nil), signature...)
+
+		canonical[index] =
+			append([]byte(nil), signature...)
+		validSignatures++
 	}
+
+	if validSignatures < context.Threshold {
+		return RabbitVRFKeysetCertificateV1{},
+			ErrInvalidRabbitVRFKeysetCertificateV1
+	}
+
 	certificate.Signatures = canonical
 	return certificate, nil
 }

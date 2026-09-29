@@ -4,15 +4,18 @@ package eth
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"math/big"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	gethcrypto "github.com/ethereum/go-ethereum/crypto"
 	rabbitvrf "github.com/ethereum/go-ethereum/crypto/rabbitvrf"
 	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
+	"github.com/ethereum/go-ethereum/p2p"
 )
 
 func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
@@ -21,10 +24,17 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 	committeeRoot := gethcrypto.Keccak256Hash([]byte("cert-restart"))
 
 	session, err := lqc.NewRabbitVRFDKGSessionContextV1(
-		chainID, epoch, committeeRoot, 3,
+		chainID, epoch, committeeRoot, 4,
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if session.Threshold != 3 || session.MaxFaults != 1 {
+		t.Fatalf(
+			"threshold=%d faults=%d want=3/1",
+			session.Threshold,
+			session.MaxFaults,
+		)
 	}
 
 	sessionID, err := lqc.RabbitVRFDKGSessionIDV1(session)
@@ -32,8 +42,8 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keys := make([]*ecdsa.PrivateKey, 3)
-	members := make([]lqc.RabbitVRFCommitteeMemberV1, 3)
+	keys := make([]*ecdsa.PrivateKey, 4)
+	members := make([]lqc.RabbitVRFCommitteeMemberV1, 4)
 
 	for i := range members {
 		key, err := gethcrypto.GenerateKey()
@@ -60,11 +70,12 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 		rabbitVRFTestSecretShareV1(t, 1, 10),
 		rabbitVRFTestSecretShareV1(t, 2, 13),
 		rabbitVRFTestSecretShareV1(t, 3, 16),
+		rabbitVRFTestSecretShareV1(t, 4, 19),
 	}
 
 	verificationShares := make(
 		[]lqc.RabbitVRFVerificationShareV1,
-		3,
+		4,
 	)
 
 	for i, share := range shares {
@@ -88,7 +99,7 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 			chainID,
 			epoch,
 			committeeRoot,
-			3,
+			4,
 			session.Threshold,
 			thresholdPublicKey,
 			transcriptRoot,
@@ -130,7 +141,7 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 		KeysetRoot:         keysetRoot,
 		ThresholdPublicKey: thresholdPublicKey,
 		TranscriptRoot:     transcriptRoot,
-		Signatures:         make([][]byte, 3),
+		Signatures:         make([][]byte, 4),
 	}
 
 	payloadHash, err :=
@@ -142,7 +153,7 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i, member := range members {
+	for i, member := range members[:int(session.Threshold)] {
 		envelope, err := lqc.NewRabbitVRFDKGEnvelopeV1(
 			session,
 			member,
@@ -179,26 +190,6 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	certificateStore, err :=
-		rabbitvrfstate.NewRabbitVRFKeysetCertificateStoreV1(
-			filepath.Join(
-				instanceDir,
-				"rabbit-vrf",
-				"keyset-certificates",
-			),
-		)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := certificateStore.Store(
-		session,
-		members,
-		certificate,
-	); err != nil {
-		t.Fatal(err)
-	}
-
 	runtime := &rabbitVRFDKGRuntime{
 		backend: &Ethereum{
 			vrfDKGInstanceDir: instanceDir,
@@ -211,6 +202,84 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 			Members:          members,
 		},
 	}
+
+	collector := &rabbitVRFDKGTransport{
+		runtime: runtime,
+	}
+
+	for i := 0; i < int(session.Threshold); i++ {
+		envelope, err := lqc.NewRabbitVRFDKGEnvelopeV1(
+			session,
+			members[i],
+			lqc.RabbitVRFDKGMessageKeysetCertificateV1,
+			payloadHash,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		envelope.Signature =
+			append([]byte(nil), certificate.Signatures[i]...)
+
+		if _, err :=
+			collector.collectKeysetCertificateEnvelopeV1(
+				envelope,
+			); err != nil {
+			t.Fatalf(
+				"collect certificate share %d: %v",
+				i+1,
+				err,
+			)
+		}
+
+		collector.mu.RLock()
+		count := len(collector.keysetCertificateSignatures)
+		ready :=
+			collector.keysetCertificate.Version ==
+				lqc.RabbitVRFKeysetCertificateVersionV1
+		collector.mu.RUnlock()
+
+		if count != i+1 {
+			t.Fatalf(
+				"collector signatures=%d want=%d",
+				count,
+				i+1,
+			)
+		}
+
+		if i+1 < int(session.Threshold) && ready {
+			t.Fatalf(
+				"certificate became ready before threshold at share %d",
+				i+1,
+			)
+		}
+
+		if i+1 == int(session.Threshold) && !ready {
+			t.Fatal(
+				"certificate was not produced at threshold",
+			)
+		}
+	}
+
+	collector.mu.RLock()
+	collected :=
+		cloneRabbitVRFKeysetCertificateV1(
+			collector.keysetCertificate,
+		)
+	collector.mu.RUnlock()
+
+	if !reflect.DeepEqual(collected, certificate) {
+		t.Fatal("collector certificate mismatch")
+	}
+
+	if len(collected.Signatures) != 4 ||
+		len(collected.Signatures[3]) != 0 {
+		t.Fatal(
+			"offline member must remain an empty canonical slot",
+		)
+	}
+
+	certificate = collected
 
 	restarted := &rabbitVRFDKGTransport{
 		runtime: runtime,
@@ -227,7 +296,148 @@ func TestRabbitVRFKeysetCertificateRestartV1(t *testing.T) {
 		t.Fatal("restored certificate mismatch")
 	}
 
-	if len(restarted.keysetCertificateSignatures) != 3 {
-		t.Fatal("restored certificate signatures missing")
+	if len(restarted.keysetCertificateSignatures) !=
+		int(session.Threshold) {
+		t.Fatalf(
+			"restored signatures=%d want=%d",
+			len(restarted.keysetCertificateSignatures),
+			session.Threshold,
+		)
 	}
+
+	leftRW, rightRW := p2p.MsgPipe()
+	t.Cleanup(func() {
+		leftRW.Close()
+		rightRW.Close()
+	})
+
+	peer := &rabbitVRFDKGPeer{
+		rw: leftRW,
+	}
+
+	sendResult := make(chan error, 1)
+	go func() {
+		sendResult <- restarted.sendPendingTransportArtifactsV1(peer)
+	}()
+
+	envelopes := make(
+		chan lqc.RabbitVRFDKGEnvelopeV1,
+		int(session.Threshold),
+	)
+	readErr := make(chan error, 1)
+
+	go func() {
+		for i := uint64(0); i < session.Threshold; i++ {
+			message, err := rightRW.ReadMsg()
+			if err != nil {
+				readErr <- err
+				return
+			}
+
+			if message.Code !=
+				rabbitVRFDKGKeysetCertificateMsg {
+				message.Discard()
+				readErr <- errors.New(
+					"unexpected late-peer message code",
+				)
+				return
+			}
+
+			var envelope lqc.RabbitVRFDKGEnvelopeV1
+			if err := message.Decode(&envelope); err != nil {
+				message.Discard()
+				readErr <- err
+				return
+			}
+			message.Discard()
+
+			envelopes <- envelope
+		}
+	}()
+
+	seen := make(map[uint64]bool)
+
+	for i := uint64(0); i < session.Threshold; i++ {
+		select {
+		case err := <-readErr:
+			t.Fatalf(
+				"late-peer certificate sync failed: %v",
+				err,
+			)
+
+		case envelope := <-envelopes:
+			if envelope.SessionID != sessionID ||
+				envelope.MessageType !=
+					lqc.RabbitVRFDKGMessageKeysetCertificateV1 ||
+				envelope.PayloadHash != payloadHash {
+				t.Fatal(
+					"late-peer certificate envelope binding mismatch",
+				)
+			}
+
+			if envelope.SenderShareID == 0 ||
+				envelope.SenderShareID >
+					uint64(len(members)) {
+				t.Fatal(
+					"late-peer certificate share id invalid",
+				)
+			}
+
+			if seen[envelope.SenderShareID] {
+				t.Fatal(
+					"late-peer received duplicate certificate share",
+				)
+			}
+			seen[envelope.SenderShareID] = true
+
+			member :=
+				members[envelope.SenderShareID-1]
+
+			if err := lqc.VerifyRabbitVRFDKGEnvelopeV1(
+				session,
+				member,
+				envelope,
+			); err != nil {
+				t.Fatalf(
+					"late-peer certificate signature invalid: %v",
+					err,
+				)
+			}
+
+		case <-time.After(2 * time.Second):
+			t.Fatal(
+				"late peer did not receive all keyset certificate signatures",
+			)
+		}
+	}
+
+	select {
+	case err := <-sendResult:
+		if err != nil {
+			t.Fatalf(
+				"late-peer certificate sender failed: %v",
+				err,
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"late-peer certificate sender did not finish",
+		)
+	}
+
+	if len(seen) != int(session.Threshold) {
+		t.Fatalf(
+			"late peer received %d signatures, want %d",
+			len(seen),
+			session.Threshold,
+		)
+	}
+
+	if seen[4] {
+		t.Fatal(
+			"late peer received signature from offline member",
+		)
+	}
+
 }

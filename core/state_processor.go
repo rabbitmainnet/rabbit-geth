@@ -139,27 +139,15 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 			return nil, fmt.Errorf("Rabbit VRF validated finalization reader unavailable")
 		}
 
-		finalizations, found, err := reader.RabbitVRFValidatedFinalizations(blockHash)
+		finalizations, err := rabbitVRFValidatedFinalizationsForExecution(
+			reader,
+			engine.VerifyHeader,
+			p.chain,
+			header,
+			blockHash,
+		)
 		if err != nil {
 			return nil, err
-		}
-		if !found {
-			if err := engine.VerifyHeader(p.chain, header); err != nil {
-				return nil, fmt.Errorf(
-					"verify Rabbit VRF header before execution: %w",
-					err,
-				)
-			}
-			finalizations, found, err =
-				reader.RabbitVRFValidatedFinalizations(blockHash)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf(
-				"Rabbit VRF validated finalizations unavailable",
-			)
 		}
 		if err := ProcessRabbitVRFFinalizations(
 			evm,

@@ -132,5 +132,9 @@ func (n *rabbitVRFDKGTransport) sendPendingTransportArtifactsV1(
 		return err
 	}
 
-	return n.sendRetainedRemotePolynomialCommitmentsV1(peer)
+	if err := n.sendRetainedRemotePolynomialCommitmentsV1(peer); err != nil {
+		return err
+	}
+
+	return n.sendRetainedKeysetCertificateSignaturesV1(peer)
 }
