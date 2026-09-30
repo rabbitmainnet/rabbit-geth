@@ -405,6 +405,29 @@ func TestConsensusFairnessOneMillionSeatsDeepProducer(t *testing.T) {
 	}
 }
 
+func TestConsensusFairnessV4MillionSelectionRoles(t *testing.T) {
+	const count = 1_000_000
+	seats := make([]WorkSeatV1, count)
+	for i := 1; i <= count; i++ {
+		v := uint64(i)
+		var a common.Address
+		var h common.Hash
+		for j := 0; j < 8; j++ {
+			a[19-j] = byte(v >> (8 * uint(j)))
+			h[31-j] = byte(v >> (8 * uint(j)))
+		}
+		seats[i-1] = WorkSeatV1{Participant: a, TicketHash: h}
+	}
+	ordered, err := DeterministicallyOrderWorkSeatsV1(seats, common.HexToHash("0x1234"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := buildWorkSelectionFromOrderedSeatsV1(ordered, 5, 128)
+	if sel.Producer == nil || len(sel.Fallbacks) != 5 || len(sel.Committee) != 128 {
+		t.Fatalf("roles invalid producer=%v fallbacks=%d committee=%d", sel.Producer != nil, len(sel.Fallbacks), len(sel.Committee))
+	}
+}
+
 func BenchmarkConsensusFairnessOneMillionDeterministicOrdering(b *testing.B) {
 	const count = 1_000_000
 

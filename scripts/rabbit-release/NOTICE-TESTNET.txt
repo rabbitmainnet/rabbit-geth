@@ -35,7 +35,7 @@ Safety:
 - Testnet tokens have no guaranteed monetary value.
 
 Build identity:
-- Genesis SHA-256: dfbc8992c5d9bce8684428ed43ca98494bb1745571c966915f8fec1a44157839
+- Genesis SHA-256: e77f2510ef880dead675cda146fb8dbc31375b17daebc800584b1c29c6ae1fb6
 - RandomX base commit: 7c761cf007c758056dcb6eb438a32f780f81bdbd
 - Rabbit RandomX dataset: 1073741824 bytes (1 GiB)
 

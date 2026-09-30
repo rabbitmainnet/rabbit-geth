@@ -161,14 +161,87 @@ func (l *LQC) workV1EngineLabClaimResolver(
 			return CommitteeParticipationVerificationContextV1{},
 				ErrWorkV1EngineLabParentMissing
 		}
-		parentRuntime, err := l.workV1EngineLabRuntimeAt(
-			chain,
-			targetBlock-1,
-			header.ParentHash,
-		)
+		// Prefer a selection carrier runtime that already covers the target
+		// selection epoch. Committee claims are valid for a bounded window and
+		// may cross a 128-block checkpoint boundary. Reconstructing the exact
+		// target parent runtime here recursively re-enters V4 claim validation
+		// at every older checkpoint during restart. The selection snapshot is
+		// epoch-stable, so a later canonical runtime with the same SelectionEpoch
+		// is equivalent for role selection and claim verification.
+		selectionRuntime, ok, err := l.workV1EngineLabCached(fromHash)
 		if err != nil {
 			return CommitteeParticipationVerificationContextV1{}, err
 		}
+		if !ok || selectionRuntime == nil || selectionRuntime.Work == nil ||
+			selectionRuntime.Work.Number != fromNumber || selectionRuntime.Work.Hash != fromHash {
+			selectionRuntime, err = l.workV1EngineLabRuntimeAt(
+				chain,
+				fromNumber,
+				fromHash,
+			)
+			if err != nil {
+				return CommitteeParticipationVerificationContextV1{}, err
+			}
+		}
+		sourceEpoch, hasSource, err := WorkSelectionSourceEpochV1(
+			targetBlock,
+			selectionRuntime.Work.EpochLength,
+		)
+		if err != nil || !hasSource {
+			return CommitteeParticipationVerificationContextV1{},
+				ErrInvalidCommitteeParticipationVerificationV1
+		}
+		if selectionRuntime.Work.SelectionEpoch != sourceEpoch ||
+			selectionRuntime.Work.SelectionRoot == (common.Hash{}) {
+			targetEpoch, epochErr := WorkEpochForBlockV1(
+				targetBlock,
+				selectionRuntime.Work.EpochLength,
+			)
+			if epochErr != nil || selectionRuntime.Work.EpochLength == 0 ||
+				targetEpoch > ^uint64(0)/selectionRuntime.Work.EpochLength {
+				return CommitteeParticipationVerificationContextV1{},
+					ErrInvalidCommitteeParticipationVerificationV1
+			}
+			epochEnd := targetEpoch * selectionRuntime.Work.EpochLength
+			if epochEnd == 0 {
+				return CommitteeParticipationVerificationContextV1{},
+					ErrWorkV1EngineLabSelectionUnavailable
+			}
+			// The runtime AT epochEnd has already closed targetEpoch and advanced
+			// SelectionEpoch to the next source. Claims for blocks inside targetEpoch
+			// must use the last pre-close runtime, where that epoch's selection is
+			// still canonical and stable.
+			selectionCarrierNumber := epochEnd - 1
+			if selectionCarrierNumber > fromNumber {
+				return CommitteeParticipationVerificationContextV1{},
+					ErrWorkV1EngineLabSelectionUnavailable
+			}
+			selectionCarrierHeader := workV1EngineLabAncestorHeader(
+				chain,
+				fromNumber,
+				fromHash,
+				selectionCarrierNumber,
+			)
+			if selectionCarrierHeader == nil {
+				return CommitteeParticipationVerificationContextV1{},
+					ErrWorkV1EngineLabParentMissing
+			}
+			selectionRuntime, err = l.workV1EngineLabRuntimeAt(
+				chain,
+				selectionCarrierNumber,
+				selectionCarrierHeader.Hash(),
+			)
+			if err != nil {
+				return CommitteeParticipationVerificationContextV1{}, err
+			}
+			if selectionRuntime == nil || selectionRuntime.Work == nil ||
+				selectionRuntime.Work.SelectionEpoch != sourceEpoch ||
+				selectionRuntime.Work.SelectionRoot == (common.Hash{}) {
+				return CommitteeParticipationVerificationContextV1{},
+					ErrWorkV1EngineLabSelectionUnavailable
+			}
+		}
+		parentRuntime := selectionRuntime
 		parentRegistry, err := l.registrySnapshotAt(
 			chain,
 			targetBlock-1,
@@ -192,14 +265,6 @@ func (l *LQC) workV1EngineLabClaimResolver(
 		)
 		if err != nil {
 			return CommitteeParticipationVerificationContextV1{}, err
-		}
-		sourceEpoch, hasSource, err := WorkSelectionSourceEpochV1(
-			targetBlock,
-			parentRuntime.Work.EpochLength,
-		)
-		if err != nil || !hasSource {
-			return CommitteeParticipationVerificationContextV1{},
-				ErrInvalidCommitteeParticipationVerificationV1
 		}
 		datasetNumber, err := WorkDatasetAnchorBlockV1(
 			sourceEpoch,

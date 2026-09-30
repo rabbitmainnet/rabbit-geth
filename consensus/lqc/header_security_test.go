@@ -335,3 +335,31 @@ func TestConsensusFairnessRejectsClockAheadRecovery(t *testing.T) {
 		t.Fatalf("recovery rejected at exact receiver time: %v", err)
 	}
 }
+
+func TestLQCFallbackSlotTimesAreDeterministic(t *testing.T) {
+	engine := &LQC{config: &params.LQCConfig{
+		TargetBlockTimeMs: 10000,
+		FallbackWindowMs:  3000,
+	}}
+
+	const parentTime = uint64(100)
+
+	tests := []struct {
+		pos  int
+		want uint64
+	}{
+		{pos: 0, want: 110},
+		{pos: 1, want: 113},
+		{pos: 2, want: 116},
+	}
+
+	for _, tc := range tests {
+		got, err := engine.minAllowedTimeChecked(parentTime, tc.pos)
+		if err != nil {
+			t.Fatalf("pos=%d: %v", tc.pos, err)
+		}
+		if got != tc.want {
+			t.Fatalf("pos=%d minTime=%d want=%d", tc.pos, got, tc.want)
+		}
+	}
+}

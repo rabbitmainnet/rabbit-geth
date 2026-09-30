@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $RandomXRepository = if ($env:RANDOMX_REPOSITORY) { $env:RANDOMX_REPOSITORY } else { "https://github.com/tevador/RandomX.git" }
 $RandomXCommit = if ($env:RANDOMX_COMMIT) { $env:RANDOMX_COMMIT } else { "7c761cf007c758056dcb6eb438a32f780f81bdbd" }
-$ExpectedGenesis = if ($env:TESTNET_GENESIS_SHA256) { $env:TESTNET_GENESIS_SHA256 } else { "36017cac04b88ccddf81f1f963dafe227071f9963925a2616aa7f41b3f24299b" }
+$ExpectedGenesis = if ($env:TESTNET_GENESIS_SHA256) { $env:TESTNET_GENESIS_SHA256 } else { "e77f2510ef880dead675cda146fb8dbc31375b17daebc800584b1c29c6ae1fb6" }
 $Target = $env:RABBIT_TARGET
 $SourceCommit = (git rev-parse HEAD).Trim()
 
@@ -24,7 +24,7 @@ if ((Get-FileHash networks/rabbit-testnet/genesis.json -Algorithm SHA256).Hash.T
 
 $Work = Join-Path $env:RUNNER_TEMP "rabbit-native-$([guid]::NewGuid())"
 $RandomX = Join-Path $Work "RandomX"
-$Package = "rabbit-core-testnet-v2.4.0-$Target"
+$Package = "rabbit-core-testnet-v2.4.1-$Target"
 $Stage = Join-Path $Work $Package
 $Dist = Join-Path $PWD "dist"
 
@@ -75,7 +75,7 @@ Write-Host "RABBIT_RANDOMX_GCC_PATH=$RandomXForGcc"
 Write-Host "RABBIT_CGO_CFLAGS=$env:CGO_CFLAGS"
 Write-Host "RABBIT_CGO_LDFLAGS=$env:CGO_LDFLAGS"
 
-go test -tags "rabbit_workv1 rabbit_randomx" ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core -count=1
+go test -tags "rabbit_workv1 rabbit_randomx" ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc -count=1
 if ($LASTEXITCODE -ne 0) { throw "Rabbit Windows tests failed" }
 
 go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-node.exe" ./cmd/geth
@@ -119,7 +119,7 @@ Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
 Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
 
 @(
-    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.0"
+    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.1"
     "SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth"
     "SOURCE_COMMIT=$SourceCommit"
     "TARGET=$Target"
@@ -129,7 +129,7 @@ Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
     "GENESIS_SHA256=$ExpectedGenesis"
     "CONSENSUS_FAIRNESS_BLOCK=73000"
     "CONSENSUS_LIVENESS_V3_BLOCK=77000"
-    "CONSENSUS_LIVENESS_V4_BLOCK=136193"
+    "CONSENSUS_LIVENESS_V4_BLOCK=97991"
     "VRF_DKG_PREPARATION_BLOCK=136065"
     "VRF_PROTOCOL_BLOCK=136193"
     "GO_VERSION=go1.25.13"
@@ -138,7 +138,7 @@ Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
     "BUILD_TAGS=rabbit_workv1 rabbit_randomx"
     "WINDOWS_CXX_RUNTIME=STATIC"
 ) | Set-Content -Encoding ASCII "$Stage\BUILD-METADATA.txt"
-Set-Content -Encoding ASCII -NoNewline -Path "$Stage\bootnodes.txt" -Value "enode://867431475238a2da10b62aeb2197d00baa4880f66b14ca97ec99ef51d13143791cf89893a8f41e1fcf1bd0e0f1ef86081d0c28b268953f723e6dd3c18efc8a39@137.184.105.140:30303,enode://b345298a2e97c249e2e7987f7a7b9289d7f0f6bc02b06bba8d7b6c478ae62a293952c8187fb67c30d2ecf60332080b79a8ab3584d4d87d34bf549e6122208b07@162.243.49.184:30303`n"
+Set-Content -Encoding ASCII -NoNewline -Path "$Stage\bootnodes.txt" -Value "enode://2fac5ffabae5e2202666279e2d06f86b6f3f11977fa0818ad795889a55b32e2d4bd651bb5860fc6e88072a01cad23df475a36487cdcd496e97932909600b7791@157.245.245.16:30303,enode://d106f46d3e37a5b8487b1a4b70a11519e77cf8c4532065a3508ebf943e44840867eaff2a4fa8e525e4dea6680d1aef7cb1c2824f3613fc3482b92eb026d357d4@24.144.112.140:30303`n"
 
 @'
 @echo off

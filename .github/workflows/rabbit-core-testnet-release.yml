@@ -7,7 +7,7 @@ env:
   GO_VERSION: "1.25.13"
   RANDOMX_REPOSITORY: https://github.com/tevador/RandomX.git
   RANDOMX_COMMIT: 7c761cf007c758056dcb6eb438a32f780f81bdbd
-  TESTNET_GENESIS_SHA256: 36017cac04b88ccddf81f1f963dafe227071f9963925a2616aa7f41b3f24299b
+  TESTNET_GENESIS_SHA256: e77f2510ef880dead675cda146fb8dbc31375b17daebc800584b1c29c6ae1fb6
 
 jobs:
   native:
@@ -76,7 +76,7 @@ jobs:
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.0-${{ matrix.target }}
+          name: rabbit-core-testnet-v2.4.1-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -90,7 +90,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-v2.4.0-*
+          pattern: rabbit-core-testnet-v2.4.1-*
           path: releases
           merge-multiple: true
 
@@ -108,7 +108,7 @@ jobs:
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.0-release-bundle
+          name: rabbit-core-testnet-v2.4.1-release-bundle
           path: releases/*
           if-no-files-found: error
           retention-days: 30

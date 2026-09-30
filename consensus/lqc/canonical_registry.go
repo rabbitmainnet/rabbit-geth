@@ -530,6 +530,37 @@ func (r *CanonicalRegistry) RestoreWorkSeatLiveness(addresses []common.Address, 
 		participant, exists := r.entries[address]
 		if !exists {
 			participant = CanonicalParticipant{
+				Address:       address,
+				RegisteredAt:  blockNumber,
+				LastHeartbeat: blockNumber,
+				Active:        false,
+			}
+		}
+		participant.MissedTurns = 0
+		participant.JailedUntil = 0
+		r.entries[address] = participant
+	}
+	return nil
+}
+
+func (r *CanonicalRegistry) RestoreWorkSeatLivenessLegacy(addresses []common.Address, blockNumber uint64) error {
+	if r == nil {
+		return ErrParticipantNotActive
+	}
+	seen := make(map[common.Address]struct{}, len(addresses))
+	for _, address := range addresses {
+		if address == (common.Address{}) {
+			return ErrInvalidRegistryAddress
+		}
+		if _, exists := seen[address]; exists {
+			return ErrInvalidRegistryAddress
+		}
+		seen[address] = struct{}{}
+	}
+	for _, address := range addresses {
+		participant, exists := r.entries[address]
+		if !exists {
+			participant = CanonicalParticipant{
 				Address:      address,
 				RegisteredAt: blockNumber,
 				Active:       false,

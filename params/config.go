@@ -629,6 +629,8 @@ type LQCConfig struct {
 	ConsensusFairnessBlock      uint64           `json:"consensusFairnessBlock,omitempty"`
 	ConsensusLivenessV3Block    uint64           `json:"consensusLivenessV3Block,omitempty"`
 	ConsensusLivenessV4Block    uint64           `json:"consensusLivenessV4Block,omitempty"`
+	ConsensusLivenessV5Block    uint64           `json:"consensusLivenessV5Block,omitempty"`
+	ConsensusLivenessV6Block    uint64           `json:"consensusLivenessV6Block,omitempty"`
 	VRFProtocolBlock            uint64           `json:"vrfProtocolBlock,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
@@ -692,6 +694,20 @@ func (c *LQCConfig) consensusLivenessV4ForkBlock() *big.Int {
 	return new(big.Int).SetUint64(c.ConsensusLivenessV4Block)
 }
 
+func (c *LQCConfig) consensusLivenessV5ForkBlock() *big.Int {
+	if c == nil || c.ConsensusLivenessV5Block == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.ConsensusLivenessV5Block)
+}
+
+func (c *LQCConfig) consensusLivenessV6ForkBlock() *big.Int {
+	if c == nil || c.ConsensusLivenessV6Block == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.ConsensusLivenessV6Block)
+}
+
 func (c *LQCConfig) vrfProtocolForkBlock() *big.Int {
 	if c == nil || c.VRFProtocolBlock == 0 {
 		return nil
@@ -709,9 +725,7 @@ func (c *LQCConfig) vrfDKGPreparationForkBlock() *big.Int {
 		c.VRFProtocolBlock <= c.EpochLength {
 		return nil
 	}
-	return new(big.Int).SetUint64(
-		c.VRFProtocolBlock - c.EpochLength,
-	)
+	return new(big.Int).SetUint64(c.VRFProtocolBlock - c.EpochLength)
 }
 
 func (c *LQCConfig) validateConsensusLivenessV3() error {
@@ -729,10 +743,36 @@ func (c *LQCConfig) validateConsensusLivenessV4() error {
 		return nil
 	}
 	if c.ConsensusLivenessV3Block == 0 {
-		return errors.New("consensusLivenessV4Block requires consensusLivenessV3Block")
+		return fmt.Errorf("consensusLivenessV4Block requires consensusLivenessV3Block")
 	}
 	if c.ConsensusLivenessV4Block < c.ConsensusLivenessV3Block {
 		return fmt.Errorf("consensusLivenessV4Block %d precedes consensusLivenessV3Block %d", c.ConsensusLivenessV4Block, c.ConsensusLivenessV3Block)
+	}
+	return nil
+}
+
+func (c *LQCConfig) validateConsensusLivenessV5() error {
+	if c == nil || c.ConsensusLivenessV5Block == 0 {
+		return nil
+	}
+	if c.ConsensusLivenessV4Block == 0 {
+		return fmt.Errorf("consensusLivenessV5Block requires consensusLivenessV4Block")
+	}
+	if c.ConsensusLivenessV5Block < c.ConsensusLivenessV4Block {
+		return fmt.Errorf("consensusLivenessV5Block %d precedes consensusLivenessV4Block %d", c.ConsensusLivenessV5Block, c.ConsensusLivenessV4Block)
+	}
+	return nil
+}
+
+func (c *LQCConfig) validateConsensusLivenessV6() error {
+	if c == nil || c.ConsensusLivenessV6Block == 0 {
+		return nil
+	}
+	if c.ConsensusLivenessV5Block == 0 {
+		return fmt.Errorf("consensusLivenessV6Block requires consensusLivenessV5Block")
+	}
+	if c.ConsensusLivenessV6Block < c.ConsensusLivenessV5Block {
+		return fmt.Errorf("consensusLivenessV6Block %d precedes consensusLivenessV5Block %d", c.ConsensusLivenessV6Block, c.ConsensusLivenessV5Block)
 	}
 	return nil
 }
@@ -751,7 +791,6 @@ func (c *LQCConfig) validateRabbitVRFProtocol() error {
 			c.EpochLength,
 		)
 	}
-
 	targetEpoch := ((c.VRFProtocolBlock - 1) / c.EpochLength) + 1
 	if targetEpoch < 4 {
 		return fmt.Errorf(
@@ -1102,8 +1141,19 @@ func (c *ChainConfig) IsConsensusLivenessV3(num *big.Int) bool {
 	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusLivenessV3ForkBlock(), num)
 }
 
+// IsConsensusLivenessV4 reports whether full-queue deterministic failover is active.
 func (c *ChainConfig) IsConsensusLivenessV4(num *big.Int) bool {
 	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusLivenessV4ForkBlock(), num)
+}
+
+// IsConsensusLivenessV5 reports whether the Rabbit Testnet V5 fairness/liveness rules are active.
+func (c *ChainConfig) IsConsensusLivenessV5(num *big.Int) bool {
+	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusLivenessV5ForkBlock(), num)
+}
+
+// IsConsensusLivenessV6 reports whether the Rabbit Testnet V6 recovery-priority rules are active.
+func (c *ChainConfig) IsConsensusLivenessV6(num *big.Int) bool {
+	return c != nil && c.LQC != nil && isBlockForked(c.LQC.consensusLivenessV6ForkBlock(), num)
 }
 
 // IsRabbitVRF reports whether the Rabbit VRF protocol fork is active.
@@ -1113,14 +1163,10 @@ func (c *ChainConfig) IsRabbitVRF(num *big.Int) bool {
 
 // IsRabbitVRFDKGPreparation reports whether deterministic Rabbit VRF DKG
 // preparation may run. This begins one Work epoch before VRFProtocolBlock.
-// It does not mean the Rabbit VRF protocol itself is active.
 func (c *ChainConfig) IsRabbitVRFDKGPreparation(num *big.Int) bool {
 	return c != nil &&
 		c.LQC != nil &&
-		isBlockForked(
-			c.LQC.vrfDKGPreparationForkBlock(),
-			num,
-		)
+		isBlockForked(c.LQC.vrfDKGPreparationForkBlock(), num)
 }
 
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
@@ -1326,7 +1372,13 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		return fmt.Errorf("invalid LQC consensus configuration: %v", err)
 	}
 	if err := c.LQC.validateConsensusLivenessV4(); err != nil {
-		return fmt.Errorf("invalid LQC consensus configuration: %v", err)
+		return err
+	}
+	if err := c.LQC.validateConsensusLivenessV5(); err != nil {
+		return err
+	}
+	if err := c.LQC.validateConsensusLivenessV6(); err != nil {
+		return err
 	}
 	if err := c.LQC.validateRabbitVRFProtocol(); err != nil {
 		return fmt.Errorf("invalid LQC Rabbit VRF configuration: %v", err)
@@ -1472,11 +1524,22 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkBlockIncompatible(storedLivenessV3Fork, newLivenessV3Fork, headNumber) {
 		return newBlockCompatError("LQC consensus liveness V3 fork block", storedLivenessV3Fork, newLivenessV3Fork)
 	}
-
 	storedLivenessV4Fork := c.LQC.consensusLivenessV4ForkBlock()
 	newLivenessV4Fork := newcfg.LQC.consensusLivenessV4ForkBlock()
 	if isForkBlockIncompatible(storedLivenessV4Fork, newLivenessV4Fork, headNumber) {
 		return newBlockCompatError("LQC consensus liveness V4 fork block", storedLivenessV4Fork, newLivenessV4Fork)
+	}
+
+	storedLivenessV5Fork := c.LQC.consensusLivenessV5ForkBlock()
+	newLivenessV5Fork := newcfg.LQC.consensusLivenessV5ForkBlock()
+	if isForkBlockIncompatible(storedLivenessV5Fork, newLivenessV5Fork, headNumber) {
+		return newBlockCompatError("LQC consensus liveness V5 fork block", storedLivenessV5Fork, newLivenessV5Fork)
+	}
+
+	storedLivenessV6Fork := c.LQC.consensusLivenessV6ForkBlock()
+	newLivenessV6Fork := newcfg.LQC.consensusLivenessV6ForkBlock()
+	if isForkBlockIncompatible(storedLivenessV6Fork, newLivenessV6Fork, headNumber) {
+		return newBlockCompatError("LQC consensus liveness V6 fork block", storedLivenessV6Fork, newLivenessV6Fork)
 	}
 
 	storedVRFFork := c.LQC.vrfProtocolForkBlock()

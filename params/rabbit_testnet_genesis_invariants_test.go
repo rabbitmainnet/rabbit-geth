@@ -72,9 +72,11 @@ func TestRabbitTestnetConsensusHardeningScope(t *testing.T) {
 		testnet.Config.LQC.ConsensusStabilizationBlock != 50_500 ||
 		testnet.Config.LQC.ConsensusFairnessBlock != 73_000 ||
 		testnet.Config.LQC.ConsensusLivenessV3Block != 77_000 ||
-		testnet.Config.LQC.ConsensusLivenessV4Block != 136_193 ||
+		testnet.Config.LQC.ConsensusLivenessV4Block != 97_991 ||
+		testnet.Config.LQC.ConsensusLivenessV5Block != 115_000 ||
+		testnet.Config.LQC.ConsensusLivenessV6Block != 115_022 ||
 		testnet.Config.LQC.VRFProtocolBlock != 136_193 {
-		t.Fatalf("Rabbit Testnet consensus forks = %v, want hardening=50000 stabilization=50500 fairness=73000 livenessV3=77000 livenessV4=136193 vrf=136193",
+		t.Fatalf("Rabbit Testnet consensus forks = %v, want hardening=50000 stabilization=50500 fairness=73000 livenessV3=77000 livenessV4=97991 livenessV5=115000 livenessV6=115022 vrf=136193",
 			testnet.Config.LQC)
 	}
 

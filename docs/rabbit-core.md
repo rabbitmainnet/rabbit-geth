@@ -70,7 +70,7 @@ Run `rabbit-core --check` and verify both the outer archive checksum and interna
 
 - Chain ID and Network ID: `9280`
 - Native testnet coin: `tRAB`
-- Genesis SHA-256: `ab66857a5b28da355ff270ced29176ac151e70e8281dbad8fc8d24a2192fc71b`
+- Genesis SHA-256: `e77f2510ef880dead675cda146fb8dbc31375b17daebc800584b1c29c6ae1fb6`
 - RandomX base commit: `7c761cf007c758056dcb6eb438a32f780f81bdbd`
 - RandomX dataset: `1073741824` bytes (1 GiB)
 

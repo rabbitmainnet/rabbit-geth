@@ -68,6 +68,7 @@ func TestRestoreWorkSeatLivenessRecreatesRecoveryEntries(t *testing.T) {
 	if !ok ||
 		gotMissing.Address != missing ||
 		gotMissing.RegisteredAt != 100 ||
+		gotMissing.LastHeartbeat != 100 ||
 		gotMissing.Active ||
 		gotMissing.MissedTurns != 0 ||
 		gotMissing.JailedUntil != 0 {
@@ -243,5 +244,33 @@ func TestCommitteeLivenessExcludesPenalizedAndMissingSeats(t *testing.T) {
 	if len(filtered.Committee) != 1 ||
 		filtered.Committee[0].Participant != ready {
 		t.Fatalf("unexpected paid committee: %+v", filtered.Committee)
+	}
+}
+
+func TestCommitteeLivenessKeepsStaleNonJailedSeat(t *testing.T) {
+	stale := common.HexToAddress("0x9000000000000000000000000000000000000009")
+
+	registry := NewCanonicalRegistry()
+	registry.entries[stale] = CanonicalParticipant{
+		Address:       stale,
+		LastHeartbeat: 1,
+		JailedUntil:   0,
+	}
+
+	selection := WorkSelectionV1{
+		Committee: []WorkSeatV1{
+			{Participant: stale},
+		},
+	}
+
+	filtered := workV1EngineLabFilterCommitteeByLiveness(
+		selection,
+		registry,
+		100,
+	)
+
+	if len(filtered.Committee) != 1 ||
+		filtered.Committee[0].Participant != stale {
+		t.Fatalf("stale non-jailed committee seat was removed: %+v", filtered.Committee)
 	}
 }

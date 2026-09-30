@@ -213,7 +213,11 @@ func (n *lqcWorkV1Transport) currentContextRaw() (lqcWorkV1Context, error) {
 
 	ctx, err := n.context()
 	if err != nil {
-		return lqcWorkV1Context{}, err
+		return lqcWorkV1Context{}, fmt.Errorf(
+			"%w: context provider: %v",
+			errLQCWorkV1Context,
+			err,
+		)
 	}
 	if ctx.Epoch == 0 ||
 		ctx.DatasetAnchor == (common.Hash{}) ||
@@ -238,7 +242,11 @@ func (n *lqcWorkV1Transport) currentContext() (lqcWorkV1Context, error) {
 	}
 	if n.reconcile != nil {
 		if err := n.reconcile(ctx.Epoch); err != nil {
-			return lqcWorkV1Context{}, err
+			return lqcWorkV1Context{}, fmt.Errorf(
+				"%w: canonical reconcile: %v",
+				errLQCWorkV1Context,
+				err,
+			)
 		}
 	}
 	return ctx, nil

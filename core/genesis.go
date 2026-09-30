@@ -427,6 +427,8 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 			return nil, common.Hash{}, nil, &GenesisMismatchError{ghash, hash}
 		}
 	}
+	MigrateRabbitTestnetStoredChainConfig(db, ghash, storedCfg)
+
 	// Check config compatibility and write the config. Compatibility errors
 	// are returned to the caller unless we're already at block zero.
 	head := rawdb.ReadHeadHeader(db)

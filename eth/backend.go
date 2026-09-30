@@ -143,6 +143,18 @@ func isFrozenRabbitPublicNetwork(
 		isFrozenRabbitTestnet(chainConfig, genesis)
 }
 
+func migrateRabbitTestnetLivenessV4Config(
+	chainDb ethdb.Database,
+	genesisHash common.Hash,
+	chainConfig *params.ChainConfig,
+) bool {
+	return core.MigrateRabbitTestnetStoredChainConfig(
+		chainDb,
+		genesisHash,
+		chainConfig,
+	)
+}
+
 func validateLQCWorkTicketLabTransport(config *ethconfig.Config, chainConfig *params.ChainConfig, genesis *types.Block) error {
 	if config == nil || !config.WorkTicketLabTransport {
 		return nil
@@ -311,6 +323,13 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	migrateRabbitTestnetLivenessV4Config(
+		chainDb,
+		genesisHash,
+		chainConfig,
+	)
+
 	if enforceLQCFullSync(config, chainConfig) {
 		log.Info(
 			"Rabbit LQC forced full sync",

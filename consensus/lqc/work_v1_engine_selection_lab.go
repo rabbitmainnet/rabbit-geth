@@ -60,15 +60,10 @@ func (l *LQC) workV1EngineLabCommitteeSize(
 	)
 }
 
-// workV1EngineLabRoleCounts preserves the historical committee-first role
-// budget before Liveness V4. Once reserveBoundedFallback is active, a configured
-// fallback can no longer be squeezed out completely by committee capacity.
-//
-// Liveness V3 authorizes only the scheduled producer and explicit fallback
-// slots. Reserving exactly one fallback in the saturated small-N case restores
-// a normal deterministic takeover path while keeping roles disjoint and
-// preserving as much committee capacity as possible. Additional fallback slots
-// continue to use only capacity left after the committee reservation.
+// workV1EngineLabRoleCounts reserves the requested committee capacity before
+// assigning the configured fallback prefix. The whole deterministic Ordered
+// queue remains eligible for delayed production through IsAuthorAllowed, so
+// shortening the named fallback slice does not reduce LAB liveness.
 func workV1EngineLabRoleCounts(
 	seatCount uint64,
 	fallbackCount uint64,
@@ -172,6 +167,114 @@ func workV1EngineLabSeatAvailableAt(
 		rules.HeartbeatGrace,
 	)
 	return ok && blockNumber <= availableUntil
+}
+
+func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4(
+	registry *CanonicalRegistry,
+	ordered []WorkSeatV1,
+	blockNumber uint64,
+) ([]WorkSeatV1, error) {
+	if registry == nil {
+		return nil, ErrParticipantNotActive
+	}
+
+	// The activation block is a deterministic liveness reset boundary.
+	// Keep the full canonical WorkSeat order for this one block so
+	// RestoreWorkSeatLiveness can recreate missing registry entries and
+	// clear legacy missed-turn/jail state without deleting WorkSeats.
+	if l != nil &&
+		l.config != nil &&
+		((l.config.ConsensusLivenessV4Block != 0 &&
+			blockNumber == l.config.ConsensusLivenessV4Block) ||
+			(l.config.ConsensusLivenessV5Block != 0 &&
+				blockNumber == l.config.ConsensusLivenessV5Block)) {
+		return append([]WorkSeatV1(nil), ordered...), nil
+	}
+
+	// Fairness invariant:
+	// heartbeat age must never change normal deterministic WorkSeat priority.
+	// A participant that was not selected recently did not necessarily miss
+	// an assigned production opportunity.
+	final := make([]WorkSeatV1, 0, len(ordered))
+
+	for _, seat := range ordered {
+		participant, exists := registry.Participant(seat.Participant)
+
+		// Missing or never-live identities cannot author yet.
+		if !exists || participant.LastHeartbeat == 0 {
+			continue
+		}
+
+		// A real active jail remains a hard authorization exclusion.
+		if participant.JailedUntil > blockNumber {
+			continue
+		}
+
+		// Preserve the deterministic selection order exactly.
+		final = append(final, seat)
+	}
+
+	return final, nil
+}
+
+func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4Legacy(
+	registry *CanonicalRegistry,
+	ordered []WorkSeatV1,
+	blockNumber uint64,
+) ([]WorkSeatV1, error) {
+	if registry == nil {
+		return nil, ErrParticipantNotActive
+	}
+
+	// The activation block is a deterministic liveness reset boundary.
+	// Keep the full canonical WorkSeat order for this one block so
+	// RestoreWorkSeatLiveness can recreate missing registry entries and
+	// clear legacy missed-turn/jail state without deleting WorkSeats.
+	if l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV4Block != 0 &&
+		blockNumber == l.config.ConsensusLivenessV4Block {
+		return append([]WorkSeatV1(nil), ordered...), nil
+	}
+
+	rules := l.registryRules()
+	ready := make([]WorkSeatV1, 0, len(ordered))
+	recovery := make([]WorkSeatV1, 0, len(ordered))
+
+	for _, seat := range ordered {
+		participant, exists := registry.Participant(seat.Participant)
+
+		// Missing/never-live registry identities cannot author a normal V4 block.
+		// Persistent WorkSeat ownership is not deleted.
+		if !exists || participant.LastHeartbeat == 0 {
+			continue
+		}
+
+		// Active jail is a hard authorization exclusion. V4 authorizes the
+		// whole Ordered queue, so jailed seats must not be present in Ordered.
+		if participant.JailedUntil > blockNumber {
+			continue
+		}
+
+		availableUntil, ok := checkedRegistryBlockAdd(
+			participant.LastHeartbeat,
+			rules.HeartbeatWindow,
+			rules.HeartbeatGrace,
+		)
+		if ok && blockNumber <= availableUntil {
+			ready = append(ready, seat)
+			continue
+		}
+
+		// A stale but non-jailed persistent seat remains a delayed recovery
+		// candidate. Successful production refreshes LastHeartbeat.
+		recovery = append(recovery, seat)
+	}
+
+	final := make([]WorkSeatV1, 0, len(ready)+len(recovery))
+	final = append(final, ready...)
+	final = append(final, recovery...)
+	return final, nil
 }
 
 func (l *LQC) workV1EngineLabSelectRolesV3(
@@ -372,11 +475,35 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		uint64(len(eligibleSeats)),
 		fallbackCount,
 		committeeSize,
-		l.consensusLivenessV4Active(blockNumber),
+		l.vrfForkLivenessActive(blockNumber),
 	)
 
 	var orderedSeats []WorkSeatV1
-	if l.consensusLivenessV3Active(blockNumber) {
+	if l.consensusLivenessV5Active(blockNumber) {
+		orderedSeats, err = DeterministicallyOrderWorkSeatsV1(
+			eligibleSeats,
+			selectionSeed,
+		)
+		if err == nil {
+			orderedSeats, err = l.workV1EngineLabOrderSeatsByLivenessV4(
+				registry,
+				orderedSeats,
+				blockNumber,
+			)
+		}
+	} else if l.consensusLivenessV4Active(blockNumber) {
+		orderedSeats, err = DeterministicallyOrderWorkSeatsV1(
+			eligibleSeats,
+			selectionSeed,
+		)
+		if err == nil {
+			orderedSeats, err = l.workV1EngineLabOrderSeatsByLivenessV4Legacy(
+				registry,
+				orderedSeats,
+				blockNumber,
+			)
+		}
+	} else if l.consensusLivenessV3Active(blockNumber) {
 		roleLimit := uint64(1) + fallbackCount + committeeSize
 		orderedSeats, err = l.workV1EngineLabSelectRolesV3(
 			registry,
@@ -406,7 +533,15 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		fallbackCount,
 		committeeSize,
 	)
-	if l.consensusLivenessV3Active(blockNumber) {
+	if l.consensusLivenessV5Active(blockNumber) {
+		// V5 fairness: heartbeat age must not remove or demote a selected
+		// committee WorkSeat. Only an active jail excludes committee duty.
+		workSelection = workV1EngineLabFilterCommitteeByLiveness(
+			workSelection,
+			registry,
+			blockNumber,
+		)
+	} else if l.consensusLivenessV3Active(blockNumber) {
 		workSelection = workV1EngineLabFilterCommitteeByAvailabilityV3(
 			workSelection,
 			registry,
@@ -463,21 +598,31 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 			ErrWorkV1EngineLabSelectionUnavailable
 	}
 
-	// Block 1 and post-timeout recovery install a sequence-zero activation
-	// anchor. Keep that anchor's temporary production lease until its own
-	// admission becomes a canonical persistent seat. Otherwise stale offline
-	// seats could stop the recovering chain before the N+2 admission delay ends.
-	lease, err := workV2EngineLabActivationLease(
-		parentRegistry,
-		header,
-		parent.Work.SelectionSeats,
-	)
-	if err != nil {
-		return HybridSelection{}, false, err
-	}
-	leaseActive := lease.Producer != nil
-	if leaseActive && !l.consensusLivenessV4Active(header.Number.Uint64()) {
-		return lease, false, nil
+	var lease HybridSelection
+	var leaseActive bool
+
+	if l.vrfForkLivenessActive(header.Number.Uint64()) {
+		lease, err = workV2EngineLabActivationLease(
+			parentRegistry,
+			header,
+			parent.Work.SelectionSeats,
+		)
+		if err != nil {
+			return HybridSelection{}, false, err
+		}
+		leaseActive = lease.Producer != nil
+	} else if !l.consensusLivenessV6Active(header.Number.Uint64()) {
+		lease, err = workV2EngineLabActivationLease(
+			parentRegistry,
+			header,
+			parent.Work.SelectionSeats,
+		)
+		if err != nil {
+			return HybridSelection{}, false, err
+		}
+		if lease.Producer != nil {
+			return lease, false, nil
+		}
 	}
 
 	datasetNumber, err := WorkDatasetAnchorBlockV1(
@@ -529,7 +674,8 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 	if err != nil {
 		return HybridSelection{}, false, err
 	}
-	if leaseActive {
+
+	if l.vrfForkLivenessActive(header.Number.Uint64()) && leaseActive {
 		if active {
 			lease = workV2EngineLabBoundActivationLeaseFallbacks(
 				lease,
@@ -537,19 +683,28 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 			)
 			return lease, false, nil
 		}
-
-		// With no persistent WorkSeats yet, Liveness V4 must still keep the
-		// activation path bounded-live. Use only sequence-zero activation
-		// identities as explicit fallbacks; ordinary registered identities
-		// remain ineligible and historical pre-V4 behavior stays unchanged.
 		selection, err = l.workV1EngineLabActivationFallbackAt(
 			parentRegistry,
 			header,
 		)
 		return selection, false, err
 	}
+
 	if active {
 		return selection, true, nil
+	}
+	if l.consensusLivenessV6Active(header.Number.Uint64()) {
+		lease, err := workV2EngineLabActivationLease(
+			parentRegistry,
+			header,
+			parent.Work.SelectionSeats,
+		)
+		if err != nil {
+			return HybridSelection{}, false, err
+		}
+		if lease.Producer != nil {
+			return lease, false, nil
+		}
 	}
 	selection, err = l.workV1EngineLabActivationFallbackAt(
 		parentRegistry,
@@ -558,12 +713,6 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 	return selection, false, err
 }
 
-// workV2EngineLabBoundActivationLeaseFallbacks keeps the temporary activation
-// lease as queue position zero while borrowing only the bounded producer
-// takeover budget from the canonical WorkSeat selection. The normal WorkSeat
-// producer becomes the first lease fallback, followed by as many normal
-// WorkSeat fallbacks as fit inside that same budget. Committee/unassigned seats
-// never become producers through this path.
 func workV2EngineLabBoundActivationLeaseFallbacks(
 	lease HybridSelection,
 	work HybridSelection,
@@ -672,9 +821,6 @@ func workV1EngineLabActivationSelection(
 	return selection, nil
 }
 
-// workV1EngineLabActivationFallback preserves the historical one-producer
-// activation shape. Liveness V4 opts into bounded sequence-zero fallbacks only
-// through workV1EngineLabActivationFallbackAt.
 func workV1EngineLabActivationFallback(
 	parent *RegistrySnapshot,
 	header *types.Header,
@@ -687,7 +833,7 @@ func (l *LQC) workV1EngineLabActivationFallbackAt(
 	header *types.Header,
 ) (HybridSelection, error) {
 	if l == nil || header == nil || header.Number == nil ||
-		!l.consensusLivenessV4Active(header.Number.Uint64()) {
+		!l.vrfForkLivenessActive(header.Number.Uint64()) {
 		return workV1EngineLabActivationFallback(parent, header)
 	}
 	return workV1EngineLabActivationSelection(
@@ -764,18 +910,33 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 
 	if blockNumber == l.config.ConsensusHardeningBlock ||
 		l.isConsensusStabilizationBlock(blockNumber) ||
-		l.isConsensusFairnessBlock(blockNumber) {
+		l.isConsensusFairnessBlock(blockNumber) ||
+		(l.config.ConsensusLivenessV4Block != 0 &&
+			blockNumber == l.config.ConsensusLivenessV4Block) ||
+		(l.config.ConsensusLivenessV5Block != 0 &&
+			blockNumber == l.config.ConsensusLivenessV5Block) {
 		addresses := make([]common.Address, 0, len(selection.Ordered))
 		for _, seat := range selection.Ordered {
 			addresses = append(addresses, seat.Address)
 		}
-		if err := registry.RestoreWorkSeatLiveness(
-			addresses,
-			blockNumber,
-		); err != nil {
+		var err error
+		if l.consensusLivenessV5Active(blockNumber) &&
+			l.config.ConsensusLivenessV5Block != 0 &&
+			blockNumber == l.config.ConsensusLivenessV5Block {
+			err = registry.RestoreWorkSeatLiveness(
+				addresses,
+				blockNumber,
+			)
+		} else {
+			err = registry.RestoreWorkSeatLivenessLegacy(
+				addresses,
+				blockNumber,
+			)
+		}
+		if err != nil {
 			return err
 		}
-	} else if !l.consensusFairnessActive(blockNumber) {
+	} else if l.consensusLivenessV4Active(blockNumber) || !l.consensusFairnessActive(blockNumber) {
 		for index := 0; index < queuePos; index++ {
 			if err := registry.ApplyWorkSeatMissedTurn(
 				selection.Ordered[index].Address,
@@ -866,6 +1027,18 @@ func (l *LQC) prepareCanonicalRegistryExtraMaybeWorkV1Lab(
 	header *types.Header,
 ) (HybridSelection, error) {
 	if l.openActivationForHeader(chain, header) {
+		// Header V4 registry roots include WorkSeat liveness transitions.
+		// Rebuild the parent Work runtime first so its lockstep registry
+		// snapshot is cached before recovery asks for the parent registry.
+		if l.consensusLivenessV3Active(header.Number.Uint64()) {
+			if _, err := l.workV1EngineLabRuntimeAt(
+				chain,
+				header.Number.Uint64()-1,
+				header.ParentHash,
+			); err != nil {
+				return HybridSelection{}, err
+			}
+		}
 		selection, err := l.prepareCanonicalRegistryExtra(chain, header)
 		if err != nil {
 			return HybridSelection{}, err

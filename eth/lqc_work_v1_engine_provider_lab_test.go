@@ -535,3 +535,52 @@ func TestWorkV1EnginePoolProviderLabCanonicalReplayLookup(
 		t.Fatal("ticket from another commit epoch was accepted")
 	}
 }
+
+func TestWorkV1EnginePoolHeaderTicketsLabReadsV4AndV3(
+	t *testing.T,
+) {
+	candidate := workV1EngineProviderCandidateLab(
+		764,
+		1,
+		"v4-canonical-reconcile",
+	)
+	registryRoot := common.HexToHash("0x1111")
+	workRoot := common.HexToHash("0x2222")
+	claimRoot := common.HexToHash("0x3333")
+
+	v4Extra, err := lqc.EncodeLQCHeaderExtraV4(
+		97990,
+		registryRoot,
+		workRoot,
+		claimRoot,
+		nil,
+		[]lqc.SignedRandomXWorkTicketV1{candidate.Signed},
+		nil,
+		lqc.MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v4Tickets, ok := workV1EnginePoolHeaderTicketsLab(v4Extra)
+	if !ok || len(v4Tickets) != 1 ||
+		!workV1EnginePoolSignedEqualLab(v4Tickets[0], candidate.Signed) {
+		t.Fatalf("V4 canonical tickets not recovered: ok=%v len=%d", ok, len(v4Tickets))
+	}
+
+	v3Extra, err := lqc.EncodeLQCHeaderExtraV3(
+		76999,
+		registryRoot,
+		workRoot,
+		nil,
+		[]lqc.SignedRandomXWorkTicketV1{candidate.Signed},
+		lqc.MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v3Tickets, ok := workV1EnginePoolHeaderTicketsLab(v3Extra)
+	if !ok || len(v3Tickets) != 1 ||
+		!workV1EnginePoolSignedEqualLab(v3Tickets[0], candidate.Signed) {
+		t.Fatalf("V3 canonical tickets not recovered: ok=%v len=%d", ok, len(v3Tickets))
+	}
+}

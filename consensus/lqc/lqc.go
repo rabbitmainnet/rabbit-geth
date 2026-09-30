@@ -146,7 +146,34 @@ func (l *LQC) consensusLivenessV4Active(blockNumber uint64) bool {
 		blockNumber >= l.config.ConsensusLivenessV4Block
 }
 
+func (l *LQC) consensusLivenessV5Active(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV5Block != 0 &&
+		blockNumber >= l.config.ConsensusLivenessV5Block
+}
+
+func (l *LQC) consensusLivenessV6Active(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV6Block != 0 &&
+		blockNumber >= l.config.ConsensusLivenessV6Block
+}
+
+func (l *LQC) vrfForkLivenessActive(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.VRFProtocolBlock != 0 &&
+		blockNumber >= l.config.VRFProtocolBlock
+}
+
 func (l *LQC) isAuthorAllowedAt(blockNumber uint64, selection HybridSelection, author common.Address) (bool, int) {
+	if l.consensusLivenessV5Active(blockNumber) {
+		return IsAuthorAllowedBounded(selection, author)
+	}
+	if l.consensusLivenessV4Active(blockNumber) {
+		return IsAuthorAllowed(selection, author)
+	}
 	if l.consensusLivenessV3Active(blockNumber) {
 		return IsAuthorAllowedBounded(selection, author)
 	}
@@ -280,6 +307,7 @@ func (l *LQC) openActivationForHeader(chain consensus.ChainHeaderReader, header 
 	if header.Number.Uint64() == 1 {
 		return l == nil || l.config == nil || len(l.config.BootstrapParticipants) == 0
 	}
+
 	if chain == nil {
 		return false
 	}

@@ -610,7 +610,7 @@ func TestWorkSeatLivenessV2PrepareVerifyRegistryRootTransition(t *testing.T) {
 	}
 }
 
-func TestLivenessV4EpochBoundaryActivationLeaseKeepsBoundedFallback(t *testing.T) {
+func TestVRFForkLivenessEpochBoundaryActivationLeaseKeepsBoundedFallback(t *testing.T) {
 	chainID := big.NewInt(9280)
 	anchor := common.HexToAddress("0x00000000000000000000000000000000000000f0")
 	seatAddresses := []common.Address{
@@ -625,7 +625,7 @@ func TestLivenessV4EpochBoundaryActivationLeaseKeepsBoundedFallback(t *testing.T
 	config.CommitteeSize = 4
 	config.FallbackCount = 5
 	config.ConsensusLivenessV3Block = 5
-	config.ConsensusLivenessV4Block = 25
+	config.VRFProtocolBlock = 25
 	engine := New(config, rawdb.NewMemoryDatabase())
 
 	genesis := &types.Header{
@@ -777,7 +777,7 @@ func TestLivenessV4EpochBoundaryActivationLeaseKeepsBoundedFallback(t *testing.T
 	}
 }
 
-func TestPreLivenessV4ActivationLeaseKeepsHistoricalZeroFallbackShape(t *testing.T) {
+func TestPreVRFForkLivenessActivationLeaseKeepsHistoricalZeroFallbackShape(t *testing.T) {
 	anchor := common.HexToAddress("0x00000000000000000000000000000000000000f0")
 	seat := common.HexToAddress("0x00000000000000000000000000000000000000a1")
 	registry := NewCanonicalRegistry()
@@ -813,7 +813,7 @@ func TestPreLivenessV4ActivationLeaseKeepsHistoricalZeroFallbackShape(t *testing
 	}
 }
 
-func TestLivenessV4ZeroWorkActivationFallbackIsBounded(t *testing.T) {
+func TestVRFForkLivenessZeroWorkActivationFallbackIsBounded(t *testing.T) {
 	chainID := big.NewInt(9280)
 	anchors := []common.Address{
 		common.HexToAddress("0x00000000000000000000000000000000000000a1"),
@@ -826,7 +826,7 @@ func TestLivenessV4ZeroWorkActivationFallbackIsBounded(t *testing.T) {
 	config.EpochLength = 8
 	config.FallbackCount = 5
 	config.ConsensusLivenessV3Block = 5
-	config.ConsensusLivenessV4Block = 25
+	config.VRFProtocolBlock = 25
 	engine := New(config, rawdb.NewMemoryDatabase())
 
 	genesis := &types.Header{
@@ -937,7 +937,7 @@ func TestLivenessV4ZeroWorkActivationFallbackIsBounded(t *testing.T) {
 	}
 }
 
-func TestLivenessV4ZeroWorkActivationStillRejectsRegisteredSybilIdentities(t *testing.T) {
+func TestVRFForkLivenessZeroWorkActivationStillRejectsRegisteredSybilIdentities(t *testing.T) {
 	anchors := []common.Address{
 		common.HexToAddress("0x00000000000000000000000000000000000000a1"),
 		common.HexToAddress("0x00000000000000000000000000000000000000b2"),

@@ -829,6 +829,20 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 				if err != nil {
 					return nil, err
 				}
+				// workV1EngineLabRestoreCheckpoint returns true only after the
+				// checkpoint runtime, canonical header, V4 claim ledger (when
+				// active), and persisted registry snapshot have all been
+				// validated and restored. Treat that checkpoint as the replay
+				// anchor immediately. Re-running the generic cache gate here can
+				// cause startup to walk every older 128-block checkpoint even
+				// though each checkpoint was already restored successfully.
+				if !ok || cached == nil || cached.Work == nil ||
+					cached.Work.Number != currentNumber ||
+					cached.Work.Hash != currentHash {
+					return nil, ErrWorkV1EngineLabUnavailable
+				}
+				runtime = cached
+				break
 			}
 		}
 		if ok && cached.Work.Number == currentNumber {
@@ -977,22 +991,55 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 				if err != nil {
 					return nil, err
 				}
-				v4ctx, err := l.workV1EngineLabV4Context(
-					chain,
-					ctx,
+				// Historical runtime reconstruction is not fresh block validation.
+				// This header is already part of the canonical chain, so rebuilding
+				// the V4 side states must not recursively re-resolve old committee
+				// selections across every 128-block boundary. Re-verify the Work
+				// transition, replay the claim ledger deterministically from the
+				// committed groups, and require both committed roots to match.
+				if envelopeV4.BlockNumber != current {
+					return nil, ErrLQCHeaderBlockMismatchV4
+				}
+				v3Extra, err := EncodeLQCHeaderExtraV3(
+					envelopeV4.BlockNumber,
+					envelopeV4.RegistryRoot,
+					envelopeV4.WorkStateRoot,
+					envelopeV4.RegistryOperations,
+					envelopeV4.WorkTickets,
+					MaxWorkTicketsPerBlockV1,
+				)
+				if err != nil {
+					return nil, err
+				}
+				_, next, err :=
+					ValidateAndApplyLQCHeaderExtraV3WithCanonicalWorkV1(
+						ctx,
+						header.Hash(),
+						v3Extra,
+					)
+				if err != nil {
+					return nil, err
+				}
+				parentClaims, err := l.workV1EngineLabParentClaimLedger(
+					current,
 					header.ParentHash,
 				)
 				if err != nil {
 					return nil, err
 				}
-				_, next, nextClaims, _, err :=
-					ValidateAndApplyLQCHeaderExtraV4WithCanonicalRuntimeV1(
-						v4ctx,
-						header.Hash(),
-						header.Extra,
-					)
+				nextClaims, err := parentClaims.Apply(
+					current,
+					envelopeV4.CommitteeParticipationClaims,
+				)
 				if err != nil {
 					return nil, err
+				}
+				claimRoot, err := nextClaims.Root()
+				if err != nil {
+					return nil, err
+				}
+				if claimRoot != envelopeV4.CommitteeClaimRoot {
+					return nil, ErrLQCHeaderCommitteeClaimRootMismatchV4
 				}
 				runtime = next
 				if err := l.workV1EngineLabRememberClaimLedger(
@@ -1178,13 +1225,13 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 				return err
 			}
 		}
-		v4ctx, err := l.workV1EngineLabV4Context(
+		v4ctx, v4Err := l.workV1EngineLabV4Context(
 			chain,
 			ctx,
 			header.ParentHash,
 		)
-		if err != nil {
-			return err
+		if v4Err != nil {
+			return v4Err
 		}
 		if chain.Config().IsRabbitVRF(header.Number) {
 			var finalizations []RabbitVRFFinalizationV1

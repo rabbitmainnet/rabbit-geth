@@ -1,3 +1,5 @@
+//go:build (rabbit_workv1_engine_lab || rabbit_workv1) && rabbit_randomx
+
 package eth
 
 import (
