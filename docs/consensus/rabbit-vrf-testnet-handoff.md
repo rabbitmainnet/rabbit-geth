@@ -18,7 +18,7 @@ Branch:
 Stable pre-VRF Rabbit Core checkpoint:
 
     b6fda8e6118d6ac7a6af81119120345e80081249
-    Rabbit Core Testnet v2.3.4
+    Rabbit Core Testnet v2.4.0
 
 Current architecture checkpoint before this handoff:
 

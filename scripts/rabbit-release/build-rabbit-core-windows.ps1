@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $RandomXRepository = if ($env:RANDOMX_REPOSITORY) { $env:RANDOMX_REPOSITORY } else { "https://github.com/tevador/RandomX.git" }
 $RandomXCommit = if ($env:RANDOMX_COMMIT) { $env:RANDOMX_COMMIT } else { "7c761cf007c758056dcb6eb438a32f780f81bdbd" }
-$ExpectedGenesis = if ($env:TESTNET_GENESIS_SHA256) { $env:TESTNET_GENESIS_SHA256 } else { "1e3dbb01317c0f89f7865576caca906cd29a6afd9a726639ea1452cb92ab1a61" }
+$ExpectedGenesis = if ($env:TESTNET_GENESIS_SHA256) { $env:TESTNET_GENESIS_SHA256 } else { "36017cac04b88ccddf81f1f963dafe227071f9963925a2616aa7f41b3f24299b" }
 $Target = $env:RABBIT_TARGET
 $SourceCommit = (git rev-parse HEAD).Trim()
 
@@ -24,7 +24,7 @@ if ((Get-FileHash networks/rabbit-testnet/genesis.json -Algorithm SHA256).Hash.T
 
 $Work = Join-Path $env:RUNNER_TEMP "rabbit-native-$([guid]::NewGuid())"
 $RandomX = Join-Path $Work "RandomX"
-$Package = "rabbit-core-testnet-v2.3.4-$Target"
+$Package = "rabbit-core-testnet-v2.4.0-$Target"
 $Stage = Join-Path $Work $Package
 $Dist = Join-Path $PWD "dist"
 
@@ -119,7 +119,7 @@ Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
 Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
 
 @(
-    "RABBIT_RELEASE=rabbit-core-testnet-v2.3.4"
+    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.0"
     "SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth"
     "SOURCE_COMMIT=$SourceCommit"
     "TARGET=$Target"
