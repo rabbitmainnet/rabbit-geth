@@ -609,3 +609,366 @@ func TestWorkSeatLivenessV2PrepareVerifyRegistryRootTransition(t *testing.T) {
 		t.Fatalf("producer heartbeat state incorrect: %+v", producer)
 	}
 }
+
+func TestLivenessV4EpochBoundaryActivationLeaseKeepsBoundedFallback(t *testing.T) {
+	chainID := big.NewInt(9280)
+	anchor := common.HexToAddress("0x00000000000000000000000000000000000000f0")
+	seatAddresses := []common.Address{
+		common.HexToAddress("0x00000000000000000000000000000000000000a1"),
+		common.HexToAddress("0x00000000000000000000000000000000000000b2"),
+		common.HexToAddress("0x00000000000000000000000000000000000000c3"),
+		common.HexToAddress("0x00000000000000000000000000000000000000d4"),
+	}
+
+	config := canonicalRegistryEngineConfig(append([]common.Address{anchor}, seatAddresses...), 1)
+	config.EpochLength = 8
+	config.CommitteeSize = 4
+	config.FallbackCount = 5
+	config.ConsensusLivenessV3Block = 5
+	config.ConsensusLivenessV4Block = 25
+	engine := New(config, rawdb.NewMemoryDatabase())
+
+	genesis := &types.Header{
+		Number:   big.NewInt(0),
+		Time:     1_000,
+		GasLimit: 30_000_000,
+		Extra:    []byte("block-0"),
+	}
+	chain := &testHeaderChain{
+		config: &params.ChainConfig{
+			ChainID: new(big.Int).Set(chainID),
+			LQC:     config,
+		},
+		headers: map[common.Hash]*types.Header{genesis.Hash(): genesis},
+		current: genesis,
+	}
+	parentHeader := genesis
+	for number := uint64(1); number <= 56; number++ {
+		header := &types.Header{
+			ParentHash: parentHeader.Hash(),
+			Number:     new(big.Int).SetUint64(number),
+			Time:       1_000 + number*10,
+			GasLimit:   genesis.GasLimit,
+			Extra:      []byte{byte(number), byte(number >> 8)},
+		}
+		chain.headers[header.Hash()] = header
+		chain.current = header
+		parentHeader = header
+	}
+
+	sourceEpoch, hasSource, err := WorkSelectionSourceEpochV1(57, 8)
+	if err != nil || !hasSource || sourceEpoch != 6 {
+		t.Fatalf("block57 source epoch=%d has=%v err=%v want=6/true/nil", sourceEpoch, hasSource, err)
+	}
+
+	seats := make([]WorkSeatV1, 0, len(seatAddresses))
+	for index, address := range seatAddresses {
+		seats = append(seats, WorkSeatV1{
+			TicketHash:  crypto.Keccak256Hash([]byte{byte(index + 1)}),
+			Participant: address,
+		})
+	}
+	closed, err := NewWorkEpochSnapshotV1(
+		chainID,
+		sourceEpoch,
+		crypto.Keccak256Hash([]byte("epoch-6-anchor")),
+		big.NewInt(1),
+		seats,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentRuntime := &CanonicalWorkRuntimeStateV1{
+		Work: &WorkChainSnapshotV1{
+			Number:              56,
+			Hash:                parentHeader.Hash(),
+			EpochLength:         8,
+			SelectionEpoch:      sourceEpoch,
+			SelectionAnchor:     closed.Anchor,
+			SelectionDifficulty: new(big.Int).Set(closed.Difficulty),
+			SelectionRoot:       closed.Root,
+			SelectionSeats:      cloneWorkSeatsV1(closed.Seats),
+		},
+	}
+
+	registry := NewCanonicalRegistry()
+	if err := registry.ActivatePermissionlessProducer(anchor, 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range seatAddresses {
+		registry.entries[address] = CanonicalParticipant{
+			Address:       address,
+			RegisteredAt:  1,
+			LastHeartbeat: 56,
+			Sequence:      1,
+			Active:        true,
+		}
+	}
+	parentRegistry := newRegistrySnapshot(56, parentHeader.Hash(), registry)
+
+	workV1EngineLabRuntimes.Store(engine, &workV1EngineLabRuntime{
+		hasher: func(datasetKey common.Hash, input []byte) (common.Hash, error) {
+			return crypto.Keccak256Hash(datasetKey.Bytes(), input), nil
+		},
+		runtimes:               make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
+		claimLedgers:           make(map[common.Hash]*CommitteeClaimLedgerV1),
+		validatedFinalizations: make(map[common.Hash][]RabbitVRFFinalizationV1),
+		selectionBeaconCache:   make(map[workV1SelectionBeaconCacheKey]common.Hash),
+	})
+	t.Cleanup(func() {
+		workV1EngineLabRuntimes.Delete(engine)
+	})
+
+	header57 := &types.Header{
+		ParentHash: parentHeader.Hash(),
+		Number:     big.NewInt(57),
+		Time:       parentHeader.Time + 10,
+		GasLimit:   genesis.GasLimit,
+	}
+	selection, active, err := engine.workV1EngineLabSelectionForHeader(
+		chain,
+		parentRuntime,
+		parentRegistry,
+		header57,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("temporary activation lease unexpectedly became normal WorkSeat mode")
+	}
+	if selection.Producer == nil || selection.Producer.Address != anchor {
+		t.Fatalf("lease producer=%v want=%s", selection.Producer, anchor)
+	}
+	if len(selection.Fallbacks) != 1 {
+		t.Fatalf("lease fallbacks=%d want=1", len(selection.Fallbacks))
+	}
+	if len(selection.Ordered) != 2 {
+		t.Fatalf("lease ordered=%d want producer+1 bounded fallback", len(selection.Ordered))
+	}
+
+	fallback := selection.Fallbacks[0].Address
+	if fallback == anchor {
+		t.Fatal("activation anchor duplicated as its own fallback")
+	}
+	isSeat := false
+	for _, address := range seatAddresses {
+		if address == fallback {
+			isSeat = true
+			break
+		}
+	}
+	if !isSeat {
+		t.Fatalf("fallback=%s is not a persistent WorkSeat", fallback)
+	}
+	if allowed, pos := IsAuthorAllowedBounded(selection, anchor); !allowed || pos != 0 {
+		t.Fatalf("lease producer authorization allowed=%v pos=%d", allowed, pos)
+	}
+	if allowed, pos := IsAuthorAllowedBounded(selection, fallback); !allowed || pos != 1 {
+		t.Fatalf("bounded WorkSeat fallback authorization allowed=%v pos=%d", allowed, pos)
+	}
+	for _, address := range seatAddresses {
+		if address == fallback {
+			continue
+		}
+		if allowed, _ := IsAuthorAllowedBounded(selection, address); allowed {
+			t.Fatalf("unselected WorkSeat %s escaped bounded producer authorization", address)
+		}
+	}
+}
+
+func TestPreLivenessV4ActivationLeaseKeepsHistoricalZeroFallbackShape(t *testing.T) {
+	anchor := common.HexToAddress("0x00000000000000000000000000000000000000f0")
+	seat := common.HexToAddress("0x00000000000000000000000000000000000000a1")
+	registry := NewCanonicalRegistry()
+	if err := registry.ActivatePermissionlessProducer(anchor, 1); err != nil {
+		t.Fatal(err)
+	}
+	registry.entries[seat] = CanonicalParticipant{
+		Address:       seat,
+		RegisteredAt:  1,
+		LastHeartbeat: 56,
+		Sequence:      1,
+		Active:        true,
+	}
+	parentHash := crypto.Keccak256Hash([]byte("pre-v4-parent"))
+	parent := newRegistrySnapshot(56, parentHash, registry)
+	header := &types.Header{ParentHash: parentHash, Number: big.NewInt(57)}
+	lease, err := workV2EngineLabActivationLease(
+		parent,
+		header,
+		[]WorkSeatV1{{
+			TicketHash:  crypto.Keccak256Hash([]byte("seat")),
+			Participant: seat,
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Producer == nil || lease.Producer.Address != anchor {
+		t.Fatalf("lease=%+v", lease)
+	}
+	if len(lease.Fallbacks) != 0 || len(lease.Ordered) != 1 {
+		t.Fatalf("raw historical lease shape changed: %+v", lease)
+	}
+}
+
+func TestLivenessV4ZeroWorkActivationFallbackIsBounded(t *testing.T) {
+	chainID := big.NewInt(9280)
+	anchors := []common.Address{
+		common.HexToAddress("0x00000000000000000000000000000000000000a1"),
+		common.HexToAddress("0x00000000000000000000000000000000000000b2"),
+		common.HexToAddress("0x00000000000000000000000000000000000000c3"),
+		common.HexToAddress("0x00000000000000000000000000000000000000d4"),
+	}
+
+	config := canonicalRegistryEngineConfig(anchors, 1)
+	config.EpochLength = 8
+	config.FallbackCount = 5
+	config.ConsensusLivenessV3Block = 5
+	config.ConsensusLivenessV4Block = 25
+	engine := New(config, rawdb.NewMemoryDatabase())
+
+	genesis := &types.Header{
+		Number:   big.NewInt(0),
+		Time:     1_000,
+		GasLimit: 30_000_000,
+		Extra:    []byte("block-0"),
+	}
+	chain := &testHeaderChain{
+		config: &params.ChainConfig{
+			ChainID: new(big.Int).Set(chainID),
+			LQC:     config,
+		},
+		headers: map[common.Hash]*types.Header{genesis.Hash(): genesis},
+		current: genesis,
+	}
+	parentHeader := genesis
+	for number := uint64(1); number <= 56; number++ {
+		header := &types.Header{
+			ParentHash: parentHeader.Hash(),
+			Number:     new(big.Int).SetUint64(number),
+			Time:       1_000 + number*10,
+			GasLimit:   genesis.GasLimit,
+			Extra:      []byte{byte(number), byte(number >> 8)},
+		}
+		chain.headers[header.Hash()] = header
+		chain.current = header
+		parentHeader = header
+	}
+
+	parentRuntime := &CanonicalWorkRuntimeStateV1{
+		Work: &WorkChainSnapshotV1{
+			Number:              56,
+			Hash:                parentHeader.Hash(),
+			EpochLength:         8,
+			SelectionEpoch:      6,
+			SelectionAnchor:     crypto.Keccak256Hash([]byte("epoch-6-anchor")),
+			SelectionDifficulty: big.NewInt(1),
+			SelectionRoot:       crypto.Keccak256Hash([]byte("zero-work-selection-root")),
+			SelectionSeats:      nil,
+		},
+	}
+
+	registry := NewCanonicalRegistry()
+	for _, address := range anchors {
+		if err := registry.ActivatePermissionlessProducer(address, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parentRegistry := newRegistrySnapshot(56, parentHeader.Hash(), registry)
+
+	workV1EngineLabRuntimes.Store(engine, &workV1EngineLabRuntime{
+		hasher: func(datasetKey common.Hash, input []byte) (common.Hash, error) {
+			return crypto.Keccak256Hash(datasetKey.Bytes(), input), nil
+		},
+		runtimes:               make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
+		claimLedgers:           make(map[common.Hash]*CommitteeClaimLedgerV1),
+		validatedFinalizations: make(map[common.Hash][]RabbitVRFFinalizationV1),
+		selectionBeaconCache:   make(map[workV1SelectionBeaconCacheKey]common.Hash),
+	})
+	t.Cleanup(func() {
+		workV1EngineLabRuntimes.Delete(engine)
+	})
+
+	header57 := &types.Header{
+		ParentHash: parentHeader.Hash(),
+		Number:     big.NewInt(57),
+		Time:       parentHeader.Time + 10,
+		GasLimit:   genesis.GasLimit,
+	}
+	selection, active, err := engine.workV1EngineLabSelectionForHeader(
+		chain,
+		parentRuntime,
+		parentRegistry,
+		header57,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("zero-work activation unexpectedly became persistent WorkSeat mode")
+	}
+	if selection.Producer == nil {
+		t.Fatal("zero-work activation has no producer")
+	}
+	if len(selection.Fallbacks) != 3 {
+		t.Fatalf("zero-work activation fallbacks=%d want=3", len(selection.Fallbacks))
+	}
+	if len(selection.Ordered) != 4 {
+		t.Fatalf("zero-work activation ordered=%d want=4", len(selection.Ordered))
+	}
+
+	seen := make(map[common.Address]struct{}, len(selection.Ordered))
+	for queuePos, participant := range selection.Ordered {
+		if _, exists := seen[participant.Address]; exists {
+			t.Fatalf("duplicate activation identity %s", participant.Address)
+		}
+		seen[participant.Address] = struct{}{}
+		allowed, gotPos := IsAuthorAllowedBounded(selection, participant.Address)
+		if !allowed || gotPos != queuePos {
+			t.Fatalf("activation identity %s allowed=%v pos=%d want=%d", participant.Address, allowed, gotPos, queuePos)
+		}
+	}
+	for _, address := range anchors {
+		if _, exists := seen[address]; !exists {
+			t.Fatalf("sequence-zero anchor %s missing from bounded activation set", address)
+		}
+	}
+}
+
+func TestLivenessV4ZeroWorkActivationStillRejectsRegisteredSybilIdentities(t *testing.T) {
+	anchors := []common.Address{
+		common.HexToAddress("0x00000000000000000000000000000000000000a1"),
+		common.HexToAddress("0x00000000000000000000000000000000000000b2"),
+	}
+	registry := NewCanonicalRegistry()
+	for _, address := range anchors {
+		if err := registry.ActivatePermissionlessProducer(address, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sybil := common.HexToAddress("0x00000000000000000000000000000000000000ee")
+	registry.entries[sybil] = CanonicalParticipant{
+		Address:       sybil,
+		RegisteredAt:  2,
+		LastHeartbeat: 56,
+		Sequence:      1,
+		Active:        true,
+	}
+	parentHash := crypto.Keccak256Hash([]byte("zero-work-v4-parent"))
+	parent := newRegistrySnapshot(56, parentHash, registry)
+	header := &types.Header{ParentHash: parentHash, Number: big.NewInt(57)}
+
+	selection, err := workV1EngineLabActivationSelection(parent, header, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selection.Ordered) != 2 || len(selection.Fallbacks) != 1 {
+		t.Fatalf("activation roles ordered=%d fallbacks=%d want=2/1", len(selection.Ordered), len(selection.Fallbacks))
+	}
+	if allowed, _ := IsAuthorAllowedBounded(selection, sybil); allowed {
+		t.Fatal("registered sequence>0 Sybil identity received a zero-work fallback")
+	}
+}

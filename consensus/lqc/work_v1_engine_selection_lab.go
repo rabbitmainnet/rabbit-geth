@@ -60,14 +60,20 @@ func (l *LQC) workV1EngineLabCommitteeSize(
 	)
 }
 
-// workV1EngineLabRoleCounts reserves the requested committee capacity before
-// assigning the configured fallback prefix. The whole deterministic Ordered
-// queue remains eligible for delayed production through IsAuthorAllowed, so
-// shortening the named fallback slice does not reduce LAB liveness.
+// workV1EngineLabRoleCounts preserves the historical committee-first role
+// budget before Liveness V4. Once reserveBoundedFallback is active, a configured
+// fallback can no longer be squeezed out completely by committee capacity.
+//
+// Liveness V3 authorizes only the scheduled producer and explicit fallback
+// slots. Reserving exactly one fallback in the saturated small-N case restores
+// a normal deterministic takeover path while keeping roles disjoint and
+// preserving as much committee capacity as possible. Additional fallback slots
+// continue to use only capacity left after the committee reservation.
 func workV1EngineLabRoleCounts(
 	seatCount uint64,
 	fallbackCount uint64,
 	committeeSize uint64,
+	reserveBoundedFallback bool,
 ) (uint64, uint64) {
 	if seatCount == 0 {
 		return 0, 0
@@ -76,6 +82,10 @@ func workV1EngineLabRoleCounts(
 	availableAfterProducer := seatCount - 1
 	if committeeSize > availableAfterProducer {
 		committeeSize = availableAfterProducer
+	}
+	if reserveBoundedFallback && fallbackCount > 0 && availableAfterProducer > 0 &&
+		committeeSize == availableAfterProducer {
+		committeeSize--
 	}
 	maxFallbackCount := availableAfterProducer - committeeSize
 	if fallbackCount > maxFallbackCount {
@@ -362,6 +372,7 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 		uint64(len(eligibleSeats)),
 		fallbackCount,
 		committeeSize,
+		l.consensusLivenessV4Active(blockNumber),
 	)
 
 	var orderedSeats []WorkSeatV1
@@ -440,7 +451,7 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 		return HybridSelection{}, false, err
 	}
 	if !hasSource {
-		selection, err := workV1EngineLabActivationFallback(
+		selection, err := l.workV1EngineLabActivationFallbackAt(
 			parentRegistry,
 			header,
 		)
@@ -464,7 +475,8 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 	if err != nil {
 		return HybridSelection{}, false, err
 	}
-	if lease.Producer != nil {
+	leaseActive := lease.Producer != nil
+	if leaseActive && !l.consensusLivenessV4Active(header.Number.Uint64()) {
 		return lease, false, nil
 	}
 
@@ -514,14 +526,68 @@ func (l *LQC) workV1EngineLabSelectionForHeader(
 		l.registryRules(),
 		WorkSelectionBeaconHasherV1(state.cachedSelectionBeaconHash),
 	)
-	if err != nil || active {
-		return selection, active, err
+	if err != nil {
+		return HybridSelection{}, false, err
 	}
-	selection, err = workV1EngineLabActivationFallback(
+	if leaseActive {
+		if active {
+			lease = workV2EngineLabBoundActivationLeaseFallbacks(
+				lease,
+				selection,
+			)
+			return lease, false, nil
+		}
+
+		// With no persistent WorkSeats yet, Liveness V4 must still keep the
+		// activation path bounded-live. Use only sequence-zero activation
+		// identities as explicit fallbacks; ordinary registered identities
+		// remain ineligible and historical pre-V4 behavior stays unchanged.
+		selection, err = l.workV1EngineLabActivationFallbackAt(
+			parentRegistry,
+			header,
+		)
+		return selection, false, err
+	}
+	if active {
+		return selection, true, nil
+	}
+	selection, err = l.workV1EngineLabActivationFallbackAt(
 		parentRegistry,
 		header,
 	)
 	return selection, false, err
+}
+
+// workV2EngineLabBoundActivationLeaseFallbacks keeps the temporary activation
+// lease as queue position zero while borrowing only the bounded producer
+// takeover budget from the canonical WorkSeat selection. The normal WorkSeat
+// producer becomes the first lease fallback, followed by as many normal
+// WorkSeat fallbacks as fit inside that same budget. Committee/unassigned seats
+// never become producers through this path.
+func workV2EngineLabBoundActivationLeaseFallbacks(
+	lease HybridSelection,
+	work HybridSelection,
+) HybridSelection {
+	if lease.Producer == nil || len(work.Fallbacks) == 0 {
+		return lease
+	}
+
+	fallbackLimit := len(work.Fallbacks)
+	for _, candidate := range work.Ordered {
+		if candidate.Address == (common.Address{}) ||
+			candidate.Address == lease.Producer.Address {
+			continue
+		}
+		lease.Ordered = append(lease.Ordered, candidate)
+		lease.Fallbacks = append(lease.Fallbacks, candidate)
+		if len(lease.Fallbacks) >= fallbackLimit {
+			break
+		}
+	}
+	if len(lease.Ordered) > 0 {
+		lease.Producer = &lease.Ordered[0]
+	}
+	return lease
 }
 
 func workV2EngineLabActivationLease(
@@ -546,9 +612,10 @@ func workV2EngineLabActivationLease(
 // the sequence-zero activation identity may produce until WorkSeats exist.
 // If that identity disappears, the permissionless recovery timeout reopens
 // activation for a new address.
-func workV1EngineLabActivationFallback(
+func workV1EngineLabActivationSelection(
 	parent *RegistrySnapshot,
 	header *types.Header,
+	fallbackCount uint64,
 ) (HybridSelection, error) {
 	if parent == nil || header == nil || header.Number == nil {
 		return HybridSelection{}, ErrWorkV1EngineLabSelectionUnavailable
@@ -582,9 +649,52 @@ func workV1EngineLabActivationFallback(
 	if len(ordered) == 0 {
 		return selection, nil
 	}
-	selection.Ordered = ordered[:1]
+
+	take := uint64(1)
+	if fallbackCount > 0 {
+		available := uint64(len(ordered) - 1)
+		if fallbackCount > available {
+			fallbackCount = available
+		}
+		take += fallbackCount
+	}
+	selection.Ordered = append(
+		[]HybridParticipant(nil),
+		ordered[:int(take)]...,
+	)
 	selection.Producer = &selection.Ordered[0]
+	if len(selection.Ordered) > 1 {
+		selection.Fallbacks = append(
+			[]HybridParticipant(nil),
+			selection.Ordered[1:]...,
+		)
+	}
 	return selection, nil
+}
+
+// workV1EngineLabActivationFallback preserves the historical one-producer
+// activation shape. Liveness V4 opts into bounded sequence-zero fallbacks only
+// through workV1EngineLabActivationFallbackAt.
+func workV1EngineLabActivationFallback(
+	parent *RegistrySnapshot,
+	header *types.Header,
+) (HybridSelection, error) {
+	return workV1EngineLabActivationSelection(parent, header, 0)
+}
+
+func (l *LQC) workV1EngineLabActivationFallbackAt(
+	parent *RegistrySnapshot,
+	header *types.Header,
+) (HybridSelection, error) {
+	if l == nil || header == nil || header.Number == nil ||
+		!l.consensusLivenessV4Active(header.Number.Uint64()) {
+		return workV1EngineLabActivationFallback(parent, header)
+	}
+	return workV1EngineLabActivationSelection(
+		parent,
+		header,
+		l.hybridCfg().FallbackCount,
+	)
 }
 
 func (l *LQC) selectionForHeaderMaybeWorkV1Lab(

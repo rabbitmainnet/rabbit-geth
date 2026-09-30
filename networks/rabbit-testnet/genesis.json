@@ -40,6 +40,7 @@
       "minorSlashBps": 500,
       "majorSlashBps": 2000,
       "consensusLivenessV3Block": 77000,
+      "consensusLivenessV4Block": 136193,
       "vrfProtocolBlock": 136193
     }
   },

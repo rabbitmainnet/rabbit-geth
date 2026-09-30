@@ -410,6 +410,48 @@ func TestRabbitConsensusLivenessV3ConfigCompatibility(t *testing.T) {
 	}
 }
 
+func TestRabbitConsensusLivenessV4ConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{LQC: &LQCConfig{
+			ConsensusFairnessBlock:   100,
+			ConsensusLivenessV3Block: 200,
+			ConsensusLivenessV4Block: activation,
+		}}
+	}
+
+	fork := config(300)
+	if fork.IsConsensusLivenessV4(big.NewInt(299)) {
+		t.Fatal("consensus liveness V4 active before block 300")
+	}
+	if !fork.IsConsensusLivenessV4(big.NewInt(300)) {
+		t.Fatal("consensus liveness V4 inactive at block 300")
+	}
+
+	if err := config(0).CheckCompatible(config(300), 299, 0); err != nil {
+		t.Fatalf("future liveness V4 rejected before activation: %v", err)
+	}
+
+	err := config(0).CheckCompatible(config(300), 300, 0)
+	if err == nil ||
+		err.What != "LQC consensus liveness V4 fork block" ||
+		err.RewindToBlock != 299 {
+		t.Fatalf("unexpected liveness V4 compatibility error: %+v", err)
+	}
+
+	missingV3 := &ChainConfig{LQC: &LQCConfig{
+		ConsensusFairnessBlock:   100,
+		ConsensusLivenessV4Block: 300,
+	}}
+	if err := missingV3.CheckConfigForkOrder(); err == nil {
+		t.Fatal("liveness V4 without V3 was accepted")
+	}
+
+	beforeV3 := config(199)
+	if err := beforeV3.CheckConfigForkOrder(); err == nil {
+		t.Fatal("liveness V4 preceding V3 was accepted")
+	}
+}
+
 func TestRabbitVRFProtocolConfigCompatibility(t *testing.T) {
 	config := func(activation uint64) *ChainConfig {
 		return &ChainConfig{
