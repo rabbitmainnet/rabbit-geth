@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	officialGenesisSHA256 = "579b263e29bb7a798fce5433a802a2917a402af558f1d9fb9503b629a44a4aa2"
+	officialGenesisSHA256 = "25d758d2d87aa2cadee95be0ff6d0525a20cf078d42539cdeb8651e543581571"
 	officialChainID       = "0x2440"
 	officialNetworkID     = "9280"
 )
