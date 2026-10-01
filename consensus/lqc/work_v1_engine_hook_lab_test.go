@@ -936,3 +936,131 @@ func TestWorkV1EngineLabVerifyHeadersUsesBatchParentRuntime(
 		}
 	}
 }
+
+func TestWorkV1EngineLabVRFHeaderBoundarySelectsV4ThenV5(t *testing.T) {
+	config := canonicalRegistryEngineConfig(
+		testParticipants(t, 2),
+		1,
+	)
+	config.ConsensusHardeningBlock = 1
+	config.ConsensusStabilizationBlock = 1
+	config.ConsensusFairnessBlock = 1
+	config.ConsensusLivenessV3Block = 2
+	config.ConsensusLivenessV4Block = 3
+	config.ConsensusLivenessV5Block = 4
+	config.ConsensusLivenessV6Block = 5
+	config.EpochLength = 128
+	config.VRFProtocolBlock = 136193
+
+	engine := New(config, rawdb.NewMemoryDatabase())
+	genesis := &types.Header{
+		Number:   big.NewInt(0),
+		Time:     100,
+		GasLimit: 30_000_000,
+	}
+	chain := canonicalRegistryTestChain(config, genesis)
+
+	v4Extra, err := EncodeLQCHeaderExtraV4(
+		136192,
+		common.HexToHash("0x4101"),
+		common.HexToHash("0x4102"),
+		common.HexToHash("0x4103"),
+		nil,
+		nil,
+		nil,
+		MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v5Extra, err := EncodeLQCHeaderExtraV5(
+		136193,
+		common.HexToHash("0x5101"),
+		common.HexToHash("0x5102"),
+		common.HexToHash("0x5103"),
+		nil,
+		nil,
+		nil,
+		nil,
+		MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyReachedParentLookup := func(number uint64, extra []byte) {
+		t.Helper()
+		header := &types.Header{
+			ParentHash: common.HexToHash("0x136192"),
+			Number:     new(big.Int).SetUint64(number),
+			Time:       100 + number,
+			GasLimit:   30_000_000,
+			Extra:      extra,
+		}
+		if _, _, err := engine.verifyCanonicalRegistryHeaderMaybeWorkV1Lab(
+			chain,
+			header,
+		); err != ErrWorkV1EngineLabParentMissing {
+			t.Fatalf(
+				"block %d decoder did not reach parent lookup: %v",
+				number,
+				err,
+			)
+		}
+	}
+
+	verifyRejectedBeforeParentLookup := func(number uint64, extra []byte) {
+		t.Helper()
+		header := &types.Header{
+			ParentHash: common.HexToHash("0x136192"),
+			Number:     new(big.Int).SetUint64(number),
+			Time:       100 + number,
+			GasLimit:   30_000_000,
+			Extra:      extra,
+		}
+		_, _, err := engine.verifyCanonicalRegistryHeaderMaybeWorkV1Lab(
+			chain,
+			header,
+		)
+		if err == nil || err == ErrWorkV1EngineLabParentMissing {
+			t.Fatalf(
+				"block %d accepted wrong header envelope version: %v",
+				number,
+				err,
+			)
+		}
+	}
+
+	v5BeforeForkExtra, err := EncodeLQCHeaderExtraV5(
+		136192,
+		common.HexToHash("0x5201"),
+		common.HexToHash("0x5202"),
+		common.HexToHash("0x5203"),
+		nil,
+		nil,
+		nil,
+		nil,
+		MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v4AtForkExtra, err := EncodeLQCHeaderExtraV4(
+		136193,
+		common.HexToHash("0x4201"),
+		common.HexToHash("0x4202"),
+		common.HexToHash("0x4203"),
+		nil,
+		nil,
+		nil,
+		MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyReachedParentLookup(136192, v4Extra)
+	verifyReachedParentLookup(136193, v5Extra)
+	verifyRejectedBeforeParentLookup(136192, v5BeforeForkExtra)
+	verifyRejectedBeforeParentLookup(136193, v4AtForkExtra)
+}
