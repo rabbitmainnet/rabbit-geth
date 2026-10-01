@@ -48,6 +48,7 @@ func MigrateRabbitTestnetStoredChainConfig(
 		cfg.ConsensusLivenessV5Block == 0 &&
 		cfg.ConsensusLivenessV6Block == 0 &&
 		cfg.VRFProtocolBlock == rabbitTestnetVRFProtocolBlock
+	missingVRF := cfg.VRFProtocolBlock == 0
 
 	if cfg.ConsensusLivenessV4Block != 0 &&
 		cfg.ConsensusLivenessV4Block != rabbitTestnetLivenessV4Block &&
@@ -62,6 +63,10 @@ func MigrateRabbitTestnetStoredChainConfig(
 		cfg.ConsensusLivenessV6Block != rabbitTestnetLivenessV6Block {
 		return false
 	}
+	if cfg.VRFProtocolBlock != 0 &&
+		cfg.VRFProtocolBlock != rabbitTestnetVRFProtocolBlock {
+		return false
+	}
 
 	if brokenV240 {
 		headHash := rawdb.ReadHeadHeaderHash(chainDb)
@@ -70,17 +75,29 @@ func MigrateRabbitTestnetStoredChainConfig(
 			return false
 		}
 	}
+	if missingVRF {
+		headHash := rawdb.ReadHeadHeaderHash(chainDb)
+		if headHash != (common.Hash{}) {
+			headNumber, ok := rawdb.ReadHeaderNumber(chainDb, headHash)
+			if !ok || headNumber >= rabbitTestnetVRFProtocolBlock {
+				return false
+			}
+		}
+	}
 
 	if cfg.ConsensusLivenessV4Block == rabbitTestnetLivenessV4Block &&
 		cfg.ConsensusLivenessV5Block == rabbitTestnetLivenessV5Block &&
-		cfg.ConsensusLivenessV6Block == rabbitTestnetLivenessV6Block {
+		cfg.ConsensusLivenessV6Block == rabbitTestnetLivenessV6Block &&
+		cfg.VRFProtocolBlock == rabbitTestnetVRFProtocolBlock {
 		return false
 	}
 
 	oldV4 := cfg.ConsensusLivenessV4Block
+	oldVRF := cfg.VRFProtocolBlock
 	cfg.ConsensusLivenessV4Block = rabbitTestnetLivenessV4Block
 	cfg.ConsensusLivenessV5Block = rabbitTestnetLivenessV5Block
 	cfg.ConsensusLivenessV6Block = rabbitTestnetLivenessV6Block
+	cfg.VRFProtocolBlock = rabbitTestnetVRFProtocolBlock
 
 	rawdb.WriteChainConfig(chainDb, genesisHash, chainConfig)
 
@@ -90,6 +107,8 @@ func MigrateRabbitTestnetStoredChainConfig(
 		"consensusLivenessV4Block", rabbitTestnetLivenessV4Block,
 		"consensusLivenessV5Block", rabbitTestnetLivenessV5Block,
 		"consensusLivenessV6Block", rabbitTestnetLivenessV6Block,
+		"oldVRFProtocolBlock", oldVRF,
+		"vrfProtocolBlock", rabbitTestnetVRFProtocolBlock,
 	)
 	return true
 }
