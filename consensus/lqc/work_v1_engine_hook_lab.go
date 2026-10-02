@@ -32,6 +32,49 @@ type WorkV1EngineLabCommitteeClaimProvider func(
 	blockNumber uint64,
 ) ([]CommitteeParticipationClaimGroupV1, error)
 
+func filterAlreadyClaimedCommitteeParticipationsV1(
+	parent *CommitteeClaimLedgerV1,
+	groups []CommitteeParticipationClaimGroupV1,
+) []CommitteeParticipationClaimGroupV1 {
+	if parent == nil || len(groups) == 0 {
+		return groups
+	}
+
+	filtered := make(
+		[]CommitteeParticipationClaimGroupV1,
+		0,
+		len(groups),
+	)
+
+	for _, group := range groups {
+		next := CommitteeParticipationClaimGroupV1{
+			TargetBlock: group.TargetBlock,
+			Participations: make(
+				[]CompactCommitteeParticipationV1,
+				0,
+				len(group.Participations),
+			),
+		}
+
+		for _, item := range group.Participations {
+			if parent.IsClaimed(group.TargetBlock, item.Position) {
+				continue
+			}
+
+			next.Participations = append(
+				next.Participations,
+				item,
+			)
+		}
+
+		if len(next.Participations) > 0 {
+			filtered = append(filtered, next)
+		}
+	}
+
+	return filtered
+}
+
 const workV1SelectionBeaconCacheLimit = 32
 
 type workV1SelectionBeaconCacheKey struct {
@@ -1233,6 +1276,13 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 		if v4Err != nil {
 			return v4Err
 		}
+		// ParentClaims is the canonical authority. Never propose a
+		// committee participation already consumed by the parent ledger.
+		claims = filterAlreadyClaimedCommitteeParticipationsV1(
+			v4ctx.ParentClaims,
+			claims,
+		)
+
 		if chain.Config().IsRabbitVRF(header.Number) {
 			var finalizations []RabbitVRFFinalizationV1
 			if finalizationProvider != nil {

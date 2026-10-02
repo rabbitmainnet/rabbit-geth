@@ -31,6 +31,24 @@ func cloneLQCCommitteeClaimGroups(
 	return out
 }
 
+func lqcCommitteeClaimGroupsFromExtraLab(
+	extra []byte,
+) ([]lqc.CommitteeParticipationClaimGroupV1, bool) {
+	if envelope, err := lqc.DecodeLQCHeaderExtraV5(
+		extra, lqc.MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		return envelope.CommitteeParticipationClaims, true
+	}
+
+	if envelope, err := lqc.DecodeLQCHeaderExtraV4(
+		extra, lqc.MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		return envelope.CommitteeParticipationClaims, true
+	}
+
+	return nil, false
+}
+
 func (p *lqcCommitteeClaimProviderLab) canonicalClaimed(
 	inclusionBlock uint64,
 ) map[lqcCommitteeClaimKey]struct{} {
@@ -47,13 +65,12 @@ func (p *lqcCommitteeClaimProviderLab) canonicalClaimed(
 		if header == nil {
 			continue
 		}
-		envelope, err := lqc.DecodeLQCHeaderExtraV4(
-			header.Extra, lqc.MaxWorkTicketsPerBlockV1,
-		)
-		if err != nil {
+		groups, ok := lqcCommitteeClaimGroupsFromExtraLab(header.Extra)
+		if !ok {
 			continue
 		}
-		for _, group := range envelope.CommitteeParticipationClaims {
+
+		for _, group := range groups {
 			for _, item := range group.Participations {
 				claimed[lqcCommitteeClaimKey{target: group.TargetBlock, position: item.Position}] = struct{}{}
 			}

@@ -439,7 +439,12 @@ func workV1EnginePoolHeaderTicketsLab(
 ) ([]lqc.SignedRandomXWorkTicketV1, bool) {
 	var tickets []lqc.SignedRandomXWorkTicketV1
 
-	if envelopeV4, err := lqc.DecodeLQCHeaderExtraV4(
+	if envelopeV5, err := lqc.DecodeLQCHeaderExtraV5(
+		extra,
+		lqc.MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		tickets = envelopeV5.WorkTickets
+	} else if envelopeV4, err := lqc.DecodeLQCHeaderExtraV4(
 		extra,
 		lqc.MaxWorkTicketsPerBlockV1,
 	); err == nil {
