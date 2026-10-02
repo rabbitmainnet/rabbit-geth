@@ -2,6 +2,11 @@ name: Rabbit Core Testnet V2 Release
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_run_id:
+        description: Existing successful build run ID to publish
+        required: false
+        type: string
 
 env:
   GO_VERSION: "1.25.13"
@@ -11,6 +16,7 @@ env:
 
 jobs:
   native:
+    if: ${{ inputs.publish_run_id == '' }}
     name: ${{ matrix.target }}
     permissions:
       contents: read
@@ -112,3 +118,52 @@ jobs:
           path: releases/*
           if-no-files-found: error
           retention-days: 30
+
+
+  publish-existing:
+    name: Publish existing V2.4.3 artifacts
+    if: ${{ inputs.publish_run_id != '' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download verified V2.4.3 bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: rabbit-core-testnet-v2.4.3-release-bundle
+          path: release
+          github-token: ${{ github.token }}
+          repository: rabbitmainnet/rabbit-geth
+          run-id: ${{ inputs.publish_run_id }}
+
+      - name: Verify bundle
+        shell: bash
+        run: |
+          cd release
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Publish V2.4.3 GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v2.4.3"
+          TARGET="c82bc245883333446daba20b1ece2ab9424991d0"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$TARGET" \
+              --title "Rabbit Core Testnet v2.4.3" \
+              --draft
+          fi
+
+          gh release edit "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false
