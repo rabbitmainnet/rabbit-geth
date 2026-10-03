@@ -227,7 +227,6 @@ func (n *lqcRegistryNetwork) BroadcastOperations(operations []lqc.RegistryOperat
 	n.mu.RUnlock()
 	chainID := n.chain.Config().ChainID
 	for _, peer := range peers {
-		peer := peer
 		go func() {
 			if err := peer.sendOperations(chainID, operations); err != nil {
 				peer.peer.Log().Debug("LQC registry operation broadcast failed", "err", err)

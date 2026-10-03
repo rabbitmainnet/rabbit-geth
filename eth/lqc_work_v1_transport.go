@@ -662,7 +662,6 @@ func (n *lqcWorkV1Transport) BroadcastCandidates(
 	n.mu.RUnlock()
 
 	for _, peer := range peers {
-		peer := peer
 		go func() {
 			if err := peer.sendCandidateBatches(candidates); err != nil {
 				peer.peer.Log().Debug(
@@ -695,6 +694,7 @@ func (n *lqcWorkV1Transport) Pending() (
 	return n.pool.PendingV1()
 }
 
+//nolint:unused // Called by the rabbit_workv1 build.
 func (n *lqcWorkV1Transport) pendingRaw() (
 	[]lqc.WorkCommitCandidateV1,
 	error,

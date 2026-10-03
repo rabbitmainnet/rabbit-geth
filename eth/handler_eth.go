@@ -289,10 +289,6 @@ func (h *ethHandler) requestAndSyncLQCHead(peer *eth.Peer, number uint64, hash c
 	h.scheduleLQCSync(peer, header)
 }
 
-func (h *ethHandler) startLQCBeaconSync(peer *eth.Peer, header *types.Header) {
-	h.scheduleLQCSync(peer, header)
-}
-
 func (h *ethHandler) scheduleLQCSync(peer *eth.Peer, header *types.Header) {
 	if peer == nil || header == nil || header.Number == nil ||
 		!shouldStartLQCSync(h.chain.CurrentBlock(), header.Number.Uint64(), header.Hash()) {
@@ -338,12 +334,6 @@ func (h *ethHandler) takePendingLQCSyncTarget() *lqcSyncTarget {
 		h.lqcSyncRunning = false
 	}
 	return next
-}
-
-func (h *ethHandler) hasBetterPendingLQCSyncTarget(current *lqcSyncTarget) bool {
-	h.lqcSyncMu.Lock()
-	defer h.lqcSyncMu.Unlock()
-	return betterLQCSyncTarget(h.lqcSyncPending, current)
 }
 
 func (h *ethHandler) wakeLQCSync() {

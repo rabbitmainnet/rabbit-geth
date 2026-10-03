@@ -115,7 +115,6 @@ func (n *lqcWorkV1Transport) BroadcastCommitteeClaims(
 	}
 	n.mu.RUnlock()
 	for _, peer := range peers {
-		peer := peer
 		go func() {
 			if err := peer.sendCommitteeClaims(groups); err != nil {
 				peer.peer.Log().Debug("LQC committee claim broadcast failed", "err", err)

@@ -632,6 +632,7 @@ type LQCConfig struct {
 	ConsensusLivenessV5Block    uint64           `json:"consensusLivenessV5Block,omitempty"`
 	ConsensusLivenessV6Block    uint64           `json:"consensusLivenessV6Block,omitempty"`
 	VRFProtocolBlock            uint64           `json:"vrfProtocolBlock,omitempty"`
+	MiningRewardV5Block         uint64           `json:"miningRewardV5Block,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
 	BootstrapOnlyUntil uint64   `json:"bootstrapOnlyUntil,omitempty"`
@@ -706,6 +707,28 @@ func (c *LQCConfig) consensusLivenessV6ForkBlock() *big.Int {
 		return nil
 	}
 	return new(big.Int).SetUint64(c.ConsensusLivenessV6Block)
+}
+
+func (c *LQCConfig) miningRewardV5ForkBlock() *big.Int {
+	if c == nil || c.MiningRewardV5Block == 0 {
+		return nil
+	}
+	return new(big.Int).SetUint64(c.MiningRewardV5Block)
+}
+
+func (c *LQCConfig) validateMiningRewardV5() error {
+	if c == nil || c.MiningRewardV5Block == 0 {
+		return nil
+	}
+	if c.VRFProtocolBlock == 0 ||
+		c.MiningRewardV5Block <= c.VRFProtocolBlock {
+		return fmt.Errorf("miningRewardV5Block must follow vrfProtocolBlock")
+	}
+	if c.ConsensusLivenessV3Block == 0 ||
+		c.MiningRewardV5Block <= c.ConsensusLivenessV3Block {
+		return fmt.Errorf("miningRewardV5Block must follow consensusLivenessV3Block")
+	}
+	return nil
 }
 
 func (c *LQCConfig) vrfProtocolForkBlock() *big.Int {
@@ -1380,6 +1403,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if err := c.LQC.validateConsensusLivenessV6(); err != nil {
 		return err
 	}
+	if err := c.LQC.validateMiningRewardV5(); err != nil {
+		return err
+	}
 	if err := c.LQC.validateRabbitVRFProtocol(); err != nil {
 		return fmt.Errorf("invalid LQC Rabbit VRF configuration: %v", err)
 	}
@@ -1540,6 +1566,16 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	newLivenessV6Fork := newcfg.LQC.consensusLivenessV6ForkBlock()
 	if isForkBlockIncompatible(storedLivenessV6Fork, newLivenessV6Fork, headNumber) {
 		return newBlockCompatError("LQC consensus liveness V6 fork block", storedLivenessV6Fork, newLivenessV6Fork)
+	}
+
+	storedMiningRewardFork := c.LQC.miningRewardV5ForkBlock()
+	newMiningRewardFork := newcfg.LQC.miningRewardV5ForkBlock()
+	if isForkBlockIncompatible(storedMiningRewardFork, newMiningRewardFork, headNumber) {
+		return newBlockCompatError(
+			"LQC mining reward V5 fork block",
+			storedMiningRewardFork,
+			newMiningRewardFork,
+		)
 	}
 
 	storedVRFFork := c.LQC.vrfProtocolForkBlock()

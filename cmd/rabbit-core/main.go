@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	officialGenesisSHA256 = "e77f2510ef880dead675cda146fb8dbc31375b17daebc800584b1c29c6ae1fb6"
+	officialGenesisSHA256 = "17bfe51321f6e7befe8719ee35c34b1b876fda3e93672204903bd7b6d6bb69ba"
 	officialChainID       = "0x2440"
 	officialNetworkID     = "9280"
 )
@@ -268,7 +268,6 @@ func prepareWallet(ctx context.Context, opts options) (string, common.Address, s
 		return "", common.Address{}, "", nil, err
 	}
 	passwordFile, cleanup, err := sessionPasswordFile(opts.dataDir, secret)
-	secret = ""
 	if err != nil {
 		return "", common.Address{}, "", nil, err
 	}
@@ -451,6 +450,7 @@ func start(ctx context.Context, opts options, keyFile string, address common.Add
 		"--mine",
 		"--miner.etherbase", address.Hex(),
 		"--password", passwordFile,
+		"--rabbitvrf.dkg.password-file", passwordFile,
 		"--cache", "1024",
 	}
 
@@ -755,7 +755,7 @@ func run(ctx context.Context, opts options) error {
 	fmt.Println("Recovering automatically from the last valid local blockchain state...")
 
 	if stateErr := verifyRecoverableLocalChainState(opts.dataDir); stateErr != nil {
-		fmt.Errorf("inspect local blockchain state after %v: %w", err, stateErr)
+		return fmt.Errorf("inspect local blockchain state after %v: %w", err, stateErr)
 	}
 	if initErr := initialize(ctx, opts); initErr != nil {
 		return fmt.Errorf("reapply Rabbit Testnet configuration during recovery: %w", initErr)

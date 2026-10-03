@@ -50,6 +50,7 @@ func (l *LQC) WorkV1EngineLabCommitteeContext(
 		ErrWorkV1EngineLabUnavailable
 }
 
+//nolint:unused // Called by the rabbit_workv1 build.
 func (l *LQC) prepareWorkV1EngineLabHook(
 	chain consensus.ChainHeaderReader,
 	header *types.Header,

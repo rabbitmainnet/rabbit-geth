@@ -116,8 +116,10 @@ type Peer struct {
 	disc     chan DiscReason
 
 	// events receives message send / receive events if set
-	events   *event.Feed
-	testPipe *MsgPipeRW // for testing
+	events       *event.Feed
+	testPipe     *MsgPipeRW // for testing
+	testDone     chan struct{}
+	testDoneOnce sync.Once
 }
 
 // NewPeer returns a peer for testing purposes.
@@ -134,6 +136,7 @@ func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
 	node := enode.SignNull(new(enr.Record), id)
 	conn := &conn{fd: pipe, transport: nil, node: node, caps: caps, name: name}
 	peer := newPeer(log.Root(), conn, protos)
+	peer.testDone = make(chan struct{})
 	close(peer.closed) // ensures Disconnect doesn't block
 	return peer
 }
@@ -203,6 +206,9 @@ func (p *Peer) LocalAddr() net.Addr {
 // Disconnect terminates the peer connection with the given reason.
 // It returns immediately and does not wait until the connection is closed.
 func (p *Peer) Disconnect(reason DiscReason) {
+	if p.testDone != nil {
+		p.testDoneOnce.Do(func() { close(p.testDone) })
+	}
 	if p.testPipe != nil {
 		p.testPipe.Close()
 	}
@@ -216,6 +222,9 @@ func (p *Peer) Disconnect(reason DiscReason) {
 // Done returns a channel that is closed when the P2P peer begins shutting down.
 // Protocol handlers can use this to abort work before Peer.run waits for them.
 func (p *Peer) Done() <-chan struct{} {
+	if p.testDone != nil {
+		return p.testDone
+	}
 	return p.closed
 }
 

@@ -319,7 +319,6 @@ func (n *lqcWorkTicketTransport) BroadcastTickets(tickets []lqc.WorkTicket, exce
 	}
 	n.mu.RUnlock()
 	for _, peer := range peers {
-		peer := peer
 		go func() {
 			if err := peer.sendTicketBatches(n.chainID, tickets); err != nil {
 				peer.peer.Log().Debug("LQC work ticket broadcast failed", "err", err)

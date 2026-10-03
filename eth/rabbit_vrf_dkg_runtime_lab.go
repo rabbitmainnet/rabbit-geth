@@ -65,6 +65,9 @@ type rabbitVRFDKGRuntime struct {
 	done        chan struct{}
 	current     rabbitVRFDKGLocalContextV1
 
+	evaluationDispatch rabbitVRFDKGEvaluationDispatchV1
+	localSharesReady   rabbitVRFDKGLocalSharesReadyV1
+
 	canonicalRequestLookup func(common.Hash) (rabbitVRFCanonicalRequestV1, error)
 }
 
@@ -874,6 +877,26 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 		}
 
 		processRequests := func() {
+			if err := runtime.dispatchLocalEvaluationsV1(); err != nil {
+				log.Debug("Rabbit VRF DKG evaluation dispatch waiting", "err", err)
+			}
+			ready, err := runtime.ensureFinalKeysetV1()
+			if err != nil {
+				log.Debug("Rabbit VRF DKG final keyset waiting", "err", err)
+				return
+			}
+			if !ready {
+				return
+			}
+
+			sharesReady, shareErr := runtime.ensureLocalSecretSharesV1()
+			if shareErr != nil {
+				log.Debug("Rabbit VRF DKG local secret shares waiting", "err", shareErr)
+				return
+			}
+			if !sharesReady {
+				return
+			}
 			if err := runtime.processCanonicalPendingRequestsV1(&requestScan); err != nil {
 				log.Debug(
 					"Rabbit VRF canonical request worker waiting",

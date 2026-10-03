@@ -608,14 +608,6 @@ func rewardRPCAmount(value *hexutil.Big) *big.Int {
 	return new(big.Int).Set((*big.Int)(value))
 }
 
-func shortAddress(address common.Address) string {
-	text := address.Hex()
-	if len(text) <= 14 {
-		return text
-	}
-	return text[:8] + "..." + text[len(text)-4:]
-}
-
 func syncPercent(current, highest uint64) float64 {
 	if highest == 0 {
 		return 0

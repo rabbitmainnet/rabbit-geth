@@ -3,6 +3,7 @@
 package eth
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -544,6 +545,23 @@ func TestWorkV1EnginePoolHeaderTicketsLabReadsV4AndV3(
 		1,
 		"v4-canonical-reconcile",
 	)
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate.Signed.Ticket.Participant = crypto.PubkeyToAddress(key.PublicKey)
+	signingHash, err := lqc.RandomXWorkSigningHashV1(
+		big.NewInt(9280), common.HexToHash("0x01"),
+		candidate.Signed.Ticket, candidate.ProofHash,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate.Signed.Signature, err = crypto.Sign(signingHash[:], key)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registryRoot := common.HexToHash("0x1111")
 	workRoot := common.HexToHash("0x2222")
 	claimRoot := common.HexToHash("0x3333")

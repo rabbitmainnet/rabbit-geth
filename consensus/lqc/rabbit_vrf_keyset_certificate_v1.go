@@ -2,6 +2,7 @@ package lqc
 
 import (
 	"errors"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	rabbitvrf "github.com/ethereum/go-ethereum/crypto/rabbitvrf"

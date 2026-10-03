@@ -335,7 +335,6 @@ func (miner *Miner) lqcDevnetLoop() {
 				local.Address == (common.Address{}) ||
 				local.Address != coinbase ||
 				local.QueuePos < 0 {
-
 				log.Info(
 					"LCQ local account outside producer queue",
 					"coinbase", coinbase,

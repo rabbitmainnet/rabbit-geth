@@ -256,7 +256,6 @@ func EligibleHybridParticipants(input []HybridParticipant, block uint64, cfg Hyb
 
 	out := make([]HybridParticipant, 0, len(input))
 	for _, p := range input {
-
 		bond := "<nil>"
 		if p.Bond != nil {
 			bond = p.Bond.String()

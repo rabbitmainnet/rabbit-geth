@@ -43,7 +43,8 @@
       "consensusLivenessV4Block": 97991,
       "consensusLivenessV5Block": 115000,
       "consensusLivenessV6Block": 115022,
-      "vrfProtocolBlock": 136193
+      "vrfProtocolBlock": 136193,
+      "miningRewardV5Block": 153601
     }
   },
   "nonce": "0x0",

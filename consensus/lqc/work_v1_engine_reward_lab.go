@@ -323,11 +323,7 @@ func (l *LQC) workV1EngineLabVerifiedClaimsForRewardV3(
 		return LQCHeaderEnvelopeV4{}, nil, nil,
 			ErrInvalidLQCHeaderRuntimeV4
 	}
-	envelope, err := ValidateLQCHeaderExtraV4(
-		header.Number.Uint64(),
-		MaxWorkTicketsPerBlockV1,
-		header.Extra,
-	)
+	envelope, err := l.workV1EngineLabRewardEnvelopeForHeader(chain, header)
 	if err != nil {
 		return LQCHeaderEnvelopeV4{}, nil, nil, err
 	}

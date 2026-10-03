@@ -182,6 +182,21 @@ func TestRabbitVRFRequestWorkerV1CanonicalChainReorgEndToEnd(t *testing.T) {
 		)
 	}
 
+	// A caught-up cursor must still check previously discovered pending requests.
+	lookupCalls := 0
+	runtime.canonicalRequestLookup = func(common.Hash) (rabbitVRFCanonicalRequestV1, error) {
+		lookupCalls++
+		return rabbitVRFCanonicalRequestV1{}, errRabbitVRFRequestNotPendingV1
+	}
+	cursor.Retry.trackV1(common.HexToHash("0x20"), 4, chainA[3].Hash())
+	if err := runtime.processCanonicalPendingRequestsV1(&cursor); err != nil {
+		t.Fatal(err)
+	}
+	if lookupCalls != 1 || len(cursor.Retry.Pending) != 0 {
+		t.Fatal("caught-up cursor failed to retire a no-longer-pending request")
+	}
+	// This origin belongs to branch A and must disappear when branch B replaces it.
+	cursor.Retry.trackV1(common.HexToHash("0x21"), 4, chainA[3].Hash())
 	genesisBlock := blockchain.GetBlockByNumber(0)
 	if genesisBlock == nil {
 		t.Fatal("canonical genesis unavailable")
@@ -217,6 +232,10 @@ func TestRabbitVRFRequestWorkerV1CanonicalChainReorgEndToEnd(t *testing.T) {
 	}
 	if cursor.LastHash != chainB[6].Hash() {
 		t.Fatalf("post-reorg cursor hash=%s want=%s", cursor.LastHash, chainB[6].Hash())
+	}
+
+	if len(cursor.Retry.Pending) != 0 || lookupCalls != 1 {
+		t.Fatal("reorg retained or processed a request from the obsolete branch")
 	}
 	if cursor.LastHash == chainA[5].Hash() {
 		t.Fatal("post-reorg cursor retained stale branch A hash")

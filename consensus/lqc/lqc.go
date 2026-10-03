@@ -153,6 +153,7 @@ func (l *LQC) consensusLivenessV5Active(blockNumber uint64) bool {
 		blockNumber >= l.config.ConsensusLivenessV5Block
 }
 
+//nolint:unused // Called by the rabbit_workv1 build.
 func (l *LQC) consensusLivenessV6Active(blockNumber uint64) bool {
 	return l != nil &&
 		l.config != nil &&
@@ -160,6 +161,7 @@ func (l *LQC) consensusLivenessV6Active(blockNumber uint64) bool {
 		blockNumber >= l.config.ConsensusLivenessV6Block
 }
 
+//nolint:unused // Called by the rabbit_workv1 build.
 func (l *LQC) vrfForkLivenessActive(blockNumber uint64) bool {
 	return l != nil &&
 		l.config != nil &&
@@ -195,7 +197,6 @@ func (l *LQC) ResolveLocalParticipant(
 	header *types.Header,
 	accounts []common.Address,
 ) consensus.LocalParticipant {
-
 	if header == nil || header.Number == nil || len(accounts) == 0 {
 		return consensus.LocalParticipant{QueuePos: -1}
 	}
@@ -270,7 +271,6 @@ func (l *LQC) ResolveLocalParticipant(
 	}
 
 	return best
-
 }
 
 func (l *LQC) recoveryTimeoutSeconds() uint64 {
@@ -966,7 +966,7 @@ func (l *LQC) distributeRewards(chain consensus.ChainHeaderReader, header *types
 	if committeeBps > 10000 {
 		committeeBps = 10000
 	}
-	producerBps := uint64(10000 - committeeBps)
+	producerBps := 10000 - committeeBps
 
 	producerReward := new(uint256.Int).Set(totalReward)
 	producerReward.Mul(producerReward, uint256.NewInt(producerBps))

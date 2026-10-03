@@ -12,7 +12,7 @@ env:
   GO_VERSION: "1.25.13"
   RANDOMX_REPOSITORY: https://github.com/tevador/RandomX.git
   RANDOMX_COMMIT: 7c761cf007c758056dcb6eb438a32f780f81bdbd
-  TESTNET_GENESIS_SHA256: e77f2510ef880dead675cda146fb8dbc31375b17daebc800584b1c29c6ae1fb6
+  TESTNET_GENESIS_SHA256: 17bfe51321f6e7befe8719ee35c34b1b876fda3e93672204903bd7b6d6bb69ba
 
 jobs:
   native:
@@ -82,7 +82,7 @@ jobs:
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.3-${{ matrix.target }}
+          name: rabbit-core-testnet-v2.4.4-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -96,7 +96,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-v2.4.3-*
+          pattern: rabbit-core-testnet-v2.4.4-*
           path: releases
           merge-multiple: true
 
@@ -114,14 +114,14 @@ jobs:
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.3-release-bundle
+          name: rabbit-core-testnet-v2.4.4-release-bundle
           path: releases/*
           if-no-files-found: error
           retention-days: 30
 
 
   publish-existing:
-    name: Publish existing V2.4.3 artifacts
+    name: Publish existing V2.4.4 artifacts
     if: ${{ inputs.publish_run_id != '' }}
     runs-on: ubuntu-24.04
     permissions:
@@ -129,10 +129,26 @@ jobs:
       contents: write
 
     steps:
-      - name: Download verified V2.4.3 bundle
+      - name: Verify build source before publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.publish_run_id }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          read -r status conclusion source_sha < <(
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" \
+              --jq '[.status, .conclusion, .head_sha] | @tsv'
+          )
+          [[ "$status" == completed ]]
+          [[ "$conclusion" == success ]]
+          [[ "$source_sha" == "$GITHUB_SHA" ]]
+
+      - name: Download verified V2.4.4 bundle
         uses: actions/download-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.3-release-bundle
+          name: rabbit-core-testnet-v2.4.4-release-bundle
           path: release
           github-token: ${{ github.token }}
           repository: rabbitmainnet/rabbit-geth
@@ -144,13 +160,13 @@ jobs:
           cd release
           sha256sum -c SHA256SUMS.txt
 
-      - name: Publish V2.4.3 GitHub release
+      - name: Publish V2.4.4 GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v2.4.3"
-          TARGET="c82bc245883333446daba20b1ece2ab9424991d0"
+          TAG="v2.4.4"
+          TARGET="$GITHUB_SHA"
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* \
@@ -160,7 +176,7 @@ jobs:
             gh release create "$TAG" release/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$TARGET" \
-              --title "Rabbit Core Testnet v2.4.3" \
+              --title "Rabbit Core Testnet v2.4.4" \
               --draft
           fi
 

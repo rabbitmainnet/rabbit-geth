@@ -5,6 +5,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -22,6 +23,7 @@ var errRabbitVRFRequestWorkerReorgV1 = errors.New(
 )
 
 type rabbitVRFRequestScanCursorV1 struct {
+	Retry    rabbitVRFRequestRetryQueueV1
 	Next     uint64
 	LastHash common.Hash
 }
@@ -32,6 +34,7 @@ func (cursor *rabbitVRFRequestScanCursorV1) resetV1(activation uint64) {
 	}
 	cursor.Next = activation
 	cursor.LastHash = common.Hash{}
+	cursor.Retry = rabbitVRFRequestRetryQueueV1{}
 }
 
 func (cursor *rabbitVRFRequestScanCursorV1) reconcilePreviousV1(
@@ -137,10 +140,6 @@ func (runtime *rabbitVRFDKGRuntime) processCanonicalPendingRequestsV1(
 	}
 
 	headNumber := head.Number.Uint64()
-	if headNumber < cursor.Next {
-		return nil
-	}
-
 	if !runtime.secretReadyV1() {
 		return nil
 	}
@@ -158,6 +157,9 @@ func (runtime *rabbitVRFDKGRuntime) processCanonicalPendingRequestsV1(
 		)
 	}
 
+	if cursor.Next <= headNumber && headNumber-cursor.Next >= 256 {
+		headNumber = cursor.Next + 255
+	}
 	previousHash := cursor.LastHash
 
 	for blockNumber := cursor.Next; blockNumber <= headNumber; blockNumber++ {
@@ -189,34 +191,6 @@ func (runtime *rabbitVRFDKGRuntime) processCanonicalPendingRequestsV1(
 			)
 		}
 
-		for _, requestID := range rabbitVRFRequestIDsFromReceiptsV1(receipts) {
-
-			err :=
-				transport.processCanonicalPendingRequestV1(requestID)
-
-			if err != nil {
-				if errors.Is(
-					err,
-					errRabbitVRFRequestNotPendingV1,
-				) {
-					continue
-				}
-
-				return fmt.Errorf(
-					"process canonical rabbit vrf request %s from block %d: %w",
-					requestID,
-					blockNumber,
-					err,
-				)
-			}
-
-			log.Info(
-				"Rabbit VRF canonical request threshold flow started",
-				"request", requestID,
-				"block", blockNumber,
-			)
-		}
-
 		canonical := runtime.backend.blockchain.GetBlockByNumber(blockNumber)
 		if canonical == nil || canonical.Hash() != block.Hash() {
 			cursor.resetV1(activation)
@@ -227,10 +201,46 @@ func (runtime *rabbitVRFDKGRuntime) processCanonicalPendingRequestsV1(
 			)
 		}
 
+		for _, requestID := range rabbitVRFRequestIDsFromReceiptsV1(receipts) {
+			cursor.Retry.trackV1(requestID, blockNumber, block.Hash())
+		}
 		previousHash = block.Hash()
 		cursor.Next = blockNumber + 1
 		cursor.LastHash = block.Hash()
 	}
 
-	return nil
+	err := cursor.Retry.runV1(time.Now(), context.SessionID,
+		func(requestID common.Hash, origin rabbitVRFRequestRetryOriginV1) error {
+			current := runtime.currentContext()
+			if current.SessionID != context.SessionID || !runtime.secretReadyV1() {
+				return errRabbitVRFDKGArtifactSessionMismatch
+			}
+			canonical := runtime.backend.blockchain.GetBlockByNumber(origin.Block)
+			if canonical == nil || canonical.Hash() != origin.Hash {
+				return errRabbitVRFRequestWorkerReorgV1
+			}
+			err := transport.processCanonicalPendingRequestV1(requestID)
+			canonical = runtime.backend.blockchain.GetBlockByNumber(origin.Block)
+			if canonical == nil || canonical.Hash() != origin.Hash {
+				return errRabbitVRFRequestWorkerReorgV1
+			}
+			if err != nil {
+				return fmt.Errorf(
+					"process canonical rabbit vrf request %s from block %d: %w",
+					requestID, origin.Block, err,
+				)
+			}
+			if origin.StartedSession != context.SessionID {
+				log.Info(
+					"Rabbit VRF canonical request threshold flow started",
+					"request", requestID, "block", origin.Block,
+				)
+			}
+			return nil
+		},
+	)
+	if errors.Is(err, errRabbitVRFRequestWorkerReorgV1) {
+		cursor.resetV1(activation)
+	}
+	return err
 }
