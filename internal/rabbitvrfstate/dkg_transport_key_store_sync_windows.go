@@ -18,7 +18,7 @@ func syncDirectoryV1(
 	handle, err :=
 		windows.CreateFile(
 			encoded,
-			windows.GENERIC_READ,
+			windows.GENERIC_READ|windows.GENERIC_WRITE,
 			windows.FILE_SHARE_READ|
 				windows.FILE_SHARE_WRITE|
 				windows.FILE_SHARE_DELETE,
