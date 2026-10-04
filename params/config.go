@@ -610,6 +610,8 @@ func (c CliqueConfig) String() string {
 
 // LQCConfig is the consensus engine config for Rabbit Queue Consensus.
 type LQCConfig struct {
+	// Disabled unless scheduled at a future DKG preparation epoch boundary.
+	VRFAvailabilityV2Block      uint64           `json:"vrfAvailabilityV2Block,omitempty"`
 	CommitteeMin                uint64           `json:"committeeMin"`
 	CommitteeMax                uint64           `json:"committeeMax"`
 	CommitteeRatioBps           uint64           `json:"committeeRatioBps"`
@@ -1406,6 +1408,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if err := c.LQC.validateMiningRewardV5(); err != nil {
 		return err
 	}
+	if err := c.LQC.validateVRFAvailabilityV2(); err != nil {
+		return err
+	}
 	if err := c.LQC.validateRabbitVRFProtocol(); err != nil {
 		return fmt.Errorf("invalid LQC Rabbit VRF configuration: %v", err)
 	}
@@ -1576,6 +1581,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 			storedMiningRewardFork,
 			newMiningRewardFork,
 		)
+	}
+
+	storedAvailabilityFork := c.LQC.vrfAvailabilityV2ForkBlock()
+	newAvailabilityFork := newcfg.LQC.vrfAvailabilityV2ForkBlock()
+	if isForkBlockIncompatible(storedAvailabilityFork, newAvailabilityFork, headNumber) {
+		return newBlockCompatError("LQC VRF availability V2 fork block", storedAvailabilityFork, newAvailabilityFork)
 	}
 
 	storedVRFFork := c.LQC.vrfProtocolForkBlock()

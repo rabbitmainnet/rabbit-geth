@@ -397,6 +397,31 @@ func (l *LQC) RabbitVRFDKGBridgeContextV1(
 		return out, false, err
 	}
 
+	preparationStart, err := RabbitVRFDKGPreparationStartBlockV1(snapshot.Epoch, parent.Work.EpochLength)
+	if err != nil {
+		return out, false, err
+	}
+	if chain.Config().LQC.IsVRFAvailabilityV2Preparation(preparationStart) {
+		if err := chain.Config().CheckConfigForkOrder(); err != nil {
+			return out, false, err
+		}
+		reference := workV1EngineLabAncestorHeader(chain, parentNumber, parentHash, preparationStart-1)
+		if reference == nil {
+			return out, false, ErrWorkV1EngineLabParentMissing
+		}
+		registry, err := l.registrySnapshotAt(chain, preparationStart-1, reference.Hash())
+		if err != nil {
+			return out, false, err
+		}
+		state, err := workV1EngineLabRuntimeFor(l)
+		if err != nil {
+			return out, false, err
+		}
+		window := chain.Config().LQC.HeartbeatWindow + chain.Config().LQC.HeartbeatGrace
+		return rabbitVRFAvailableBridgeV2(chain.Config().ChainID, snapshot, datasetKey, registry,
+			parent.Work.EpochLength, window, WorkSelectionBeaconHasherV1(state.cachedSelectionBeaconHash))
+	}
+
 	committeeSize :=
 		l.workV1EngineLabCommitteeSize(
 			uint64(len(snapshot.Seats)),
