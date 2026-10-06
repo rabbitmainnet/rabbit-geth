@@ -87,6 +87,8 @@ type rabbitVRFDKGTransport struct {
 	peers  map[string]*rabbitVRFDKGPeer
 	closed bool
 
+	encryptedRelay rabbitVRFEncryptedRelayCacheV1
+
 	remoteSession     common.Hash
 	remoteArtifacts   map[uint64]rabbitVRFDKGTransportArtifactPacketV1
 	remoteCommitments map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1
@@ -583,20 +585,12 @@ func (n *rabbitVRFDKGTransport) runPeer(
 			if err := message.Decode(&packet); err != nil {
 				return fmt.Errorf("decode rabbit vrf dkg encrypted evaluation: %w", err)
 			}
-			if err := n.runtime.validateInboundEncryptedEvaluationV1(packet); err != nil {
-				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) {
-					continue
-				}
-				return fmt.Errorf("validate rabbit vrf dkg encrypted evaluation: %w", err)
-			}
-			if _, err := n.runtime.decryptInboundEncryptedEvaluationV1(packet); err != nil {
+			if err := n.handleInboundEncryptedRelayV1(peer, packet); err != nil {
 				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) ||
 					errors.Is(err, errRabbitVRFDKGSecretTemporarilyUnavailableV1) {
-					// The sender retries evaluations. Local synchronization
-					// readiness is not evidence of an invalid remote peer.
 					continue
 				}
-				return fmt.Errorf("process rabbit vrf dkg encrypted evaluation: %w", err)
+				return fmt.Errorf("process rabbit vrf authenticated encrypted relay: %w", err)
 			}
 
 		case rabbitVRFDKGThresholdPartialMsg:
@@ -1023,10 +1017,23 @@ func (n *rabbitVRFDKGTransport) handleInboundThresholdPartialV1(peer *rabbitVRFD
 	if context.SessionID == (common.Hash{}) || packet.SessionID != context.SessionID {
 		return errRabbitVRFDKGArtifactSessionMismatch
 	}
-	if !n.thresholdPartialPeerAuthenticatedV1(peer, packet) {
-		return errors.New("rabbit vrf threshold partial sender route mismatch")
+	if peer == nil {
+		return errors.New("rabbit vrf threshold partial peer unavailable")
 	}
-	return n.collectThresholdPartialV1(packet)
+	// A forwarded packet is authenticated by its canonical BLS verification
+	// share, compact signature and wallet participation binding below. The
+	// forwarding node must not impersonate the original member's P2P route.
+	n.mu.RLock()
+	previous, existed := n.partials[packet.RequestID][packet.ShareID]
+	existed = existed && n.partialSession == packet.SessionID && previous == packet
+	n.mu.RUnlock()
+	if err := n.collectThresholdPartialV1(packet); err != nil {
+		return err
+	}
+	if !existed {
+		_ = n.broadcastThresholdPartialV1(packet, peer.id())
+	}
+	return nil
 }
 
 func (n *rabbitVRFDKGTransport) collectThresholdPartialV1(packet lqc.RabbitVRFThresholdPartialV1) error {
@@ -1449,6 +1456,9 @@ func (n *rabbitVRFDKGTransport) syncPeerArtifactsUntilDoneV1(
 			return err
 		}
 		if err := n.sendPendingTransportArtifactsV1(peer); err != nil {
+			return err
+		}
+		if err := n.sendPendingAuthenticatedRelayV1(peer); err != nil {
 			return err
 		}
 

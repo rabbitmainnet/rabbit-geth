@@ -149,9 +149,7 @@ func (runtime *rabbitVRFDKGRuntime) dispatchLocalEvaluationsV1() error {
 			} else {
 				var found bool
 				peer, found = transport.peerForShareV1(context.SessionID, recipient.ShareID)
-				if !found {
-					continue
-				}
+				_ = found // Recipient routing is an optimization, not a delivery requirement.
 				if entry != nil && entry.peer == peer &&
 					time.Since(entry.lastSent) < 30*time.Second {
 					continue
@@ -188,7 +186,7 @@ func (runtime *rabbitVRFDKGRuntime) dispatchLocalEvaluationsV1() error {
 				}
 				entry.deliveredLocal = true
 			} else {
-				if err := peer.sendEncryptedEvaluationV1(entry.packet); err != nil {
+				if err := transport.sendEncryptedEvaluationToRecipientV1(entry.packet); err != nil {
 					if firstErr == nil {
 						firstErr = err
 					}

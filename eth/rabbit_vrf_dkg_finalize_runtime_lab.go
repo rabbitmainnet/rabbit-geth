@@ -55,9 +55,9 @@ func (runtime *rabbitVRFDKGRuntime) ensureFinalKeysetV1() (bool, error) {
 		return false, nil
 	}
 	context := runtime.currentContext()
-	if len(context.Members) == 0 {
-		return false, nil
-	}
+	// The finalized keyset contains public data derived from verified
+	// commitments. Relays need it to verify and retain certificates even
+	// when they do not hold a local committee wallet or secret share.
 	sessionID, err := lqc.RabbitVRFDKGSessionIDV1(context.CanonicalSession)
 	if err != nil || sessionID != context.SessionID {
 		return false, errRabbitVRFDKGArtifactSessionMismatch

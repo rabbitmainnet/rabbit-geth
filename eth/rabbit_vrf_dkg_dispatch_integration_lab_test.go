@@ -39,13 +39,15 @@ func (w *rabbitVRFDKGEvaluationMemoryWireV1) WriteMsg(msg p2p.Msg) error {
 		if err := msg.Decode(&packet); err != nil {
 			return err
 		}
-		if err := w.recipient.validateInboundEncryptedEvaluationV1(packet); err != nil {
+		if err := w.recipient.backend.vrfDKGTransport.handleInboundEncryptedRelayV1(nil, packet); err != nil {
 			return err
 		}
-		if _, err := w.recipient.decryptInboundEncryptedEvaluationV1(packet); err != nil {
-			return err
+		for _, member := range w.recipient.currentContext().Members {
+			if member.ShareID == packet.RecipientShareID {
+				w.delivered++
+				break
+			}
 		}
-		w.delivered++
 		return nil
 	case rabbitVRFDKGThresholdPartialMsg:
 		var packet lqc.RabbitVRFThresholdPartialV1
@@ -204,8 +206,8 @@ func TestRabbitVRFDKGDispatchThreeRuntimesMissingRouteThenSign(t *testing.T) {
 			t.Fatalf("keyset: ready=%v err=%v", ready, err)
 		}
 	}
-	if ready, err := runtimes[2].ensureLocalSecretSharesV1(); ready || err != nil {
-		t.Fatalf("missing dealer evaluation: ready=%v err=%v", ready, err)
+	if ready, err := runtimes[2].ensureLocalSecretSharesV1(); !ready || err != nil {
+		t.Fatalf("fallback delivery did not complete evaluations: ready=%v err=%v", ready, err)
 	}
 	first.backend.vrfDKGTransport.routes[members[2].ShareID] = "test-node-2"
 	if err := first.dispatchLocalEvaluationsV1(); err != nil {

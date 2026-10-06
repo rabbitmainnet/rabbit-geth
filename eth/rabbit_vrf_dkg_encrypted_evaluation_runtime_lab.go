@@ -220,18 +220,34 @@ func (peer *rabbitVRFDKGPeer) sendEncryptedEvaluationV1(message lqc.RabbitVRFDKG
 	}
 	peer.mu.Lock()
 	defer peer.mu.Unlock()
-	return p2p.Send(peer.rw, rabbitVRFDKGEncryptedEvaluationMsg, message)
+	id, err := lqc.RabbitVRFDKGEncryptedEvaluationIDV1(message)
+	if err != nil {
+		return err
+	}
+	if peer.known == nil {
+		peer.known = make(map[common.Hash]struct{})
+	}
+	if _, known := peer.known[id]; known {
+		return nil
+	}
+	if err := p2p.Send(peer.rw, rabbitVRFDKGEncryptedEvaluationMsg, message); err != nil {
+		return err
+	}
+	if len(peer.known) >= rabbitVRFDKGMaxKnownPerPeer {
+		clear(peer.known)
+	}
+	peer.known[id] = struct{}{}
+	return nil
 }
 
 func (n *rabbitVRFDKGTransport) sendEncryptedEvaluationToRecipientV1(message lqc.RabbitVRFDKGEncryptedEvaluationV1) error {
-	if n == nil || message.SessionID == ([32]byte{}) || message.RecipientShareID == 0 {
-		return fmt.Errorf("invalid rabbit vrf dkg encrypted evaluation route")
+	if n == nil || n.runtime == nil {
+		return fmt.Errorf("rabbit vrf encrypted evaluation transport unavailable")
 	}
-	peer, ok := n.peerForShareV1(message.SessionID, message.RecipientShareID)
-	if !ok {
-		return fmt.Errorf("rabbit vrf dkg recipient peer unavailable for share %d", message.RecipientShareID)
+	if _, err := n.retainEncryptedRelayPacketV1(message); err != nil {
+		return err
 	}
-	return peer.sendEncryptedEvaluationV1(message)
+	return n.broadcastEncryptedRelayPacketV1(message, "")
 }
 
 func (runtime *rabbitVRFDKGRuntime) validateInboundEncryptedEvaluationV1(message lqc.RabbitVRFDKGEncryptedEvaluationV1) error {
@@ -244,7 +260,7 @@ func (runtime *rabbitVRFDKGRuntime) validateInboundEncryptedEvaluationV1(message
 	}
 	var recipient lqc.RabbitVRFCommitteeMemberV1
 	recipientFound := false
-	for _, member := range context.Members {
+	for _, member := range context.CanonicalMembers {
 		if member.ShareID == message.RecipientShareID && member.Participant == message.RecipientParticipant {
 			recipient = member
 			recipientFound = true
@@ -253,7 +269,7 @@ func (runtime *rabbitVRFDKGRuntime) validateInboundEncryptedEvaluationV1(message
 	}
 	_ = recipient
 	if !recipientFound {
-		return fmt.Errorf("rabbit vrf dkg encrypted evaluation recipient is not local")
+		return fmt.Errorf("rabbit vrf dkg encrypted evaluation recipient not in canonical committee")
 	}
 	var dealer lqc.RabbitVRFCommitteeMemberV1
 	dealerFound := false
