@@ -65,6 +65,8 @@ type RegistryParticipantResult struct {
 	RegisteredAt   hexutil.Uint64 `json:"registeredAt"`
 	LastHeartbeat  hexutil.Uint64 `json:"lastHeartbeat"`
 	Sequence       hexutil.Uint64 `json:"sequence"`
+	JailedUntil    hexutil.Uint64 `json:"jailedUntil"`
+	MissedTurns    hexutil.Uint64 `json:"missedTurns"`
 }
 
 type RewardClaimResult struct {
@@ -493,6 +495,8 @@ func (api *LQCRegistryAPI) RegistryParticipant(address common.Address) (Registry
 		RegisteredAt:   hexutil.Uint64(status.Participant.RegisteredAt),
 		LastHeartbeat:  hexutil.Uint64(status.Participant.LastHeartbeat),
 		Sequence:       hexutil.Uint64(status.Participant.Sequence),
+		JailedUntil:    hexutil.Uint64(status.Participant.JailedUntil),
+		MissedTurns:    hexutil.Uint64(status.Participant.MissedTurns),
 	}, nil
 }
 

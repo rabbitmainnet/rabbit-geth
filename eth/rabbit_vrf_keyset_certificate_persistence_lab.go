@@ -58,7 +58,8 @@ func (n *rabbitVRFDKGTransport) restorePersistedKeysetCertificateV1() error {
 	}
 
 	persisted, err := store.Load(session, members)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) ||
+		errors.Is(err, rabbitvrfstate.ErrDKGTransportKeyStoreMissingV1) {
 		return nil
 	}
 	if err != nil {

@@ -329,6 +329,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		genesisHash,
 		chainConfig,
 	)
+	if err := core.ConfigureRabbitTestnetVRFAvailabilityV2(chainDb, genesisHash, chainConfig); err != nil {
+		return nil, err
+	}
 
 	if enforceLQCFullSync(config, chainConfig) {
 		log.Info(
@@ -848,10 +851,12 @@ func (s *Ethereum) lqcPeerHeadConfirmed(header *types.Header) bool {
 			return false
 		}
 		if r.LatestBlock == localNumber {
-			if r.LatestBlockHash != localHash {
+			if bytes.Compare(r.LatestBlockHash[:], localHash[:]) < 0 {
 				return false
 			}
-			confirmed = true
+			if r.LatestBlockHash == localHash {
+				confirmed = true
+			}
 		}
 	}
 	return confirmed
@@ -896,6 +901,9 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		if head == nil || head.Number == nil || !s.lqcHeadStateAvailable(head) {
 			return false
 		}
+		if !s.lqcPeerHeadConfirmed(head) || s.lqcProductionNeedsSync(head) {
+			return false
+		}
 		if !s.Synced() {
 			s.SetSynced()
 			log.Info("LQC post-sync features enabled", "head", head.Number, "hash", head.Hash(), "reason", reason)
@@ -927,10 +935,10 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 			case downloader.SyncCompleted:
 				syncRequired = false
 				if !markReady("downloader sync completed") {
-					// A successful downloader cycle without readable head state is not
-					// safe for production. Require another successful cycle/restart.
-					syncRequired = true
-					log.Warn("LQC production remains paused; canonical head state is unavailable after sync")
+					stopProducer("head not confirmed after downloader sync")
+					// Recheck peer agreement on subsequent ticks. A completed
+					// cycle alone does not authorize production on a fork.
+					log.Warn("LQC production waiting for canonical state and peer agreement after sync")
 				}
 			}
 		case <-ticker.C:
@@ -950,7 +958,13 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		}
 
 		if producerRunning {
-			continue
+			if s.lqcProductionNeedsSync(s.blockchain.CurrentBlock()) {
+				stopProducer("peer chain conflict or fork recovery pending")
+				// Peer discovery grace belongs to startup or loss of all peers.
+				// Recovery still requires readable state and peer agreement.
+			} else {
+				continue
+			}
 		}
 
 		head := s.blockchain.CurrentBlock()
@@ -1130,4 +1144,61 @@ func (s *Ethereum) Stop() error {
 	s.chainDb.Close()
 
 	return nil
+}
+
+// A peer behind on the same chain does not block production. A known
+// conflicting ancestor, conflicting head, or higher peer requires recovery.
+func lqcPeerHeadRequiresSync(
+	localNumber uint64,
+	localHash common.Hash,
+	peerNumber uint64,
+	peerHash common.Hash,
+	canonicalPeerHash common.Hash,
+) bool {
+	if peerHash == (common.Hash{}) {
+		return false
+	}
+	if peerNumber > localNumber {
+		return true
+	}
+	if peerNumber == localNumber {
+		return bytes.Compare(peerHash[:], localHash[:]) < 0
+	}
+	return canonicalPeerHash != (common.Hash{}) &&
+		canonicalPeerHash != peerHash
+}
+
+func (s *Ethereum) lqcProductionNeedsSync(header *types.Header) bool {
+	if s == nil || s.handler == nil || s.blockchain == nil ||
+		header == nil || header.Number == nil {
+		return true
+	}
+	s.handler.lqcSyncMu.Lock()
+	busy := s.handler.lqcSyncRunning ||
+		s.handler.lqcSyncCurrent != nil ||
+		s.handler.lqcSyncPending != nil
+	s.handler.lqcSyncMu.Unlock()
+	if busy {
+		return true
+	}
+	for _, peer := range s.handler.peers.all() {
+		if peer == nil {
+			continue
+		}
+		r := peer.BlockRange()
+		if r == nil {
+			continue
+		}
+		var canonical common.Hash
+		if r.LatestBlock < header.Number.Uint64() {
+			canonical = s.blockchain.GetCanonicalHash(r.LatestBlock)
+		}
+		if lqcPeerHeadRequiresSync(
+			header.Number.Uint64(), header.Hash(),
+			r.LatestBlock, r.LatestBlockHash, canonical,
+		) {
+			return true
+		}
+	}
+	return false
 }

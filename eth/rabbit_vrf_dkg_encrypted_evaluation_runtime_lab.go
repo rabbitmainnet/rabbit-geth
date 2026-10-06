@@ -4,8 +4,9 @@ package eth
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/common"
 	"path/filepath"
+
+	"github.com/ethereum/go-ethereum/common"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
@@ -304,7 +305,7 @@ func (runtime *rabbitVRFDKGRuntime) decryptInboundEncryptedEvaluationV1(message 
 		return zero, fmt.Errorf("rabbit vrf dkg encrypted evaluation runtime unavailable")
 	}
 	if !runtime.beginSecretOperationV1() {
-		return zero, fmt.Errorf("rabbit vrf dkg secret operation unavailable")
+		return zero, errRabbitVRFDKGSecretTemporarilyUnavailableV1
 	}
 	defer runtime.endSecretOperationV1()
 	context := runtime.currentContext()
@@ -333,7 +334,7 @@ func (runtime *rabbitVRFDKGRuntime) decryptInboundEncryptedEvaluationV1(message 
 	}
 	commitment, ok := runtime.backend.vrfDKGTransport.commitmentForDealerV1(context.SessionID, dealer.ShareID)
 	if !ok {
-		return zero, fmt.Errorf("rabbit vrf dkg dealer commitment unavailable for share %d", dealer.ShareID)
+		return zero, fmt.Errorf("%w: rabbit vrf dkg dealer commitment unavailable for share %d", errRabbitVRFDKGSecretTemporarilyUnavailableV1, dealer.ShareID)
 	}
 	var binding lqc.RabbitVRFDKGTransportKeyBindingV1
 	var envelope lqc.RabbitVRFDKGEnvelopeV1
@@ -347,7 +348,7 @@ func (runtime *rabbitVRFDKGRuntime) decryptInboundEncryptedEvaluationV1(message 
 		}
 	}
 	if !artifactFound {
-		return zero, fmt.Errorf("rabbit vrf dkg recipient transport artifact unavailable")
+		return zero, fmt.Errorf("%w: rabbit vrf dkg recipient transport artifact unavailable", errRabbitVRFDKGSecretTemporarilyUnavailableV1)
 	}
 	password, err := readRabbitVRFDKGPasswordFileV1(runtime.backend.config.RabbitVRFDKGPasswordFile)
 	if err != nil {

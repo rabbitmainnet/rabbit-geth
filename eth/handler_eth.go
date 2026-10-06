@@ -367,6 +367,10 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 		}
 
 		deadline := time.Now().Add(2 * time.Minute)
+		var progressNumber uint64
+		if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
+			progressNumber = local.Number.Uint64()
+		}
 		ticker := time.NewTicker(250 * time.Millisecond)
 		for {
 			if h.chain.GetCanonicalHash(header.Number.Uint64()) == header.Hash() {
@@ -381,7 +385,16 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 				}
 				break
 			}
+			// Keep an advancing import alive. Only a stalled import times out.
+			if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
+				if number := local.Number.Uint64(); number > progressNumber {
+					progressNumber = number
+					deadline = time.Now().Add(2 * time.Minute)
+				}
+			}
 			if time.Now().After(deadline) {
+				peer.Log().Warn("LQC fork-recovery stalled",
+					"target", header.Number, "imported", progressNumber)
 				break
 			}
 			select {

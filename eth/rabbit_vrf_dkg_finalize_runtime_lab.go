@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	rabbitvrfstate "github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
@@ -80,15 +84,29 @@ func (runtime *rabbitVRFDKGRuntime) ensureFinalKeysetV1() (bool, error) {
 		return false, fmt.Errorf("rabbit vrf final keyset transport unavailable")
 	}
 	commitments := make([]lqc.RabbitVRFDKGPolynomialCommitmentV1, 0, len(context.CanonicalMembers))
+	missing := make([]common.Address, 0)
 	for index, member := range context.CanonicalMembers {
 		if member.ShareID != uint64(index+1) {
 			return false, fmt.Errorf("rabbit vrf final keyset committee ordering mismatch")
 		}
 		commitment, ok := transport.commitmentForDealerV1(context.SessionID, member.ShareID)
 		if !ok {
-			return false, nil
+			missing = append(missing, member.Participant)
+			continue
 		}
 		commitments = append(commitments, commitment)
+	}
+	if len(missing) > 0 {
+		key := fmt.Sprintf("%s/%d", context.SessionID.Hex(), len(commitments))
+		if _, seen := rabbitVRFDKGCommitmentDiagnostic.LoadOrStore(key, true); !seen {
+			log.Warn("Rabbit VRF DKG waiting for commitments",
+				"session", context.SessionID.Hex(),
+				"committee", context.CanonicalSession.CommitteeSize,
+				"threshold", context.CanonicalSession.Threshold,
+				"received", len(commitments),
+				"missing", missing)
+		}
+		return false, nil
 	}
 	if runtime.currentContext().SessionID != context.SessionID {
 		return false, errRabbitVRFDKGArtifactSessionMismatch
@@ -100,3 +118,5 @@ func (runtime *rabbitVRFDKGRuntime) ensureFinalKeysetV1() (bool, error) {
 	}
 	return true, nil
 }
+
+var rabbitVRFDKGCommitmentDiagnostic sync.Map

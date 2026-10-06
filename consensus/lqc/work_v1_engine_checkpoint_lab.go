@@ -144,11 +144,20 @@ func (l *LQC) workV1EngineLabRestoreCheckpoint(
 	}
 
 	if l.consensusLivenessV3Active(number) {
-		envelope, err := ValidateLQCHeaderExtraV4(
-			number,
-			MaxWorkTicketsPerBlockV1,
-			header.Extra,
-		)
+		var envelope LQCHeaderEnvelopeV4
+		var err error
+		if chain.Config().IsRabbitVRF(header.Number) {
+			var v5 LQCHeaderEnvelopeV5
+			v5, err = ValidateLQCHeaderExtraV5(
+				number, MaxWorkTicketsPerBlockV1, header.Extra,
+			)
+			envelope.WorkStateRoot = v5.WorkStateRoot
+			envelope.CommitteeClaimRoot = v5.CommitteeClaimRoot
+		} else {
+			envelope, err = ValidateLQCHeaderExtraV4(
+				number, MaxWorkTicketsPerBlockV1, header.Extra,
+			)
+		}
 		if err != nil {
 			return false, nil
 		}

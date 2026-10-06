@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
+
+	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
@@ -116,6 +119,14 @@ func (runtime *rabbitVRFDKGRuntime) ensureLocalSecretSharesV1() (bool, error) {
 				)
 				if err != nil {
 					if errors.Is(err, rabbitvrfstate.ErrDKGTransportKeyStoreMissingV1) {
+						key := fmt.Sprintf("%s/%d/%d", context.SessionID.Hex(), recipient.ShareID, dealer.ShareID)
+						if _, seen := rabbitVRFDKGMissingEvaluationDiagnostic.LoadOrStore(key, true); !seen {
+							log.Warn("Rabbit VRF DKG waiting for verified evaluation",
+								"session", context.SessionID.Hex(),
+								"recipient", recipient.Participant,
+								"dealer", dealer.Participant,
+								"committee", context.CanonicalSession.CommitteeSize)
+						}
 						return false, nil
 					}
 					return false, err
@@ -170,3 +181,5 @@ func (runtime *rabbitVRFDKGRuntime) ensureLocalSecretSharesV1() (bool, error) {
 	}
 	return true, nil
 }
+
+var rabbitVRFDKGMissingEvaluationDiagnostic sync.Map

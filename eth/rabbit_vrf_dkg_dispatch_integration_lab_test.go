@@ -237,12 +237,17 @@ func TestRabbitVRFDKGDispatchThreeRuntimesMissingRouteThenSign(t *testing.T) {
 		}
 	}
 	delivered := 0
-	for _, wire := range wires {
+	if len(wires) != 6 {
+		t.Fatalf("remote routes=%d want=6", len(wires))
+	}
+	for index, wire := range wires {
+		if wire.delivered == 0 {
+			t.Fatalf("remote route %d received no verified evaluation", index)
+		}
 		delivered += wire.delivered
 	}
-	if delivered != 6 {
-		t.Fatalf("remote evaluations=%d want=6", delivered)
-	}
+	// Cryptographic work may exceed the resend interval. Each route must
+	// deliver, while the immediate-retry check below forbids early resends.
 	// Isolate an immediate retry from the expensive cryptographic checks above.
 	for _, runtime := range runtimes {
 		for _, entry := range runtime.evaluationDispatch.entries {
@@ -268,6 +273,13 @@ func TestRabbitVRFDKGDispatchThreeRuntimesMissingRouteThenSign(t *testing.T) {
 	}
 
 	requestID := common.HexToHash("0x1234")
+	previousSessionID := common.HexToHash("0xeeee")
+	previousFinalization := lqc.RabbitVRFFinalizationV1{RequestID: requestID, Epoch: 10}
+	for _, runtime := range runtimes {
+		runtime.backend.vrfDKGTransport.finalizations = map[rabbitVRFFinalizationKeyV1]lqc.RabbitVRFFinalizationV1{
+			{SessionID: previousSessionID, RequestID: requestID}: previousFinalization,
+		}
+	}
 	for _, runtime := range runtimes {
 		runtime.canonicalRequestLookup = func(got common.Hash) (rabbitVRFCanonicalRequestV1, error) {
 			if got != requestID {
@@ -292,14 +304,28 @@ func TestRabbitVRFDKGDispatchThreeRuntimesMissingRouteThenSign(t *testing.T) {
 			t.Fatalf("node %d certificate publication: %v", i, err)
 		}
 	}
+	servingBlock, err := lqc.RabbitVRFEpochStartBlockV1(session.TargetVRFEpoch, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge := lqc.RabbitVRFDKGBridgeV1{
+		Session: session, SessionID: id, Members: members, TargetVRFEpoch: session.TargetVRFEpoch,
+	}
 	var expectedRandomness common.Hash
 	for i, runtime := range runtimes {
-		finalizations, err := runtime.backend.vrfDKGTransport.rabbitVRFFinalizationsForBlockV1(101)
+		certificate, finalizations, ready, err := runtime.backend.vrfDKGTransport.rabbitVRFArtifactsForBridgeV1(servingBlock, 128, bridge)
 		if err != nil || len(finalizations) != 1 {
 			t.Fatalf("node %d finalizations=%d err=%v", i, len(finalizations), err)
 		}
 		value := finalizations[0]
-		certificate, ready, err := runtime.backend.vrfDKGTransport.rabbitVRFKeysetCertificateForBlockV1(101)
+		transport := runtime.backend.vrfDKGTransport
+		transport.mu.RLock()
+		previous, previousFound := transport.finalizations[rabbitVRFFinalizationKeyV1{SessionID: previousSessionID, RequestID: requestID}]
+		current, currentFound := transport.finalizations[rabbitVRFFinalizationKeyV1{SessionID: id, RequestID: requestID}]
+		transport.mu.RUnlock()
+		if !previousFound || previous != previousFinalization || !currentFound || current != value {
+			t.Fatalf("node %d did not retain independent results for both sessions", i)
+		}
 		if err != nil || !ready {
 			t.Fatalf("node %d certificate ready=%v err=%v", i, ready, err)
 		}
@@ -345,6 +371,21 @@ func TestRabbitVRFDKGDispatchThreeRuntimesMissingRouteThenSign(t *testing.T) {
 		)
 		if err != nil || uint64(len(ids)) != session.Threshold {
 			t.Fatalf("node %d invalid participation bitmap: %v", i, err)
+		}
+		// A result prepared for epoch 11 cannot be included in epoch 10.
+		if _, early, earlyReady, err := runtime.backend.vrfDKGTransport.rabbitVRFArtifactsForBridgeV1(servingBlock-1, 128, bridge); err != nil || earlyReady || len(early) != 0 {
+			t.Fatalf("node %d exposed future-session artifacts: ready=%v err=%v", i, earlyReady, err)
+		}
+		// Changing preparation must not lose the serving session's certificate.
+		runtime.mu.Lock()
+		runtime.current = rabbitVRFDKGLocalContextV1{}
+		runtime.mu.Unlock()
+		oldCertificate, retained, retainedReady, err := runtime.backend.vrfDKGTransport.rabbitVRFArtifactsForBridgeV1(servingBlock, 128, bridge)
+		if err != nil || !retainedReady || len(retained) != 1 || oldCertificate.SessionID != id || retained[0] != value {
+			t.Fatalf("node %d lost serving artifacts after preparation changed: ready=%v err=%v", i, retainedReady, err)
+		}
+		if _, expired, expiredReady, err := runtime.backend.vrfDKGTransport.rabbitVRFArtifactsForBridgeV1(servingBlock+128, 128, bridge); err != nil || expiredReady || len(expired) != 0 {
+			t.Fatalf("node %d exposed expired-session artifacts: ready=%v err=%v", i, expiredReady, err)
 		}
 		if i == 0 {
 			expectedRandomness = randomness

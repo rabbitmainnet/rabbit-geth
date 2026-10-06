@@ -81,9 +81,10 @@ export CGO_ENABLED=1
 export CGO_CFLAGS="-O2 -D__BLST_PORTABLE__ -I$work/RandomX/src"
 export CGO_LDFLAGS="-L$work/RandomX/build -lrandomx"
 
-go test -tags 'rabbit_workv1 rabbit_randomx' ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc -count=1
+go test -tags "rabbit_workv1 rabbit_randomx" ./core -run "RabbitTestnetAvailabilityFork|LQCSiblingPrunedParentRecovery|LQCEqualHeight" -count=1 -timeout=8m -p=1
+go test -tags 'rabbit_workv1 rabbit_randomx' ./params ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc ./eth ./eth/downloader ./miner -count=1 -timeout=10m -p=1
 
-package="rabbit-core-testnet-v2.4.5-$TARGET"
+package="rabbit-core-testnet-v2.4.6-$TARGET"
 stage="$work/$package"
 mkdir -p "$stage" dist
 
@@ -105,7 +106,7 @@ cp docs/rabbit-core.md docs/rabbit-miner.md "$stage/"
 cp scripts/rabbit-release/NOTICE-TESTNET.txt "$stage/NOTICE-TESTNET.txt"
 
 cat > "$stage/BUILD-METADATA.txt" <<EOF
-RABBIT_RELEASE=rabbit-core-testnet-v2.4.5
+RABBIT_RELEASE=rabbit-core-testnet-v2.4.6
 SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth
 SOURCE_COMMIT=$source_commit
 TARGET=$TARGET
@@ -119,6 +120,8 @@ CONSENSUS_LIVENESS_V5_BLOCK=115000
 CONSENSUS_LIVENESS_V6_BLOCK=115022
 VRF_DKG_PREPARATION_BLOCK=136065
 VRF_PROTOCOL_BLOCK=136193
+MINING_REWARD_V5_BLOCK=153601
+VRF_AVAILABILITY_V2_BLOCK=173057
 GENESIS_SHA256=$EXPECTED_GENESIS
 GO_VERSION=$(go version | awk '{print $3}')
 RANDOMX_COMMIT=$RANDOMX_COMMIT

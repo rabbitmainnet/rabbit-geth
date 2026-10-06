@@ -208,9 +208,12 @@ func (n *rabbitVRFDKGTransport) collectKeysetCertificateEnvelopeV1(
 		return false, errRabbitVRFDKGArtifactSessionMismatch
 	}
 
-	if envelope.SessionID != certificate.SessionID ||
-		envelope.MessageType !=
-			lqc.RabbitVRFDKGMessageKeysetCertificateV1 ||
+	if envelope.SessionID != certificate.SessionID {
+		return false, errRabbitVRFDKGArtifactSessionMismatch
+	}
+
+	if envelope.MessageType !=
+		lqc.RabbitVRFDKGMessageKeysetCertificateV1 ||
 		envelope.PayloadHash != payloadHash ||
 		envelope.SenderShareID == 0 ||
 		envelope.SenderShareID > uint64(len(members)) {
@@ -338,15 +341,18 @@ func (n *rabbitVRFDKGTransport) handleInboundKeysetCertificateEnvelopeV1(
 	bool,
 	error,
 ) {
-	if !n.keysetCertificatePeerAuthenticatedV1(
-		peer,
-		envelope,
-	) {
-		return false, errors.New(
-			"rabbit vrf keyset certificate sender route mismatch",
-		)
+	if n == nil || peer == nil {
+		return false, errors.New("invalid rabbit vrf keyset certificate peer")
+	}
+	n.mu.RLock()
+	closed := n.closed
+	n.mu.RUnlock()
+	if closed {
+		return false, errors.New("rabbit vrf keyset certificate transport closed")
 	}
 
+	// Retained signatures can be relayed by a different connected peer.
+	// Collection verifies the canonical member, session, payload and signature.
 	return n.collectKeysetCertificateEnvelopeV1(envelope)
 }
 
@@ -594,49 +600,22 @@ func cloneRabbitVRFKeysetCertificateV1(
 
 func (n *rabbitVRFDKGTransport) rabbitVRFKeysetCertificateForBlockV1(
 	blockNumber uint64,
-) (
-	lqc.RabbitVRFKeysetCertificateV1,
-	bool,
-	error,
-) {
+) (lqc.RabbitVRFKeysetCertificateV1, bool, error) {
 	var empty lqc.RabbitVRFKeysetCertificateV1
-
 	if n == nil || n.runtime == nil {
 		return empty, false, nil
 	}
-
+	// Preparation continues independently of the certificate serving this block.
 	if err := n.restorePersistedKeysetCertificateV1(); err != nil {
 		return empty, false, err
 	}
-
-	if err :=
-		n.publishLocalKeysetCertificateSignaturesV1(); err != nil {
+	if err := n.publishLocalKeysetCertificateSignaturesV1(); err != nil {
 		return empty, false, err
 	}
-
-	n.mu.RLock()
-	certificate :=
-		cloneRabbitVRFKeysetCertificateV1(
-			n.keysetCertificate,
-		)
-	ready :=
-		certificate.Version ==
-			lqc.RabbitVRFKeysetCertificateVersionV1 &&
-			len(certificate.Signatures) > 0
-	n.mu.RUnlock()
-
-	if !ready {
-		return empty, false, nil
-	}
-
-	finalizations, err :=
-		n.rabbitVRFFinalizationsForBlockV1(blockNumber)
-	if err != nil {
+	bridge, epochLength, exists, err := n.rabbitVRFServingBridgeForBlockV1(blockNumber)
+	if err != nil || !exists {
 		return empty, false, err
 	}
-	if len(finalizations) == 0 {
-		return empty, false, nil
-	}
-
-	return certificate, true, nil
+	certificate, _, ready, err := n.rabbitVRFArtifactsForBridgeV1(blockNumber, epochLength, bridge)
+	return certificate, ready, err
 }

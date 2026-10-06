@@ -24,7 +24,7 @@ if ((Get-FileHash networks/rabbit-testnet/genesis.json -Algorithm SHA256).Hash.T
 
 $Work = Join-Path $env:RUNNER_TEMP "rabbit-native-$([guid]::NewGuid())"
 $RandomX = Join-Path $Work "RandomX"
-$Package = "rabbit-core-testnet-v2.4.5-$Target"
+$Package = "rabbit-core-testnet-v2.4.6-$Target"
 $Stage = Join-Path $Work $Package
 $Dist = Join-Path $PWD "dist"
 
@@ -75,7 +75,9 @@ Write-Host "RABBIT_RANDOMX_GCC_PATH=$RandomXForGcc"
 Write-Host "RABBIT_CGO_CFLAGS=$env:CGO_CFLAGS"
 Write-Host "RABBIT_CGO_LDFLAGS=$env:CGO_LDFLAGS"
 
-go test -tags "rabbit_workv1 rabbit_randomx" ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc -count=1
+go test -tags "rabbit_workv1 rabbit_randomx" ./core -run "RabbitTestnetAvailabilityFork|LQCSiblingPrunedParentRecovery|LQCEqualHeight" -count=1 -timeout=8m -p=1
+if ($LASTEXITCODE -ne 0) { throw "Rabbit fork and recovery tests failed" }
+go test -tags "rabbit_workv1 rabbit_randomx" ./params ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc ./eth ./eth/downloader ./miner -count=1 -timeout=10m -p=1
 if ($LASTEXITCODE -ne 0) { throw "Rabbit Windows tests failed" }
 
 go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-node.exe" ./cmd/geth
@@ -119,7 +121,7 @@ Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
 Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
 
 @(
-    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.5"
+    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.6"
     "SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth"
     "SOURCE_COMMIT=$SourceCommit"
     "TARGET=$Target"
@@ -134,6 +136,8 @@ Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
     "CONSENSUS_LIVENESS_V6_BLOCK=115022"
     "VRF_DKG_PREPARATION_BLOCK=136065"
     "VRF_PROTOCOL_BLOCK=136193"
+    "MINING_REWARD_V5_BLOCK=153601"
+    "VRF_AVAILABILITY_V2_BLOCK=173057"
     "GO_VERSION=go1.25.13"
     "RANDOMX_COMMIT=$RandomXCommit"
     "RANDOMX_DATASET_BASE_SIZE=1073741824"

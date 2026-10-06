@@ -252,6 +252,11 @@ func (l *LQC) applyRegistrySnapshotHeaderMaybeV3(
 			l.openActivationForHeader(chain, header),
 		)
 		if err != nil {
+			if errors.Is(err, ErrRegistryRootMismatch) {
+				return l.replayRegistryRootMismatchByWorkSeats(
+					chain, parent, header, err,
+				)
+			}
 			return nil, err
 		}
 

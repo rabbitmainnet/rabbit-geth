@@ -136,6 +136,9 @@ type readinessTracker struct {
 	wasSyncing    bool
 	highestTarget uint64
 	syncCompleted bool
+
+	recoveryStartedAt   time.Time
+	recoveryStartHeight uint64
 }
 
 type options struct {
@@ -438,6 +441,11 @@ func (r *readinessTracker) observe(telemetry networkTelemetry, now time.Time) (b
 		}
 		return false, "blockchain synchronization is active"
 	}
+
+	if r.wasSyncing {
+		r.recoveryStartedAt = now
+		r.recoveryStartHeight = telemetry.Height
+	}
 	r.wasSyncing = false
 
 	if r.sawSync && !r.syncCompleted {
@@ -447,6 +455,14 @@ func (r *readinessTracker) observe(telemetry networkTelemetry, now time.Time) (b
 		}
 		if r.highestTarget > 0 {
 			return false, fmt.Sprintf("waiting for canonical sync target %d (local %d)", r.highestTarget, telemetry.Height)
+		}
+
+		if !r.recoveryStartedAt.IsZero() &&
+			now.Sub(r.recoveryStartedAt) >= syncDiscoveryGrace &&
+			telemetry.HeadFresh && telemetry.Peers > 0 &&
+			telemetry.Height > r.recoveryStartHeight {
+			r.syncCompleted = true
+			return true, "live canonical head advanced after synchronization"
 		}
 		return false, "waiting for successful blockchain synchronization"
 	}

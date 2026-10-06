@@ -367,6 +367,9 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		if err := validateRabbitGenesisConfig(genesis.Config); err != nil {
 			return nil, common.Hash{}, nil, err
 		}
+		if err := ConfigureRabbitTestnetVRFAvailabilityV2(db, genesis.ToBlock().Hash(), genesis.Config); err != nil {
+			return nil, common.Hash{}, nil, err
+		}
 	}
 	// Commit the genesis if the database is empty
 	ghash := rawdb.ReadCanonicalHash(db, 0)
@@ -428,6 +431,10 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		}
 	}
 	MigrateRabbitTestnetStoredChainConfig(db, ghash, storedCfg)
+	storedConfigBeforeAvailability, _ := json.Marshal(storedCfg)
+	if err := ConfigureRabbitTestnetVRFAvailabilityV2(db, ghash, storedCfg); err != nil {
+		return nil, common.Hash{}, nil, err
+	}
 
 	// Check config compatibility and write the config. Compatibility errors
 	// are returned to the caller unless we're already at block zero.
@@ -453,7 +460,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 	}
 	// Don't overwrite if the old is identical to the new. It's useful
 	// for the scenarios that database is opened in the read-only mode.
-	storedData, _ := json.Marshal(storedCfg)
+	storedData := storedConfigBeforeAvailability
 	if newData, _ := json.Marshal(newCfg); !bytes.Equal(storedData, newData) {
 		rawdb.WriteChainConfig(db, ghash, newCfg)
 	}

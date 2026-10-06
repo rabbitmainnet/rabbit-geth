@@ -147,7 +147,8 @@ type headerRequest struct {
 	cancel  chan struct{}        // Channel to track sync cancellation
 	stale   chan struct{}        // Channel to signal the request was dropped
 
-	head uint64 // Head number of the requested batch of headers
+	head       uint64      // Head number of the requested batch of headers
+	originHash common.Hash // Expected first header when the boundary is known
 }
 
 // headerResponse is an already verified remote response to a header request.
@@ -770,10 +771,20 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 			return
 		}
 		// Found a task and have peers available, assign it
-		idle := idlers.peers[0]
-
-		idlers.peers = idlers.peers[1:]
-		idlers.caps = idlers.caps[1:]
+		requestedHead := s.scratchHead - uint64(task*requestHeaders)
+		eligible := -1
+		for index, candidate := range idlers.peers {
+			if skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
+				eligible = index
+				break
+			}
+		}
+		if eligible < 0 {
+			continue
+		}
+		idle := idlers.peers[eligible]
+		idlers.peers = append(idlers.peers[:eligible], idlers.peers[eligible+1:]...)
+		idlers.caps = append(idlers.caps[:eligible], idlers.caps[eligible+1:]...)
 
 		// Matched a pending task to an idle peer, allocate a unique request id
 		var reqid uint64
@@ -796,6 +807,9 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 			cancel:  cancel,
 			stale:   make(chan struct{}),
 			head:    s.scratchHead - uint64(task*requestHeaders),
+		}
+		if task == 0 {
+			req.originHash = s.progress.Subchains[0].Next
 		}
 		s.requests[reqid] = req
 		delete(s.idles, idle.id)
@@ -824,7 +838,13 @@ func (s *skeleton) executeTask(peer *peerConnection, req *headerRequest) {
 		requestCount = int(req.head)
 	}
 	peer.log.Trace("Fetching skeleton headers", "from", req.head, "count", requestCount)
-	netreq, err := peer.peer.RequestHeadersByNumber(req.head, requestCount, 0, true, resCh)
+	var netreq *eth.Request
+	var err error
+	if req.originHash != (common.Hash{}) {
+		netreq, err = peer.peer.RequestHeadersByHash(req.originHash, requestCount, 0, true, resCh)
+	} else {
+		netreq, err = peer.peer.RequestHeadersByNumber(req.head, requestCount, 0, true, resCh)
+	}
 	if err != nil {
 		peer.log.Trace("Failed to request headers", "err", err)
 		s.scheduleRevertRequest(req)
@@ -1337,4 +1357,20 @@ func (s *skeleton) Bounds() (head *types.Header, tail *types.Header, final *type
 // subsequent calls might return headers from different chains.
 func (s *skeleton) Header(number uint64) *types.Header {
 	return rawdb.ReadSkeletonHeader(s.db, number)
+}
+
+// An announced block range limits which numbered requests a peer can serve.
+// Peers without range announcements retain the existing scheduling behavior.
+func skeletonPeerCanServeHeader(peer Peer, number uint64) bool {
+	ranged, ok := peer.(interface {
+		BlockRange() *eth.BlockRangeUpdatePacket
+	})
+	if !ok {
+		return true
+	}
+	advertised := ranged.BlockRange()
+	if advertised == nil {
+		return true
+	}
+	return number >= advertised.EarliestBlock && number <= advertised.LatestBlock
 }

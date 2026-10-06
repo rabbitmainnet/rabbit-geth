@@ -98,7 +98,7 @@ type rabbitVRFDKGTransport struct {
 	partialKeysetRoot common.Hash
 	partials          map[common.Hash]map[uint64]lqc.RabbitVRFThresholdPartialV1
 	partialResults    map[common.Hash]rabbitVRFThresholdResultV1
-	finalizations     map[common.Hash]lqc.RabbitVRFFinalizationV1
+	finalizations     map[rabbitVRFFinalizationKeyV1]lqc.RabbitVRFFinalizationV1
 
 	keysetCertificateSession    common.Hash
 	keysetCertificateRoot       common.Hash
@@ -136,7 +136,7 @@ func newRabbitVRFDKGTransport(
 		remoteArtifacts:   make(map[uint64]rabbitVRFDKGTransportArtifactPacketV1),
 		remoteCommitments: make(map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1),
 		routes:            make(map[uint64]string),
-		finalizations:     make(map[common.Hash]lqc.RabbitVRFFinalizationV1),
+		finalizations:     make(map[rabbitVRFFinalizationKeyV1]lqc.RabbitVRFFinalizationV1),
 	}
 	if config.Runtime != nil && config.Runtime.engine != nil {
 		if err := lqc.SetWorkV1EngineLabRabbitVRFFinalizationProvider(
@@ -476,20 +476,13 @@ func (n *rabbitVRFDKGTransport) runPeer(
 	}
 	defer n.unregister(peer.id())
 
+	peerDone := make(chan struct{})
+	defer close(peerDone)
+
 	go func() {
-		if err := n.sendLocalPeerRouteProofsV1(peer); err != nil {
+		if err := n.syncPeerArtifactsUntilDoneV1(peer, peerDone, 30*time.Second); err != nil {
 			if peer.peer != nil {
-				peer.peer.Log().Debug("Rabbit VRF DKG peer route proof sync failed", "err", err)
-			}
-			return
-		}
-		if err := n.sendPendingTransportArtifactsV1(peer); err != nil {
-			if peer.peer != nil {
-				peer.peer.Log().Debug(
-					"Rabbit VRF DKG initial artifact sync failed",
-					"err",
-					err,
-				)
+				peer.peer.Log().Debug("Rabbit VRF DKG artifact renewal failed", "err", err)
 			}
 		}
 	}()
@@ -597,7 +590,10 @@ func (n *rabbitVRFDKGTransport) runPeer(
 				return fmt.Errorf("validate rabbit vrf dkg encrypted evaluation: %w", err)
 			}
 			if _, err := n.runtime.decryptInboundEncryptedEvaluationV1(packet); err != nil {
-				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) {
+				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) ||
+					errors.Is(err, errRabbitVRFDKGSecretTemporarilyUnavailableV1) {
+					// The sender retries evaluations. Local synchronization
+					// readiness is not evidence of an invalid remote peer.
 					continue
 				}
 				return fmt.Errorf("process rabbit vrf dkg encrypted evaluation: %w", err)
@@ -609,7 +605,10 @@ func (n *rabbitVRFDKGTransport) runPeer(
 				return fmt.Errorf("decode rabbit vrf threshold partial: %w", err)
 			}
 			if err := n.handleInboundThresholdPartialV1(peer, packet); err != nil {
-				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) {
+				if errors.Is(err, errRabbitVRFDKGArtifactSessionMismatch) ||
+					errors.Is(err, rabbitvrfstate.ErrDKGTransportKeyStoreMissingV1) {
+					// Missing local verification state must not disconnect
+					// the sender. The partial remains unaccepted.
 					continue
 				}
 				return fmt.Errorf("process rabbit vrf threshold partial: %w", err)
@@ -851,58 +850,12 @@ func (peer *rabbitVRFDKGPeer) sendThresholdPartialV1(packet lqc.RabbitVRFThresho
 }
 
 func (n *rabbitVRFDKGTransport) rabbitVRFFinalizationsForBlockV1(blockNumber uint64) ([]lqc.RabbitVRFFinalizationV1, error) {
-	if n == nil || n.runtime == nil {
-		return nil, nil
-	}
-
-	context := n.runtime.currentContext()
-	if context.SessionID == (common.Hash{}) ||
-		context.CanonicalSession.TargetVRFEpoch == 0 {
-		return nil, nil
-	}
-
-	n.mu.RLock()
-	candidates := make([]lqc.RabbitVRFFinalizationV1, 0, len(n.finalizations))
-	for _, finalization := range n.finalizations {
-		if finalization.Epoch == context.CanonicalSession.TargetVRFEpoch {
-			candidates = append(candidates, finalization)
-		}
-	}
-	n.mu.RUnlock()
-
-	pending := make([]lqc.RabbitVRFFinalizationV1, 0, len(candidates))
-	for _, finalization := range candidates {
-		request, err := n.runtime.canonicalPendingRequestV1(finalization.RequestID)
-		if err != nil {
-			if errors.Is(err, errRabbitVRFRequestNotPendingV1) {
-				continue
-			}
-			return nil, fmt.Errorf(
-				"resolve rabbit vrf finalization request %s for block %d: %w",
-				finalization.RequestID,
-				blockNumber,
-				err,
-			)
-		}
-
-		if request.RequestBlock == 0 ||
-			request.RequestBlock >= blockNumber ||
-			finalization.Round != request.RequestBlock ||
-			finalization.Epoch != context.CanonicalSession.TargetVRFEpoch {
-			return nil, errors.New("rabbit vrf finalization canonical epoch/round mismatch")
-		}
-
-		pending = append(pending, finalization)
-	}
-
-	canonical, err := lqc.CanonicalRabbitVRFFinalizationsV1(pending)
-	if err != nil {
+	bridge, epochLength, exists, err := n.rabbitVRFServingBridgeForBlockV1(blockNumber)
+	if err != nil || !exists {
 		return nil, err
 	}
-	if len(canonical) > lqc.MaxRabbitVRFFinalizationsPerBlockV1 {
-		canonical = canonical[:lqc.MaxRabbitVRFFinalizationsPerBlockV1]
-	}
-	return canonical, nil
+	_, finalizations, _, err := n.rabbitVRFArtifactsForBridgeV1(blockNumber, epochLength, bridge)
+	return finalizations, err
 }
 
 func (n *rabbitVRFDKGTransport) processCanonicalPendingRequestV1(requestID common.Hash) error {
@@ -1065,6 +1018,10 @@ func (n *rabbitVRFDKGTransport) thresholdPartialPeerAuthenticatedV1(peer *rabbit
 func (n *rabbitVRFDKGTransport) handleInboundThresholdPartialV1(peer *rabbitVRFDKGPeer, packet lqc.RabbitVRFThresholdPartialV1) error {
 	if n == nil || n.runtime == nil {
 		return errors.New("rabbit vrf threshold partial transport unavailable")
+	}
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) || packet.SessionID != context.SessionID {
+		return errRabbitVRFDKGArtifactSessionMismatch
 	}
 	if !n.thresholdPartialPeerAuthenticatedV1(peer, packet) {
 		return errors.New("rabbit vrf threshold partial sender route mismatch")
@@ -1231,24 +1188,24 @@ func (n *rabbitVRFDKGTransport) collectThresholdPartialV1(packet lqc.RabbitVRFTh
 		if existing.Signature != signature || existing.Randomness != randomness {
 			return errors.New("rabbit vrf threshold result conflict")
 		}
-		if existingFinalization, ok := n.finalizations[packet.RequestID]; ok &&
+		if existingFinalization, ok := n.finalizations[rabbitVRFFinalizationKeyV1{SessionID: packet.SessionID, RequestID: packet.RequestID}]; ok &&
 			existingFinalization != finalization {
 			return errors.New("rabbit vrf finalization conflict")
 		}
 		return nil
 	}
-	if existingFinalization, ok := n.finalizations[packet.RequestID]; ok &&
+	if existingFinalization, ok := n.finalizations[rabbitVRFFinalizationKeyV1{SessionID: packet.SessionID, RequestID: packet.RequestID}]; ok &&
 		existingFinalization != finalization {
 		return errors.New("rabbit vrf finalization conflict")
 	}
 	if n.finalizations == nil {
-		n.finalizations = make(map[common.Hash]lqc.RabbitVRFFinalizationV1)
+		n.finalizations = make(map[rabbitVRFFinalizationKeyV1]lqc.RabbitVRFFinalizationV1)
 	}
 	n.partialResults[packet.RequestID] = rabbitVRFThresholdResultV1{
 		Signature:  signature,
 		Randomness: randomness,
 	}
-	n.finalizations[packet.RequestID] = finalization
+	n.finalizations[rabbitVRFFinalizationKeyV1{SessionID: packet.SessionID, RequestID: packet.RequestID}] = finalization
 	return nil
 }
 
@@ -1463,4 +1420,49 @@ func (n *rabbitVRFDKGTransport) Close() {
 		map[uint64]rabbitVRFDKGPolynomialCommitmentPacketV1,
 	)
 	n.mu.Unlock()
+}
+
+var errRabbitVRFDKGSecretTemporarilyUnavailableV1 = errors.New(
+	"rabbit vrf dkg secret operation temporarily unavailable",
+)
+
+// Renew session artifacts on established connections. Receiving peers may
+// have discarded an earlier transmission while observing a different session.
+func (n *rabbitVRFDKGTransport) syncPeerArtifactsUntilDoneV1(
+	peer *rabbitVRFDKGPeer,
+	done <-chan struct{},
+	interval time.Duration,
+) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-done:
+			return nil
+		case <-n.runtime.stop:
+			return nil
+		default:
+		}
+
+		if err := n.sendLocalPeerRouteProofsV1(peer); err != nil {
+			return err
+		}
+		if err := n.sendPendingTransportArtifactsV1(peer); err != nil {
+			return err
+		}
+
+		select {
+		case <-done:
+			return nil
+		case <-n.runtime.stop:
+			return nil
+		case <-ticker.C:
+			// A successful write does not prove acceptance by the recipient.
+			// Permit authenticated artifacts to be retried at a bounded rate.
+			peer.mu.Lock()
+			clear(peer.known)
+			peer.mu.Unlock()
+		}
+	}
 }
