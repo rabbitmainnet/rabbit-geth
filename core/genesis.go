@@ -367,7 +367,22 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		if err := validateRabbitGenesisConfig(genesis.Config); err != nil {
 			return nil, common.Hash{}, nil, err
 		}
-		if err := ConfigureRabbitTestnetVRFAvailabilityV2(db, genesis.ToBlock().Hash(), genesis.Config); err != nil {
+		// The distributed genesis predates the availability schedule. On restart,
+		// inherit only a schedule already persisted for this exact genesis.
+		// Missing or conflicting stored schedules still pass through the guard.
+		suppliedHash := genesis.ToBlock().Hash()
+		if genesis.Config.LQC != nil {
+			availabilityConfig := *genesis.Config.LQC
+			genesis.Config.LQC = &availabilityConfig
+		}
+		if stored := rawdb.ReadCanonicalHash(db, 0); stored == suppliedHash && suppliedHash == common.HexToHash("0x9b71d7f2922fdf8383a4a12be5594e25938625195e0d84c05c3bd71b7bcf93f7") {
+			if persisted := rawdb.ReadChainConfig(db, stored); persisted != nil && persisted.LQC != nil &&
+				genesis.Config.LQC != nil && genesis.Config.LQC.VRFAvailabilityV2Block == 0 &&
+				persisted.LQC.VRFAvailabilityV2Block == RabbitTestnetVRFAvailabilityV2Block {
+				genesis.Config.LQC.VRFAvailabilityV2Block = persisted.LQC.VRFAvailabilityV2Block
+			}
+		}
+		if err := ConfigureRabbitTestnetVRFAvailabilityV2(db, suppliedHash, genesis.Config); err != nil {
 			return nil, common.Hash{}, nil, err
 		}
 	}
