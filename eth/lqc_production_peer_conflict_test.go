@@ -22,7 +22,7 @@ func TestLQCProductionPeerChainConflict(t *testing.T) {
 		{"same-height-winning-fork", 100, common.HexToHash("0x01"), head, true},
 		{"higher-peer", 101, fork, common.Hash{}, true},
 		{"behind-same-chain", 99, ancestor, ancestor, false},
-		{"behind-conflicting-chain", 99, fork, ancestor, true},
+		{"behind-conflicting-chain", 99, fork, ancestor, false},
 		{"behind-pruned-unknown", 99, ancestor, common.Hash{}, false},
 		{"missing-peer-hash", 101, common.Hash{}, common.Hash{}, false},
 	}

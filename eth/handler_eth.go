@@ -286,7 +286,51 @@ func (h *ethHandler) requestAndSyncLQCHead(peer *eth.Peer, number uint64, hash c
 		peer.Log().Warn("LQC fork-recovery target mismatch", "wantNumber", number, "haveNumber", header.Number, "wantHash", hash, "haveHash", header.Hash())
 		return
 	}
+	// BlockRangeUpdate normally precedes NewBlock. Give a direct extension a
+	// bounded opportunity to finish live import before marking recovery busy.
+	if !waitForLQCLiveImport(h.chain.CurrentBlock, header, h.quitSync, 500*time.Millisecond) {
+		return
+	}
 	h.scheduleLQCSync(peer, header)
+}
+
+// waitForLQCLiveImport suppresses recovery when normal import reaches the target.
+// Gaps and competing parents bypass the grace period; an absent live block still
+// falls back to the downloader after the bounded wait.
+func waitForLQCLiveImport(current func() *types.Header, target *types.Header, quit <-chan struct{}, grace time.Duration) bool {
+	if target == nil || target.Number == nil {
+		return false
+	}
+	local := current()
+	if !shouldStartLQCSync(local, target.Number.Uint64(), target.Hash()) {
+		return false
+	}
+	if local == nil || local.Number == nil ||
+		target.Number.Uint64() != local.Number.Uint64()+1 || target.ParentHash != local.Hash() {
+		return true
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-quit:
+			return false
+		case <-timer.C:
+			local = current()
+			return shouldStartLQCSync(local, target.Number.Uint64(), target.Hash())
+		case <-ticker.C:
+			local = current()
+			if !shouldStartLQCSync(local, target.Number.Uint64(), target.Hash()) {
+				return false
+			}
+			if local == nil || local.Number == nil ||
+				target.Number.Uint64() != local.Number.Uint64()+1 || target.ParentHash != local.Hash() {
+				return true
+			}
+		}
+	}
 }
 
 func (h *ethHandler) scheduleLQCSync(peer *eth.Peer, header *types.Header) {

@@ -1164,8 +1164,9 @@ func lqcPeerHeadRequiresSync(
 	if peerNumber == localNumber {
 		return bytes.Compare(peerHash[:], localHash[:]) < 0
 	}
-	return canonicalPeerHash != (common.Hash{}) &&
-		canonicalPeerHash != peerHash
+	// A shorter peer chain is not a recovery target.
+	// Do not wait for a recovery the handler never schedules.
+	return false
 }
 
 func (s *Ethereum) lqcProductionNeedsSync(header *types.Header) bool {

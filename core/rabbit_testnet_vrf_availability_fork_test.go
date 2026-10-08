@@ -2,13 +2,14 @@ package core
 
 import (
 	"encoding/json"
+	"math/big"
+	"os"
+	"testing"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
-	"math/big"
-	"os"
-	"testing"
 )
 
 func publicAvailabilityConfig(t *testing.T) (*Genesis, common.Hash) {

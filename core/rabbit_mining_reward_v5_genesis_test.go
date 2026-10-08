@@ -25,6 +25,10 @@ func TestRabbitMiningRewardV5GenesisConfigUpdate(t *testing.T) {
 			if err := json.Unmarshal(data, &updated); err != nil {
 				t.Fatal(err)
 			}
+			// Use a separate genesis to test configuration compatibility.
+			// The official network must retain its historical fork schedule.
+			original.ExtraData = []byte("reward-config-test")
+			updated.ExtraData = []byte("reward-config-test")
 			original.Config.LQC.MiningRewardV5Block = 0
 			updated.Config.LQC.MiningRewardV5Block = 153601
 
