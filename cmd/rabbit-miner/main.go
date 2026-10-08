@@ -323,7 +323,7 @@ func refreshWorkSeatAvailability(
 	}
 
 	if !participant.Exists {
-		return false, nil
+		return restoreWorkSeatRegistry(ctx, client, chainID, key)
 	}
 	if participant.CanonicalBlock != parameters.CurrentBlock ||
 		participant.RegistryRoot != parameters.RegistryRoot {

@@ -864,7 +864,8 @@ func (s *Ethereum) lqcPeerHeadConfirmed(header *types.Header) bool {
 
 // enableLQCWhenReady serializes initial sync and LQC production. The producer
 // is stopped whenever a downloader sync starts and is restarted only after a
-// successful sync with readable canonical state. If no sync is ever needed,
+// successful sync with readable canonical state, or after a failed sync followed
+// by confirmed, fully executed live imports. If no sync is ever needed,
 // the bounded recovery grace preserves bootstrap and offline-network liveness.
 func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSub event.Subscription) {
 	if s.blockchain == nil || s.miner == nil || syncSub == nil {
@@ -876,7 +877,7 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 	defer ticker.Stop()
 
 	startedAt := time.Now()
-	syncRequired := false
+	var syncGate lqcFailedSyncGate
 	producerRunning := false
 	producerEnabled := s.config != nil && s.config.Miner.Enabled
 
@@ -924,16 +925,20 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 			}
 			switch ev.Type {
 			case downloader.SyncStarted:
-				syncRequired = true
+				syncGate.started()
 				stopProducer("downloader sync started")
 			case downloader.SyncFailed:
 				// Keep the producer blocked. Starting from a partially imported head
 				// is exactly the fresh-sync failure this gate is designed to prevent.
-				syncRequired = true
+				var failedNumber uint64
+				if head := s.blockchain.CurrentBlock(); head != nil && head.Number != nil {
+					failedNumber = head.Number.Uint64()
+				}
+				syncGate.failed(failedNumber)
 				stopProducer("downloader sync failed")
 				log.Warn("LQC production remains paused after failed synchronization", "err", ev.Err)
 			case downloader.SyncCompleted:
-				syncRequired = false
+				syncGate.completed()
 				if !markReady("downloader sync completed") {
 					stopProducer("head not confirmed after downloader sync")
 					// Recheck peer agreement on subsequent ticks. A completed
@@ -946,8 +951,18 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 			return
 		}
 
-		if syncRequired {
-			continue
+		if syncGate.required {
+			head := s.blockchain.CurrentBlock()
+			if !syncGate.failedSync || head == nil || head.Number == nil ||
+				head.Number.Uint64() <= syncGate.failedNumber {
+				continue
+			}
+			if !syncGate.recover(head.Number.Uint64(),
+				isLiveLQCHead(head, time.Now()), s.lqcHeadStateAvailable(head),
+				s.lqcPeerHeadConfirmed(head), s.lqcProductionNeedsSync(head)) {
+				continue
+			}
+			log.Info("LQC failed sync gate recovered after confirmed live import", "head", head.Number, "hash", head.Hash())
 		}
 
 		peers := s.handler.peers.len()
