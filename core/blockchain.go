@@ -2388,6 +2388,15 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 	}
 	elapsed := time.Since(startTime) + 1 // prevent zero division
 	stats.TotalTime = elapsed
+	if elapsed >= 500*time.Millisecond {
+		log.Warn("RABBIT DIAG slow block processing",
+			"number", block.NumberU64(),
+			"total", elapsed,
+			"execution", ptime,
+			"stateValidation", vtime,
+			"databaseCommit", stats.DatabaseCommit,
+			"blockWrite", stats.BlockWrite)
+	}
 	stats.MgasPerSecond = float64(res.GasUsed) * 1000 / float64(elapsed)
 
 	return &blockProcessingResult{

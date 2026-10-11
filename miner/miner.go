@@ -320,14 +320,15 @@ func lqcHasConnectedPeer(backend any) bool {
 }
 
 func (miner *Miner) lqcDevnetLoop(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
+			timer.Reset(time.Second)
 			if ctx.Err() != nil {
 				return
 			}

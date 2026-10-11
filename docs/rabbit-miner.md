@@ -16,7 +16,7 @@ A faster CPU may find admission sooner, but it never receives extra consensus we
 - Explorer: `https://explorer-testnet.rabbitchain.org`
 - Website: `https://rabbitchain.org`
 - Source: `https://github.com/rabbitmainnet/rabbit-geth`
-- Genesis SHA-256: `e77f2510ef880dead675cda146fb8dbc31375b17daebc800584b1c29c6ae1fb6`
+- Genesis SHA-256: `17bfe51321f6e7befe8719ee35c34b1b876fda3e93672204903bd7b6d6bb69ba`
 
 ## Complete timeline on a fresh network
 
@@ -139,3 +139,22 @@ rabbit-miner \
 ```
 
 The package contains `rabbit-node`, `rabbit-miner`, `rabbit-core`, the frozen `genesis.json`, `bootnodes.txt`, launchers, build metadata, documentation, security notice, and checksums.
+
+## V2.4.11 monitoring and penalties
+
+Normal operational status refreshes approximately every 10 to 12 seconds.
+Synchronization messages use their own reporting interval.
+
+PENALIZED shows the canonical block, penalty end block and remaining blocks.
+The reported consensus reason is missed assigned production turns.
+This message alone does not identify whether the underlying cause was a
+network interruption, synchronization delay or competing chain.
+
+PENALTY ENDED reports expiry observed in the canonical registry.
+Production still requires synchronization and selection.
+NO PEERS reports that the local node has no connected peers.
+REGISTRY STATUS UNAVAILABLE means penalty status could not be verified.
+
+V2.4.11 isolates outgoing LCQ messages in bounded per-peer queues and
+retries failed asynchronous recovery downloads. It retains the existing
+consensus activation schedule and does not introduce a new hard fork.

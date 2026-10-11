@@ -76,6 +76,8 @@ type registryParameters struct {
 }
 
 type registryParticipant struct {
+	JailedUntil    hexutil.Uint64 `json:"jailedUntil"`
+	MissedTurns    hexutil.Uint64 `json:"missedTurns"`
 	Exists         bool           `json:"exists"`
 	CanonicalBlock hexutil.Uint64 `json:"canonicalBlock"`
 	RegistryRoot   common.Hash    `json:"registryRoot"`
@@ -669,17 +671,49 @@ func monitorNetwork(
 	defer ticker.Stop()
 
 	var (
-		lastHeight       uint64
-		lastBalance      *big.Int
-		trackingLive     bool
-		produced         uint64
-		committeeRewards uint64
-		lastStatus       time.Time
-		lastSyncStatus   time.Time
+		lastHeight        uint64
+		lastBalance       *big.Int
+		trackingLive      bool
+		produced          uint64
+		committeeRewards  uint64
+		lastStatus        time.Time
+		lastSyncStatus    time.Time
+		lastPenaltyStatus time.Time
+		wasPenalized      bool
 	)
 
 	for {
 		telemetry, err := fetchNetworkTelemetry(ctx, client, participant)
+
+		var registryStatus registryParticipant
+		registryCtx, cancelRegistry := context.WithTimeout(ctx, 3*time.Second)
+		registryErr := client.CallContext(
+			registryCtx, &registryStatus, "lqc_registryParticipant", participant,
+		)
+		cancelRegistry()
+		penaltyKnown := registryErr == nil && registryStatus.Exists
+		penalized := penaltyKnown &&
+			registryStatus.JailedUntil > registryStatus.CanonicalBlock
+
+		if penaltyKnown {
+			if penalized {
+				if !wasPenalized || time.Since(lastPenaltyStatus) >= 10*time.Second {
+					fmt.Printf("PENALIZED | Block: %d | Until: %d | Remaining: %d blocks\n",
+						uint64(registryStatus.CanonicalBlock),
+						uint64(registryStatus.JailedUntil),
+						uint64(registryStatus.JailedUntil-registryStatus.CanonicalBlock))
+					fmt.Println("PENALTY | Missed assigned production turns. Production eligibility returns automatically when the penalty expires.")
+					lastPenaltyStatus = time.Now()
+				}
+			} else if wasPenalized {
+				fmt.Println("PENALTY ENDED | Production eligibility restored. Waiting for synchronization and selection.")
+				lastStatus = time.Time{}
+			}
+			if wasPenalized != penalized {
+				lastStatus = time.Time{}
+			}
+			wasPenalized = penalized
+		}
 		if err != nil {
 			if time.Since(lastStatus) >= syncStatusMessageEvery {
 				fmt.Println("STATUS | Waiting for node/network data | Mining: PAUSED")
@@ -849,10 +883,17 @@ func monitorNetwork(
 				}
 			}
 
-			if time.Since(lastStatus) >= 30*time.Second {
+			if time.Since(lastStatus) >= 10*time.Second {
 				state := "LCQ PENDING"
 				if activeSeat != nil && activeSeat.Load() {
 					state = "LCQ ACTIVE"
+				}
+				if !penaltyKnown {
+					state = "REGISTRY STATUS UNAVAILABLE"
+				} else if penalized {
+					state = "PENALIZED"
+				} else if telemetry.Peers == 0 {
+					state = "NO PEERS"
 				}
 				fmt.Printf("STATUS | %s | Block: %d | Peers: %d | Balance: %s %s | Produced: %d | Committee: %d\n",
 					state,
@@ -869,7 +910,7 @@ func monitorNetwork(
 			trackingLive = false
 			lastHeight = telemetry.Height
 			lastBalance = nil
-			if time.Since(lastStatus) >= 30*time.Second {
+			if time.Since(lastStatus) >= 10*time.Second {
 				fmt.Printf("STATUS | Checking canonical chain | Block: %d | Peers: %d | Mining: WAITING\n",
 					telemetry.Height,
 					telemetry.Peers,

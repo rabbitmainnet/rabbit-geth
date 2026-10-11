@@ -366,6 +366,13 @@ func (l *LQC) verifyHeader(chain consensus.ChainHeaderReader, header, batchParen
 // verifyHeaderAt contains the deterministic header checks. unixNow is passed
 // explicitly so boundary tests do not depend on the machine clock.
 func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchParent *types.Header, unixNow uint64) error {
+	diagStart := time.Now()
+	defer func() {
+		if duration := time.Since(diagStart); duration >= 500*time.Millisecond && header != nil {
+			log.Warn("RABBIT DIAG slow LCQ verification",
+				"number", header.Number, "elapsed", duration)
+		}
+	}()
 	if header == nil {
 		return errors.New("nil header")
 	}
