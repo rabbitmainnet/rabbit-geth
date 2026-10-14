@@ -1,5 +1,19 @@
 # Rabbit Chain
 
+> 🐇 **Independent miners wanted — Public Testnet is LIVE!**
+>
+> Rabbit Chain is looking for independent CPU miners,
+> node operators and developers to test LCQ consensus
+> before the future Mainnet launch.
+>
+> **[Join the official mining discussion](https://github.com/rabbitmainnet/rabbit-geth/discussions/1)**
+>
+> **[Download Rabbit Core & start mining](https://rabbitchain.org/mining/)**
+>
+> No investment required. No guaranteed financial rewards.
+> Mainnet has not launched.
+
+
 Rabbit Chain is an EVM-compatible Layer 1 blockchain powered by **LCQ (Live Consensus Queue)** and Rabbit Work V1. The network is designed for open participation: download the official software, run a node, and participate without manual registration or permission from an operator.
 
 > Rabbit Testnet v1 uses Chain ID 9280 with public P2P discovery, HTTPS RPC, WebSocket RPC and an official Blockscout explorer. Rabbit Core packages are released for Windows AMD64 and Linux AMD64.
