@@ -730,16 +730,16 @@ func run(ctx context.Context, opts options) error {
 	if bootnodes == "" {
 		return errors.New("official bootnodes are not configured yet; Rabbit Core will not start an isolated chain")
 	}
-	// Install verified chain data before wallet preparation.
-	if err := bootstrapFreshNode(ctx, opts.dataDir); err != nil {
-		return fmt.Errorf("initialize Rabbit bootstrap: %w", err)
-	}
 	keyFile, address, passwordFile, cleanup, err := prepareWallet(ctx, opts)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	showWalletInfo(opts, keyFile, address)
+	fmt.Println("Rabbit Bootstrap: checking blockchain data...")
+	if err := bootstrapFreshNode(ctx, opts.dataDir); err != nil {
+		return fmt.Errorf("initialize Rabbit bootstrap: %w", err)
+	}
 	if err := initialize(ctx, opts); err != nil {
 		return err
 	}

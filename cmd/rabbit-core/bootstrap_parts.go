@@ -57,7 +57,9 @@ func bootstrapMultipartFrom(ctx context.Context, dataDir, baseURL string) error 
 
 	hash := sha256.New()
 
+	fmt.Println("Rabbit Bootstrap: preparing verified blockchain snapshot...")
 	for i, expected := range rabbitBootstrapPartHashes {
+		fmt.Printf("Rabbit Bootstrap: checking/downloading part %d of %d...\n", i+1, len(rabbitBootstrapPartHashes))
 		name := fmt.Sprintf("rabbit-testnet-bootstrap-v2411.part-%03d", i)
 		part := filepath.Join(dataDir, ".rabbit-bootstrap-"+name)
 
