@@ -294,7 +294,7 @@ func copyBootstrapWithProgress(dst io.Writer, src io.Reader, offset, remaining i
 		total = offset + remaining
 	}
 
-	fmt.Printf("Rabbit Bootstrap: download started (resuming at %d MiB)\\n", offset/mib)
+	fmt.Printf("Rabbit Bootstrap: download started (resuming at %d MiB)\n", offset/mib)
 
 	buf := make([]byte, 1024*1024)
 	for {
@@ -311,15 +311,15 @@ func copyBootstrapWithProgress(dst io.Writer, src io.Reader, offset, remaining i
 
 			if written >= nextReport {
 				if total > 0 {
-					fmt.Printf("Rabbit Bootstrap: %d / %d MiB downloaded\\n", (offset+written)/mib, total/mib)
+					fmt.Printf("Rabbit Bootstrap: %d / %d MiB downloaded\n", (offset+written)/mib, total/mib)
 				} else {
-					fmt.Printf("Rabbit Bootstrap: %d MiB downloaded\\n", (offset+written)/mib)
+					fmt.Printf("Rabbit Bootstrap: %d MiB downloaded\n", (offset+written)/mib)
 				}
 				nextReport = written + reportEvery
 			}
 		}
 		if readErr == io.EOF {
-			fmt.Printf("Rabbit Bootstrap: transfer finished (%d MiB received)\\n", (offset+written)/mib)
+			fmt.Printf("Rabbit Bootstrap: transfer finished (%d MiB received)\n", (offset+written)/mib)
 			return written, nil
 		}
 		if readErr != nil {
