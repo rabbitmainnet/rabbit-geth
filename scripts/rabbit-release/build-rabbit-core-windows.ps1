@@ -24,7 +24,7 @@ if ((Get-FileHash networks/rabbit-testnet/genesis.json -Algorithm SHA256).Hash.T
 
 $Work = Join-Path $env:RUNNER_TEMP "rabbit-native-$([guid]::NewGuid())"
 $RandomX = Join-Path $Work "RandomX"
-$Package = "rabbit-core-testnet-v2.4.11-$Target"
+$Package = "rabbit-core-testnet-v2.4.12-$Target"
 $Stage = Join-Path $Work $Package
 $Dist = Join-Path $PWD "dist"
 
@@ -86,7 +86,7 @@ if ($LASTEXITCODE -ne 0) { throw "Rabbit node Windows build failed" }
 go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-miner.exe" ./cmd/rabbit-miner
 if ($LASTEXITCODE -ne 0) { throw "Rabbit miner Windows build failed" }
 
-go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-core.exe" ./cmd/rabbit-core
+go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -ldflags="-X main.rabbitBootstrapPartsBaseURL=https://github.com/rabbitmainnet/rabbit-geth/releases/download/bootstrap-testnet-v2411" -o "$Stage\rabbit-core.exe" ./cmd/rabbit-core
 if ($LASTEXITCODE -ne 0) { throw "Rabbit Core Windows build failed" }
 
 $Objdump = "C:\msys64\mingw64\bin\objdump.exe"
@@ -121,7 +121,7 @@ Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
 Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
 
 @(
-    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.11"
+    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.12"
     "SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth"
     "SOURCE_COMMIT=$SourceCommit"
     "TARGET=$Target"

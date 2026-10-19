@@ -84,13 +84,13 @@ export CGO_LDFLAGS="-L$work/RandomX/build -lrandomx"
 go test -tags "rabbit_workv1 rabbit_randomx" ./core -run "RabbitTestnetAvailabilityFork|LQCSiblingPrunedParentRecovery|LQCEqualHeight" -count=1 -timeout=8m -p=1
 go test -tags 'rabbit_workv1 rabbit_randomx' ./params ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc ./eth ./eth/protocols/eth ./eth/downloader ./miner -count=1 -timeout=10m -p=1
 
-package="rabbit-core-testnet-v2.4.11-$TARGET"
+package="rabbit-core-testnet-v2.4.12-$TARGET"
 stage="$work/$package"
 mkdir -p "$stage" dist
 
 go build -tags 'rabbit_workv1 rabbit_randomx' -trimpath -o "$stage/rabbit-node" ./cmd/geth
 go build -tags 'rabbit_workv1 rabbit_randomx' -trimpath -o "$stage/rabbit-miner" ./cmd/rabbit-miner
-go build -tags 'rabbit_workv1 rabbit_randomx' -trimpath -o "$stage/rabbit-core" ./cmd/rabbit-core
+go build -tags 'rabbit_workv1 rabbit_randomx' -trimpath -ldflags="-X main.rabbitBootstrapPartsBaseURL=https://github.com/rabbitmainnet/rabbit-geth/releases/download/bootstrap-testnet-v2411" -o "$stage/rabbit-core" ./cmd/rabbit-core
 
 if [[ "$expected_os" == linux ]]; then
   command -v readelf >/dev/null
@@ -106,7 +106,7 @@ cp docs/rabbit-core.md docs/rabbit-miner.md "$stage/"
 cp scripts/rabbit-release/NOTICE-TESTNET.txt "$stage/NOTICE-TESTNET.txt"
 
 cat > "$stage/BUILD-METADATA.txt" <<EOF
-RABBIT_RELEASE=rabbit-core-testnet-v2.4.11
+RABBIT_RELEASE=rabbit-core-testnet-v2.4.12
 SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth
 SOURCE_COMMIT=$source_commit
 TARGET=$TARGET
