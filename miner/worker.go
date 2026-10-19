@@ -153,7 +153,7 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	}()
 	work, err := miner.prepareWork(ctx, genParam, witness)
 	if err != nil {
-		return &newPayloadResult{err: err}
+		return &newPayloadResult{err: fmt.Errorf("prepare work: %w", err)}
 	}
 	defer work.discard()
 
@@ -223,6 +223,30 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	}
 	work.bal.Merge(bal)
 
+	if miner.chainConfig.IsRabbitVRF(work.header.Number) {
+		reader, ok := miner.engine.(consensus.RabbitVRFExecutionFinalizationReader)
+		if !ok {
+			return &newPayloadResult{
+				err: errors.New(
+					"Rabbit VRF execution finalization reader unavailable",
+				),
+			}
+		}
+
+		finalizations, err :=
+			reader.RabbitVRFExecutionFinalizations(miner.chain, work.header)
+		if err != nil {
+			return &newPayloadResult{err: err}
+		}
+		if err := core.ProcessRabbitVRFFinalizations(
+			work.evm,
+			work.bal,
+			finalizations,
+		); err != nil {
+			return &newPayloadResult{err: err}
+		}
+	}
+
 	// Apply the consensus-specific post-transaction changes
 	miner.engine.Finalize(miner.chain, work.header, work.state, &body, uint32(work.tcount+1), work.bal)
 
@@ -233,7 +257,7 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	if sealer, ok := miner.engine.(consensus.HeaderSealer); ok {
 		sealedHeader, err := sealer.SealHeader(miner.chainConfig.ChainID, block.Header(), miner.signConsensusHeader)
 		if err != nil {
-			return &newPayloadResult{err: err}
+			return &newPayloadResult{err: fmt.Errorf("seal header: %w", err)}
 		}
 		block = block.WithSeal(sealedHeader)
 	}

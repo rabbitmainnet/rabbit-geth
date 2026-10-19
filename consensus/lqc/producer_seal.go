@@ -129,7 +129,7 @@ func (l *LQC) SealHeader(chainID *big.Int, header *types.Header, sign consensus.
 	}
 	payload, err := ProducerSealData(chainID, header)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("producer seal payload: %w", err)
 	}
 	signature, err := sign(header.Coinbase, payload)
 	if err != nil {
@@ -147,7 +147,7 @@ func (l *LQC) SealHeader(chainID *big.Int, header *types.Header, sign consensus.
 	sealed.Extra = append(sealed.Extra, extra...)
 	sealed.Extra = append(sealed.Extra, signature...)
 	if err := VerifyProducerSeal(chainID, sealed); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("producer seal self-verify: %w", err)
 	}
 	return sealed, nil
 }

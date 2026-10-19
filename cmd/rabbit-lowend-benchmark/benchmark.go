@@ -13,8 +13,6 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-var benchmarkSink byte
-
 func runBenchmark(opts options) (benchmarkReport, error) {
 	if err := validateOptions(opts); err != nil {
 		return benchmarkReport{}, err
@@ -159,7 +157,7 @@ func benchmarkAttempt(opts options, memoryMiB, nonce uint64) {
 		uint8(opts.parallelism),
 		32,
 	)
-	benchmarkSink ^= output[0]
+	runtime.KeepAlive(output)
 }
 
 func benchmarkIsolated(opts options, memoryMiB uint64) []float64 {

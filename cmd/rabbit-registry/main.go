@@ -401,7 +401,6 @@ func loadPrivateKey(opts options) (*ecdsa.PrivateKey, error) {
 		return nil, errors.New("empty password file")
 	}
 	key, err := keystore.DecryptKey(keyJSON, password)
-	password = ""
 	if err != nil {
 		return nil, fmt.Errorf("descriptografar keystore: %w", err)
 	}

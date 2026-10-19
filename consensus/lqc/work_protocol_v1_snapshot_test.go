@@ -479,3 +479,67 @@ func TestWorkChainSnapshotV1RejectsTamperedStateRoot(t *testing.T) {
 		t.Fatalf("tampered root error = %v", err)
 	}
 }
+
+func TestWorkChainSnapshotV1Block56FeedsBlock57SourceEpoch6(t *testing.T) {
+	chainID := big.NewInt(9280)
+	parentHash := workSnapshotHashV1("epoch-boundary", 55)
+	snapshot, err := NewWorkChainSnapshotV1(
+		chainID,
+		55,
+		parentHash,
+		8,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seats, err := canonicalWorkEpochSeatsV1([]WorkSeatV1{
+		{TicketHash: workV1Hash(0x11), Participant: common.BigToAddress(big.NewInt(1))},
+		{TicketHash: workV1Hash(0x22), Participant: common.BigToAddress(big.NewInt(2))},
+		{TicketHash: workV1Hash(0x33), Participant: common.BigToAddress(big.NewInt(3))},
+		{TicketHash: workV1Hash(0x44), Participant: common.BigToAddress(big.NewInt(4))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitAnchor := workSnapshotHashV1("epoch-6-anchor", 40)
+	snapshot.CommitEpoch = 6
+	snapshot.CommitAnchor = commitAnchor
+	snapshot.CommitDifficulty = big.NewInt(1)
+	snapshot.CommitSeats = seats
+	snapshot.StateRoot, err = WorkChainStateRootV1(chainID, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block56Hash := workSnapshotHashV1("epoch-boundary", 56)
+	block56, err := snapshot.ApplyVerifiedBlockV1(
+		chainID,
+		56,
+		block56Hash,
+		parentHash,
+		commitAnchor,
+		big.NewInt(1),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block56.SelectionEpoch != 6 {
+		t.Fatalf("block56 selection epoch=%d want=6", block56.SelectionEpoch)
+	}
+	if block56.SelectionRoot == (common.Hash{}) {
+		t.Fatal("block56 did not install a selection root for epoch 6")
+	}
+	if len(block56.SelectionSeats) != 4 {
+		t.Fatalf("block56 selection seats=%d want=4", len(block56.SelectionSeats))
+	}
+	if block56.CommitEpoch != 0 || len(block56.CommitSeats) != 0 {
+		t.Fatalf("block56 did not close commit epoch: epoch=%d seats=%d", block56.CommitEpoch, len(block56.CommitSeats))
+	}
+
+	sourceEpoch, hasSource, err := WorkSelectionSourceEpochV1(57, 8)
+	if err != nil || !hasSource || sourceEpoch != 6 {
+		t.Fatalf("block57 source epoch=%d has=%v err=%v want=6/true/nil", sourceEpoch, hasSource, err)
+	}
+}

@@ -1,0 +1,122 @@
+//go:build (rabbit_workv1_engine_lab || rabbit_workv1) && rabbit_randomx
+
+package eth
+
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+	"sync"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/log"
+
+	"github.com/ethereum/go-ethereum/consensus/lqc"
+	rabbitvrfstate "github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
+)
+
+func persistRabbitVRFDKGFinalKeysetV1(
+	instanceDir string,
+	session lqc.RabbitVRFDKGSessionContextV1,
+	commitments []lqc.RabbitVRFDKGPolynomialCommitmentV1,
+) (rabbitvrfstate.DKGFinalKeysetV1, error) {
+	var zero rabbitvrfstate.DKGFinalKeysetV1
+	if instanceDir == "" {
+		return zero, fmt.Errorf("rabbit vrf dkg instance directory unavailable")
+	}
+	root, publicKey, transcript, shares, err :=
+		lqc.RabbitVRFDKGFinalKeysetV1(session, commitments)
+	if err != nil {
+		return zero, fmt.Errorf("derive finalized rabbit vrf dkg keyset: %w", err)
+	}
+	value := rabbitvrfstate.DKGFinalKeysetV1{
+		KeysetRoot:         root,
+		ThresholdPublicKey: publicKey,
+		TranscriptRoot:     transcript,
+		VerificationShares: shares,
+	}
+	store, err := rabbitvrfstate.NewDKGFinalKeysetStoreV1(
+		filepath.Join(instanceDir, "rabbit-vrf", "dkg-final-keysets"),
+	)
+	if err != nil {
+		return zero, err
+	}
+	if err := store.Store(session, value); err != nil {
+		return zero, fmt.Errorf("persist finalized rabbit vrf dkg keyset: %w", err)
+	}
+	return store.Load(session)
+}
+
+func (runtime *rabbitVRFDKGRuntime) ensureFinalKeysetV1() (bool, error) {
+	if runtime == nil || runtime.backend == nil {
+		return false, errRabbitVRFDKGRuntimeV1
+	}
+	if !runtime.secretReadyV1() {
+		return false, nil
+	}
+	context := runtime.currentContext()
+	// The finalized keyset contains public data derived from verified
+	// commitments. Relays need it to verify and retain certificates even
+	// when they do not hold a local committee wallet or secret share.
+	sessionID, err := lqc.RabbitVRFDKGSessionIDV1(context.CanonicalSession)
+	if err != nil || sessionID != context.SessionID {
+		return false, errRabbitVRFDKGArtifactSessionMismatch
+	}
+	if uint64(len(context.CanonicalMembers)) != context.CanonicalSession.CommitteeSize {
+		return false, fmt.Errorf("rabbit vrf final keyset canonical committee unavailable")
+	}
+	if runtime.backend.vrfDKGInstanceDir == "" {
+		return false, fmt.Errorf("rabbit vrf final keyset persistence unavailable")
+	}
+	store, err := rabbitvrfstate.NewDKGFinalKeysetStoreV1(
+		filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-final-keysets"),
+	)
+	if err != nil {
+		return false, err
+	}
+	if _, err := store.Load(context.CanonicalSession); err == nil {
+		return true, nil
+	} else if !errors.Is(err, rabbitvrfstate.ErrDKGTransportKeyStoreMissingV1) {
+		return false, err
+	}
+	transport := runtime.backend.vrfDKGTransport
+	if transport == nil {
+		return false, fmt.Errorf("rabbit vrf final keyset transport unavailable")
+	}
+	commitments := make([]lqc.RabbitVRFDKGPolynomialCommitmentV1, 0, len(context.CanonicalMembers))
+	missing := make([]common.Address, 0)
+	for index, member := range context.CanonicalMembers {
+		if member.ShareID != uint64(index+1) {
+			return false, fmt.Errorf("rabbit vrf final keyset committee ordering mismatch")
+		}
+		commitment, ok := transport.commitmentForDealerV1(context.SessionID, member.ShareID)
+		if !ok {
+			missing = append(missing, member.Participant)
+			continue
+		}
+		commitments = append(commitments, commitment)
+	}
+	if len(missing) > 0 {
+		key := fmt.Sprintf("%s/%d", context.SessionID.Hex(), len(commitments))
+		if _, seen := rabbitVRFDKGCommitmentDiagnostic.LoadOrStore(key, true); !seen {
+			log.Warn("Rabbit VRF DKG waiting for commitments",
+				"session", context.SessionID.Hex(),
+				"committee", context.CanonicalSession.CommitteeSize,
+				"threshold", context.CanonicalSession.Threshold,
+				"received", len(commitments),
+				"missing", missing)
+		}
+		return false, nil
+	}
+	if runtime.currentContext().SessionID != context.SessionID {
+		return false, errRabbitVRFDKGArtifactSessionMismatch
+	}
+	if _, err := persistRabbitVRFDKGFinalKeysetV1(
+		runtime.backend.vrfDKGInstanceDir, context.CanonicalSession, commitments,
+	); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+var rabbitVRFDKGCommitmentDiagnostic sync.Map

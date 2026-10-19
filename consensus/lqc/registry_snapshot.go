@@ -110,6 +110,22 @@ func (s *RegistrySnapshot) ApplyHeader(chainID *big.Int, rules RegistrySnapshotR
 }
 
 func (s *RegistrySnapshot) ApplyHeaderWithOpenActivation(chainID *big.Int, rules RegistrySnapshotRules, header *types.Header, openActivation bool) (*RegistrySnapshot, error) {
+	return s.applyHeaderWithOpenActivation(
+		chainID,
+		rules,
+		header,
+		openActivation,
+		false,
+	)
+}
+
+func (s *RegistrySnapshot) applyHeaderWithOpenActivation(
+	chainID *big.Int,
+	rules RegistrySnapshotRules,
+	header *types.Header,
+	openActivation bool,
+	preserveRegistry bool,
+) (*RegistrySnapshot, error) {
 	registry, err := s.Registry()
 	if err != nil {
 		return nil, err
@@ -126,12 +142,26 @@ func (s *RegistrySnapshot) ApplyHeaderWithOpenActivation(chainID *big.Int, rules
 		return nil, err
 	}
 	if openActivation {
-		registry = NewCanonicalRegistry()
+		if !preserveRegistry {
+			registry = NewCanonicalRegistry()
+		}
 		if header.Coinbase == (common.Address{}) {
 			return nil, ErrUnauthorizedRegistryProducer
 		}
-		if err := registry.ActivatePermissionlessProducer(header.Coinbase, blockNumber); err != nil {
-			return nil, err
+		var activationErr error
+		if preserveRegistry {
+			activationErr = registry.RecoverPermissionlessProducer(
+				header.Coinbase,
+				blockNumber,
+			)
+		} else {
+			activationErr = registry.ActivatePermissionlessProducer(
+				header.Coinbase,
+				blockNumber,
+			)
+		}
+		if activationErr != nil {
+			return nil, activationErr
 		}
 		for _, operation := range envelope.Operations {
 			if err := registry.ApplyOperation(chainID, blockNumber, rules.ProofDifficulty, operation); err != nil {

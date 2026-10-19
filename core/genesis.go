@@ -367,6 +367,24 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		if err := validateRabbitGenesisConfig(genesis.Config); err != nil {
 			return nil, common.Hash{}, nil, err
 		}
+		// The distributed genesis predates the availability schedule. On restart,
+		// inherit only a schedule already persisted for this exact genesis.
+		// Missing or conflicting stored schedules still pass through the guard.
+		suppliedHash := genesis.ToBlock().Hash()
+		if genesis.Config.LQC != nil {
+			availabilityConfig := *genesis.Config.LQC
+			genesis.Config.LQC = &availabilityConfig
+		}
+		if stored := rawdb.ReadCanonicalHash(db, 0); stored == suppliedHash && suppliedHash == common.HexToHash("0x9b71d7f2922fdf8383a4a12be5594e25938625195e0d84c05c3bd71b7bcf93f7") {
+			if persisted := rawdb.ReadChainConfig(db, stored); persisted != nil && persisted.LQC != nil &&
+				genesis.Config.LQC != nil && genesis.Config.LQC.VRFAvailabilityV2Block == 0 &&
+				persisted.LQC.VRFAvailabilityV2Block == RabbitTestnetVRFAvailabilityV2Block {
+				genesis.Config.LQC.VRFAvailabilityV2Block = persisted.LQC.VRFAvailabilityV2Block
+			}
+		}
+		if err := ConfigureRabbitTestnetVRFAvailabilityV2(db, suppliedHash, genesis.Config); err != nil {
+			return nil, common.Hash{}, nil, err
+		}
 	}
 	// Commit the genesis if the database is empty
 	ghash := rawdb.ReadCanonicalHash(db, 0)
@@ -427,6 +445,12 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 			return nil, common.Hash{}, nil, &GenesisMismatchError{ghash, hash}
 		}
 	}
+	MigrateRabbitTestnetStoredChainConfig(db, ghash, storedCfg)
+	storedConfigBeforeAvailability, _ := json.Marshal(storedCfg)
+	if err := ConfigureRabbitTestnetVRFAvailabilityV2(db, ghash, storedCfg); err != nil {
+		return nil, common.Hash{}, nil, err
+	}
+
 	// Check config compatibility and write the config. Compatibility errors
 	// are returned to the caller unless we're already at block zero.
 	head := rawdb.ReadHeadHeader(db)
@@ -451,7 +475,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 	}
 	// Don't overwrite if the old is identical to the new. It's useful
 	// for the scenarios that database is opened in the read-only mode.
-	storedData, _ := json.Marshal(storedCfg)
+	storedData := storedConfigBeforeAvailability
 	if newData, _ := json.Marshal(newCfg); !bytes.Equal(storedData, newData) {
 		rawdb.WriteChainConfig(db, ghash, newCfg)
 	}

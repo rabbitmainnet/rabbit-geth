@@ -215,7 +215,7 @@ func writeMarkdownReport(path string, report *auditReport) error {
 		fmt.Fprintf(writer, "- Engine connected by the client: `%s`\n", report.Config.Engine)
 		fmt.Fprintf(writer, "- Selection sizing rule: `%s`\n", report.Config.SelectionSizing)
 		fmt.Fprintf(writer, "- Registry source: `canonical headers since block %d`\n", report.Config.RegistryProtocolBlock)
-		fmt.Fprintf(writer, "- Participantes bootstrap: `%d`\n", len(report.Config.BootstrapParticipants))
+		fmt.Fprintf(writer, "- Participantes bootstrap: `%d`\n", len(report.Config.BootstrapParticipants)) //nolint:misspell // Portuguese user-facing text.
 		fmt.Fprintf(writer, "- Reward mode: `%s`\n", report.Config.RewardMode)
 		fmt.Fprintf(writer, "- Fallbacks efetivos: `%d`\n", report.Config.FallbackCount)
 		if report.Config.CommitteeSize > 0 {

@@ -508,17 +508,30 @@ func (srv *Server) setupDiscovery() error {
 		}
 	}
 
-	// Set up default non-protocol-specific discovery feeds if no protocol
-	// has configured discovery.
-	if len(added) == 0 {
-		if srv.discv4 != nil {
-			it := srv.discv4.RandomNodes()
-			srv.discmix.AddSource(enode.WithSourceName("discv4-default", it))
-		}
-		if srv.discv5 != nil {
-			it := srv.discv5.RandomNodes()
-			srv.discmix.AddSource(enode.WithSourceName("discv5-default", it))
-		}
+	// Bootstrap nodes are immediate dynamic dial candidates, not static peers.
+	// Present each configured bootstrap node once for fast initial connectivity.
+	// Discovery remains active and supplies the long-lived permissionless mesh,
+	// including recovery and rediscovery after peer loss.
+	if len(srv.BootstrapNodes) > 0 {
+		srv.discmix.AddSource(enode.WithSourceName(
+			"bootstrap-default",
+			enode.IterNodes(srv.BootstrapNodes),
+		))
+	}
+
+	// Always feed UDP discovery into the dial scheduler.
+	//
+	// Protocol-specific discovery (for example DNS discovery) is supplemental.
+	// It must not suppress discv4/discv5, otherwise custom Rabbit networks
+	// without a DNS discovery tree can learn nodes through the DHT but never
+	// actually dial them.
+	if srv.discv4 != nil {
+		it := srv.discv4.RandomNodes()
+		srv.discmix.AddSource(enode.WithSourceName("discv4-default", it))
+	}
+	if srv.discv5 != nil {
+		it := srv.discv5.RandomNodes()
+		srv.discmix.AddSource(enode.WithSourceName("discv5-default", it))
 	}
 	return nil
 }

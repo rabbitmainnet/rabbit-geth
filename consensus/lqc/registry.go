@@ -273,7 +273,6 @@ func RegisterParticipant(reg *Registry, addr common.Address, blockNumber uint64)
 	}
 
 	runtimeRegistry.Register(addr, blockNumber)
-
 }
 
 func UpdateParticipantActivity(reg *Registry, addr common.Address, blockNumber uint64) {

@@ -65,6 +65,21 @@ type RegistryParticipantResult struct {
 	RegisteredAt   hexutil.Uint64 `json:"registeredAt"`
 	LastHeartbeat  hexutil.Uint64 `json:"lastHeartbeat"`
 	Sequence       hexutil.Uint64 `json:"sequence"`
+	JailedUntil    hexutil.Uint64 `json:"jailedUntil"`
+	MissedTurns    hexutil.Uint64 `json:"missedTurns"`
+}
+
+type RewardClaimResult struct {
+	TargetBlock hexutil.Uint64 `json:"targetBlock"`
+	Amount      *hexutil.Big   `json:"amount"`
+}
+
+type RewardActivityResult struct {
+	BlockNumber        hexutil.Uint64      `json:"blockNumber"`
+	Producer           common.Address      `json:"producer"`
+	ProducerReward     *hexutil.Big        `json:"producerReward"`
+	ProducerFullReward bool                `json:"producerFullReward"`
+	CommitteeClaims    []RewardClaimResult `json:"committeeClaims"`
 }
 
 type RegistrySigningRequestResult struct {
@@ -89,6 +104,76 @@ func (s *Ethereum) lqcRegistryEngine() *lqc.LQC {
 	}
 	engine, _ := s.engine.(*lqc.LQC)
 	return engine
+}
+
+// RewardActivity returns canonical reward information for one participant
+// in one already-imported block. It is read-only.
+func (api *LQCRegistryAPI) RewardActivity(
+	blockNumber hexutil.Uint64,
+	participant common.Address,
+) (RewardActivityResult, error) {
+	if api == nil ||
+		api.eth == nil ||
+		api.eth.blockchain == nil ||
+		participant == (common.Address{}) {
+		return RewardActivityResult{}, errLQCRegistryUnavailable
+	}
+
+	engine := api.eth.lqcRegistryEngine()
+	if engine == nil {
+		return RewardActivityResult{}, errLQCRegistryUnavailable
+	}
+
+	header := api.eth.blockchain.GetHeaderByNumber(uint64(blockNumber))
+	if header == nil {
+		return RewardActivityResult{}, errors.New(
+			"canonical reward block not found",
+		)
+	}
+
+	view, err := engine.RewardActivityForHeader(
+		api.eth.blockchain,
+		header,
+		participant,
+	)
+	if err != nil {
+		return RewardActivityResult{}, err
+	}
+
+	producerReward := (*hexutil.Big)(new(big.Int))
+	if view.ProducerReward != nil {
+		producerReward = (*hexutil.Big)(
+			new(big.Int).Set(view.ProducerReward),
+		)
+	}
+
+	result := RewardActivityResult{
+		BlockNumber:        blockNumber,
+		Producer:           view.Producer,
+		ProducerReward:     producerReward,
+		ProducerFullReward: view.ProducerFullReward,
+		CommitteeClaims:    make([]RewardClaimResult, 0, len(view.CommitteeCredits)),
+	}
+
+	for _, claim := range view.CommitteeCredits {
+		if claim.Amount == nil || claim.Amount.Sign() <= 0 {
+			continue
+		}
+
+		amount := (*hexutil.Big)(
+			new(big.Int).Set(claim.Amount),
+		)
+
+		result.CommitteeClaims = append(
+			result.CommitteeClaims,
+			RewardClaimResult{
+				TargetBlock: hexutil.Uint64(claim.TargetBlock),
+				Amount:      amount,
+			},
+		)
+	}
+
+	return result, nil
 }
 
 // PrepareRegistryRegistration prepares a permissionless REGISTER operation using
@@ -410,6 +495,8 @@ func (api *LQCRegistryAPI) RegistryParticipant(address common.Address) (Registry
 		RegisteredAt:   hexutil.Uint64(status.Participant.RegisteredAt),
 		LastHeartbeat:  hexutil.Uint64(status.Participant.LastHeartbeat),
 		Sequence:       hexutil.Uint64(status.Participant.Sequence),
+		JailedUntil:    hexutil.Uint64(status.Participant.JailedUntil),
+		MissedTurns:    hexutil.Uint64(status.Participant.MissedTurns),
 	}, nil
 }
 

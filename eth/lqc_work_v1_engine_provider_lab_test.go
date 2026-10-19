@@ -3,6 +3,7 @@
 package eth
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -36,6 +37,41 @@ func workV1EngineProviderCandidateLab(
 		ProofHash: crypto.Keccak256Hash(
 			[]byte("proof-" + label),
 		),
+	}
+}
+
+func TestWorkV1EnginePoolProviderLabInitializesEpochAfterRestart(
+	t *testing.T,
+) {
+	preparedEpoch := uint64(0)
+	pendingCalls := 0
+
+	provider := &workV1EnginePoolProviderLab{
+		prepareEpoch: func(epoch uint64) error {
+			preparedEpoch = epoch
+			return nil
+		},
+		pending: func() ([]lqc.WorkCommitCandidateV1, error) {
+			pendingCalls++
+			if preparedEpoch == 0 {
+				return nil, lqc.ErrWorkCommitPoolUninitializedV1
+			}
+			return nil, nil
+		},
+	}
+
+	got, err := provider.provide(4022, 31)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preparedEpoch != 31 {
+		t.Fatalf("prepared epoch=%d want=31", preparedEpoch)
+	}
+	if pendingCalls != 1 {
+		t.Fatalf("pending calls=%d want=1", pendingCalls)
+	}
+	if len(got) != 0 {
+		t.Fatalf("tickets=%d want=0", len(got))
 	}
 }
 
@@ -498,5 +534,71 @@ func TestWorkV1EnginePoolProviderLabCanonicalReplayLookup(
 	}
 	if provider.canonicalIncludes(2322, 19, included) {
 		t.Fatal("ticket from another commit epoch was accepted")
+	}
+}
+
+func TestWorkV1EnginePoolHeaderTicketsLabReadsV4AndV3(
+	t *testing.T,
+) {
+	candidate := workV1EngineProviderCandidateLab(
+		764,
+		1,
+		"v4-canonical-reconcile",
+	)
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate.Signed.Ticket.Participant = crypto.PubkeyToAddress(key.PublicKey)
+	signingHash, err := lqc.RandomXWorkSigningHashV1(
+		big.NewInt(9280), common.HexToHash("0x01"),
+		candidate.Signed.Ticket, candidate.ProofHash,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate.Signed.Signature, err = crypto.Sign(signingHash[:], key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryRoot := common.HexToHash("0x1111")
+	workRoot := common.HexToHash("0x2222")
+	claimRoot := common.HexToHash("0x3333")
+
+	v4Extra, err := lqc.EncodeLQCHeaderExtraV4(
+		97990,
+		registryRoot,
+		workRoot,
+		claimRoot,
+		nil,
+		[]lqc.SignedRandomXWorkTicketV1{candidate.Signed},
+		nil,
+		lqc.MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v4Tickets, ok := workV1EnginePoolHeaderTicketsLab(v4Extra)
+	if !ok || len(v4Tickets) != 1 ||
+		!workV1EnginePoolSignedEqualLab(v4Tickets[0], candidate.Signed) {
+		t.Fatalf("V4 canonical tickets not recovered: ok=%v len=%d", ok, len(v4Tickets))
+	}
+
+	v3Extra, err := lqc.EncodeLQCHeaderExtraV3(
+		76999,
+		registryRoot,
+		workRoot,
+		nil,
+		[]lqc.SignedRandomXWorkTicketV1{candidate.Signed},
+		lqc.MaxWorkTicketsPerBlockV1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v3Tickets, ok := workV1EnginePoolHeaderTicketsLab(v3Extra)
+	if !ok || len(v3Tickets) != 1 ||
+		!workV1EnginePoolSignedEqualLab(v3Tickets[0], candidate.Signed) {
+		t.Fatalf("V3 canonical tickets not recovered: ok=%v len=%d", ok, len(v3Tickets))
 	}
 }

@@ -18,6 +18,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1646,6 +1647,9 @@ func (bc *BlockChain) writeBlockWithoutState(block *types.Block) (err error) {
 // and introduces chain reorg if necessary.
 func (bc *BlockChain) writeKnownBlock(block *types.Block) error {
 	current := bc.CurrentBlock()
+	if bc.lqcRejectSameHeightHead(block, current) {
+		return nil
+	}
 	if block.ParentHash() != current.Hash() {
 		if err := bc.reorg(current, block.Header()); err != nil {
 			return err
@@ -1776,6 +1780,9 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 		return NonStatTy, err
 	}
 	currentBlock := bc.CurrentBlock()
+	if bc.lqcRejectSameHeightHead(block, currentBlock) {
+		return SideStatTy, nil
+	}
 
 	// Reorganise the chain if the parent is not the head block
 	if block.ParentHash() != currentBlock.Hash() {
@@ -1920,7 +1927,9 @@ func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHe
 			if err := bc.writeKnownBlock(block); err != nil {
 				return nil, it.index, err
 			}
-			lastCanon = block
+			if bc.CurrentBlock().Hash() == block.Hash() {
+				lastCanon = block
+			}
 
 			block, err = it.next()
 		}
@@ -1930,6 +1939,32 @@ func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHe
 	// First block is pruned
 	case errors.Is(err, consensus.ErrPrunedAncestor):
 		if setHead {
+			// LQC siblings can legitimately have the same EVM root. Recover only
+			// their exact canonical parent, then execute the incoming branch through
+			// the normal importer. Never treat the matching child root as proof
+			// that a sidechain block has already been executed.
+			if bc.chainConfig.LQC != nil && block.NumberU64() > 0 {
+				canonical := bc.GetBlockByNumber(block.NumberU64())
+				parent := bc.GetBlockByNumber(block.NumberU64() - 1)
+				if canonical != nil && canonical.Hash() != block.Hash() &&
+					canonical.Root() == block.Root() && parent != nil &&
+					parent.Hash() == block.ParentHash() && canonical.ParentHash() == parent.Hash() &&
+					!bc.HasBlock(block.Hash(), block.NumberU64()) {
+					if _, recoverErr := bc.recoverAncestors(ctx, parent, false); recoverErr != nil {
+						return nil, it.index, recoverErr
+					}
+					if bc.insertStopped() {
+						return nil, it.index, errInsertionInterrupted
+					}
+					if !bc.HasState(parent.Root()) {
+						return nil, it.index, consensus.ErrPrunedAncestor
+					}
+					log.Info("Reexecuting LQC sibling from recovered canonical parent",
+						"number", block.NumberU64(), "hash", block.Hash(), "parent", parent.Hash())
+					witness, index, importErr := bc.insertChain(ctx, it.chain[it.index:], true, makeWitness)
+					return witness, it.index + index, importErr
+				}
+			}
 			// First block is pruned, insert as sidechain and reorg only if TD grows enough
 			log.Debug("Pruned ancestor, inserting as sidechain", "number", block.Number(), "hash", block.Hash())
 			return bc.insertSideChain(ctx, block, it, makeWitness)
@@ -1998,7 +2033,9 @@ func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHe
 			}
 			// We can assume that logs are empty here, since the only way for consecutive
 			// Clique blocks to have the same state is if there are no transactions.
-			lastCanon = block
+			if bc.CurrentBlock().Hash() == block.Hash() {
+				lastCanon = block
+			}
 			continue
 		}
 		// Retrieve the parent block and it's state to execute on top
@@ -2351,6 +2388,15 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 	}
 	elapsed := time.Since(startTime) + 1 // prevent zero division
 	stats.TotalTime = elapsed
+	if elapsed >= 500*time.Millisecond {
+		log.Warn("RABBIT DIAG slow block processing",
+			"number", block.NumberU64(),
+			"total", elapsed,
+			"execution", ptime,
+			"stateValidation", vtime,
+			"databaseCommit", stats.DatabaseCommit,
+			"blockWrite", stats.BlockWrite)
+	}
 	stats.MgasPerSecond = float64(res.GasUsed) * 1000 / float64(elapsed)
 
 	return &blockProcessingResult{
@@ -3020,4 +3066,16 @@ func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 // StateSizer returns the state size tracker, or nil if it's not initialized
 func (bc *BlockChain) StateSizer() *state.SizeTracker {
 	return bc.stateSizer
+}
+
+// Delayed imports must use the same equal-height order as LQC peer sync.
+// This runs after execution for new blocks; losing blocks remain available
+// as valid side blocks, and a longer validated branch may still be adopted.
+func (bc *BlockChain) lqcRejectSameHeightHead(block *types.Block, current *types.Header) bool {
+	if bc.chainConfig.LQC == nil || block == nil || current == nil || current.Number == nil ||
+		block.NumberU64() != current.Number.Uint64() {
+		return false
+	}
+	incoming, local := block.Hash(), current.Hash()
+	return incoming != local && bytes.Compare(incoming[:], local[:]) > 0
 }

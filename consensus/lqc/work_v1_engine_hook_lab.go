@@ -28,6 +28,53 @@ type WorkV1EngineLabTicketProvider func(
 	commitEpoch uint64,
 ) ([]SignedRandomXWorkTicketV1, error)
 
+type WorkV1EngineLabCommitteeClaimProvider func(
+	blockNumber uint64,
+) ([]CommitteeParticipationClaimGroupV1, error)
+
+func filterAlreadyClaimedCommitteeParticipationsV1(
+	parent *CommitteeClaimLedgerV1,
+	groups []CommitteeParticipationClaimGroupV1,
+) []CommitteeParticipationClaimGroupV1 {
+	if parent == nil || len(groups) == 0 {
+		return groups
+	}
+
+	filtered := make(
+		[]CommitteeParticipationClaimGroupV1,
+		0,
+		len(groups),
+	)
+
+	for _, group := range groups {
+		next := CommitteeParticipationClaimGroupV1{
+			TargetBlock: group.TargetBlock,
+			Participations: make(
+				[]CompactCommitteeParticipationV1,
+				0,
+				len(group.Participations),
+			),
+		}
+
+		for _, item := range group.Participations {
+			if parent.IsClaimed(group.TargetBlock, item.Position) {
+				continue
+			}
+
+			next.Participations = append(
+				next.Participations,
+				item,
+			)
+		}
+
+		if len(next.Participations) > 0 {
+			filtered = append(filtered, next)
+		}
+	}
+
+	return filtered
+}
+
 const workV1SelectionBeaconCacheLimit = 32
 
 type workV1SelectionBeaconCacheKey struct {
@@ -35,13 +82,21 @@ type workV1SelectionBeaconCacheKey struct {
 	inputHash  common.Hash
 }
 
-type workV1EngineLabRuntime struct {
-	mu       sync.Mutex
-	hasher   WorkRelayHasherV1
-	close    func()
-	runtimes map[common.Hash]*CanonicalWorkRuntimeStateV1
-	provider WorkV1EngineLabTicketProvider
+type WorkV1EngineLabRabbitVRFFinalizationProvider func(blockNumber uint64) ([]RabbitVRFFinalizationV1, error)
+type WorkV1EngineLabRabbitVRFKeysetCertificateProvider func(blockNumber uint64) (RabbitVRFKeysetCertificateV1, bool, error)
 
+type workV1EngineLabRuntime struct {
+	mu                        sync.Mutex
+	hasher                    WorkRelayHasherV1
+	close                     func()
+	runtimes                  map[common.Hash]*CanonicalWorkRuntimeStateV1
+	provider                  WorkV1EngineLabTicketProvider
+	claimLedgers              map[common.Hash]*CommitteeClaimLedgerV1
+	claimProvider             WorkV1EngineLabCommitteeClaimProvider
+	finalizationProvider      WorkV1EngineLabRabbitVRFFinalizationProvider
+	keysetCertificateProvider WorkV1EngineLabRabbitVRFKeysetCertificateProvider
+
+	validatedFinalizations map[common.Hash][]RabbitVRFFinalizationV1
 	// Selection entropy is constant for an entire closed source epoch. The
 	// block number is mixed only after RandomX, in WorkSelectionSeedV1. Cache
 	// the deterministic RandomX result so historical full sync performs one
@@ -66,10 +121,12 @@ func workV1EngineLabRuntimeFor(
 		return nil, err
 	}
 	created := &workV1EngineLabRuntime{
-		hasher:               hasher.Hash,
-		close:                hasher.Close,
-		runtimes:             make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
-		selectionBeaconCache: make(map[workV1SelectionBeaconCacheKey]common.Hash),
+		hasher:                 hasher.Hash,
+		close:                  hasher.Close,
+		runtimes:               make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
+		claimLedgers:           make(map[common.Hash]*CommitteeClaimLedgerV1),
+		validatedFinalizations: make(map[common.Hash][]RabbitVRFFinalizationV1),
+		selectionBeaconCache:   make(map[workV1SelectionBeaconCacheKey]common.Hash),
 	}
 	actual, loaded := workV1EngineLabRuntimes.LoadOrStore(
 		engine,
@@ -80,6 +137,42 @@ func workV1EngineLabRuntimeFor(
 		return actual.(*workV1EngineLabRuntime), nil
 	}
 	return created, nil
+}
+
+func SetWorkV1EngineLabCommitteeClaimProvider(
+	engine *LQC,
+	provider WorkV1EngineLabCommitteeClaimProvider,
+) error {
+	state, err := workV1EngineLabRuntimeFor(engine)
+	if err != nil {
+		return err
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.claimProvider = provider
+	return nil
+}
+
+func SetWorkV1EngineLabRabbitVRFFinalizationProvider(engine *LQC, provider WorkV1EngineLabRabbitVRFFinalizationProvider) error {
+	state, err := workV1EngineLabRuntimeFor(engine)
+	if err != nil {
+		return err
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.finalizationProvider = provider
+	return nil
+}
+
+func SetWorkV1EngineLabRabbitVRFKeysetCertificateProvider(engine *LQC, provider WorkV1EngineLabRabbitVRFKeysetCertificateProvider) error {
+	state, err := workV1EngineLabRuntimeFor(engine)
+	if err != nil {
+		return err
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.keysetCertificateProvider = provider
+	return nil
 }
 
 func (s *workV1EngineLabRuntime) cachedSelectionBeaconHash(
@@ -216,6 +309,227 @@ func (l *LQC) WorkV1EngineLabRelayContext(
 		new(big.Int).Set(difficulty),
 		admissionEligibility,
 		nil
+}
+
+// RabbitVRFDKGBridgeContextV1 resolves the canonical read-only Rabbit VRF DKG
+// bridge for blockNumber.
+//
+// The Rabbit VRF DKG preparation gate is checked before resolving Work runtime
+// state. This permits preparation during the single pre-activation Work epoch
+// while a disabled VRF configuration still performs no RandomX work and creates
+// no VRF lifecycle side effects.
+func (l *LQC) RabbitVRFDKGBridgeContextV1(
+	chain consensus.ChainHeaderReader,
+	parentNumber uint64,
+	parentHash common.Hash,
+	blockNumber uint64,
+) (
+	RabbitVRFDKGBridgeV1,
+	bool,
+	error,
+) {
+	var out RabbitVRFDKGBridgeV1
+
+	if chain == nil ||
+		chain.Config() == nil ||
+		chain.Config().ChainID == nil ||
+		parentNumber == ^uint64(0) ||
+		blockNumber != parentNumber+1 {
+		return out, false, ErrWorkV1EngineLabUnavailable
+	}
+
+	if !chain.Config().IsRabbitVRFDKGPreparation(
+		new(big.Int).SetUint64(blockNumber),
+	) {
+		return out, false, nil
+	}
+
+	parent, err := l.workV1EngineLabRuntimeAt(
+		chain,
+		parentNumber,
+		parentHash,
+	)
+	if err != nil {
+		return out, false, err
+	}
+
+	snapshot, hasSource, err :=
+		parent.Work.SelectionSnapshotV1(
+			chain.Config().ChainID,
+			blockNumber,
+		)
+	if err != nil {
+		return out, false, err
+	}
+	if !hasSource ||
+		snapshot == nil ||
+		len(snapshot.Seats) == 0 {
+		return out, false, nil
+	}
+
+	datasetNumber, err :=
+		WorkDatasetAnchorBlockV1(
+			snapshot.Epoch,
+			parent.Work.EpochLength,
+		)
+	if err != nil {
+		return out, false, err
+	}
+
+	datasetHeader := workV1EngineLabAncestorHeader(
+		chain,
+		parent.Work.Number,
+		parent.Work.Hash,
+		datasetNumber,
+	)
+	if datasetHeader == nil {
+		return out, false,
+			ErrWorkV1EngineLabParentMissing
+	}
+
+	datasetKey, err :=
+		RandomXWorkDatasetKeyV1(
+			chain.Config().ChainID,
+			snapshot.Epoch,
+			datasetHeader.Hash(),
+		)
+	if err != nil {
+		return out, false, err
+	}
+
+	preparationStart, err := RabbitVRFDKGPreparationStartBlockV1(snapshot.Epoch, parent.Work.EpochLength)
+	if err != nil {
+		return out, false, err
+	}
+	if chain.Config().LQC.IsVRFAvailabilityV2Preparation(preparationStart) {
+		if err := chain.Config().CheckConfigForkOrder(); err != nil {
+			return out, false, err
+		}
+		reference := workV1EngineLabAncestorHeader(chain, parentNumber, parentHash, preparationStart-1)
+		if reference == nil {
+			return out, false, ErrWorkV1EngineLabParentMissing
+		}
+		registry, err := l.registrySnapshotAt(chain, preparationStart-1, reference.Hash())
+		if err != nil {
+			return out, false, err
+		}
+		state, err := workV1EngineLabRuntimeFor(l)
+		if err != nil {
+			return out, false, err
+		}
+		window := chain.Config().LQC.HeartbeatWindow + chain.Config().LQC.HeartbeatGrace
+		return rabbitVRFAvailableBridgeV2(chain.Config().ChainID, snapshot, datasetKey, registry,
+			parent.Work.EpochLength, window, WorkSelectionBeaconHasherV1(state.cachedSelectionBeaconHash))
+	}
+
+	committeeSize :=
+		l.workV1EngineLabCommitteeSize(
+			uint64(len(snapshot.Seats)),
+		)
+	if committeeSize == 0 {
+		return out, false, nil
+	}
+
+	state, err := workV1EngineLabRuntimeFor(l)
+	if err != nil {
+		return out, false, err
+	}
+
+	out, err =
+		RabbitVRFDKGBridgeForSnapshotV1(
+			chain.Config().ChainID,
+			snapshot,
+			datasetKey,
+			committeeSize,
+			committeeSize,
+			WorkSelectionBeaconHasherV1(
+				state.cachedSelectionBeaconHash,
+			),
+		)
+	if err != nil {
+		return RabbitVRFDKGBridgeV1{},
+			false,
+			err
+	}
+
+	return out, true, nil
+}
+
+func (l *LQC) rabbitVRFDKGBridgeForTargetBlockV1(chain consensus.ChainHeaderReader, parentNumber uint64, parentHash common.Hash, blockNumber uint64, epochLength uint64) (RabbitVRFDKGBridgeV1, bool, error) {
+	var out RabbitVRFDKGBridgeV1
+	targetEpoch, err := RabbitVRFEpochForBlockV1(blockNumber, epochLength)
+	if err != nil {
+		return out, false, err
+	}
+	sourceEpoch, ok, err := RabbitVRFSourceWorkEpochForTargetEpochV1(targetEpoch)
+	if err != nil || !ok {
+		return out, false, err
+	}
+	preparationBlock, err := RabbitVRFDKGPreparationStartBlockV1(sourceEpoch, epochLength)
+	if err != nil || preparationBlock == 0 {
+		return out, false, err
+	}
+	preparationParentNumber := preparationBlock - 1
+	ancestor := workV1EngineLabAncestorHeader(chain, parentNumber, parentHash, preparationParentNumber)
+	if ancestor == nil {
+		return out, false, ErrWorkV1EngineLabParentMissing
+	}
+	bridge, exists, err := l.RabbitVRFDKGBridgeContextV1(chain, preparationParentNumber, ancestor.Hash(), preparationBlock)
+	if err != nil || !exists {
+		return bridge, exists, err
+	}
+	if bridge.TargetVRFEpoch != targetEpoch {
+		return out, false, ErrInvalidRabbitVRFDKGLifecycleV1
+	}
+	return bridge, true, nil
+}
+
+func (l *LQC) rabbitVRFKeysetCertificateForRootV1(chain consensus.ChainHeaderReader, parentNumber uint64, parentHash common.Hash, epochLength uint64, current LQCHeaderEnvelopeV5, bridge RabbitVRFDKGBridgeV1, keysetRoot common.Hash) (RabbitVRFKeysetCertificateV1, bool, error) {
+	var out RabbitVRFKeysetCertificateV1
+	if keysetRoot == (common.Hash{}) {
+		return out, false, ErrInvalidRabbitVRFKeysetCertificateV1
+	}
+	for _, certificate := range current.RabbitVRFKeysetCertificates {
+		if certificate.KeysetRoot != keysetRoot {
+			continue
+		}
+		if _, err := ValidateRabbitVRFKeysetCertificateV1(bridge.Session, bridge.Members, certificate); err != nil {
+			return out, false, err
+		}
+		return certificate, true, nil
+	}
+	startBlock, err := RabbitVRFEpochStartBlockV1(bridge.TargetVRFEpoch, epochLength)
+	if err != nil {
+		return out, false, err
+	}
+	if parentNumber < startBlock {
+		return out, false, nil
+	}
+	for number := parentNumber; number >= startBlock; number-- {
+		header := workV1EngineLabAncestorHeader(chain, parentNumber, parentHash, number)
+		if header == nil {
+			return out, false, ErrWorkV1EngineLabParentMissing
+		}
+		if chain.Config() != nil && chain.Config().IsRabbitVRF(header.Number) {
+			envelope, err := DecodeLQCHeaderExtraV5(header.Extra, MaxWorkTicketsPerBlockV1)
+			if err != nil {
+				return out, false, err
+			}
+			for _, certificate := range envelope.RabbitVRFKeysetCertificates {
+				if certificate.KeysetRoot != keysetRoot {
+					continue
+				}
+				if _, err := ValidateRabbitVRFKeysetCertificateV1(bridge.Session, bridge.Members, certificate); err != nil {
+					return out, false, err
+				}
+				return certificate, true, nil
+			}
+		}
+		if number == startBlock {
+			break
+		}
+	}
+	return out, false, nil
 }
 
 // WorkV2ParticipantSeatStatus returns the canonical admission state at a
@@ -356,8 +670,10 @@ func (l *LQC) workV1EngineLabRemember(
 		return err
 	}
 	state.mu.Lock()
-	defer state.mu.Unlock()
 	state.runtimes[headerHash] = runtime
+	state.mu.Unlock()
+
+	l.persistWorkV1EngineCheckpointIfReady(headerHash)
 	return nil
 }
 
@@ -511,7 +827,8 @@ func (l *LQC) workV1EngineLabReplayRegistryV3(
 	}
 	synthetic := types.CopyHeader(header)
 	synthetic.Extra = v2Extra
-	snapshot, err := parent.ApplyHeaderWithOpenActivation(
+	snapshot, err := l.applyRegistryHeaderWithOpenActivation(
+		parent,
 		chain.Config().ChainID,
 		l.registryRules(),
 		synthetic,
@@ -534,7 +851,24 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 	if cached, ok, err := l.workV1EngineLabCached(hash); err != nil {
 		return nil, err
 	} else if ok && cached.Work.Number == number {
-		return cached, nil
+		if l.config == nil ||
+			l.config.RegistryProtocolBlock == 0 ||
+			number < l.config.RegistryProtocolBlock-1 {
+			return cached, nil
+		}
+		if _, registryOK := l.cachedRegistrySnapshot(
+			number,
+			hash,
+		); registryOK {
+			if !l.consensusLivenessV3Active(number) {
+				return cached, nil
+			}
+			if _, claimOK, claimErr := l.workV1EngineLabCachedClaimLedger(hash); claimErr != nil {
+				return nil, claimErr
+			} else if claimOK {
+				return cached, nil
+			}
+		}
 	}
 
 	currentNumber := number
@@ -547,9 +881,60 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 		if err != nil {
 			return nil, err
 		}
+		if !ok &&
+			currentNumber > 0 &&
+			currentNumber%l.registryCheckpointInterval() == 0 {
+			restored, restoreErr := l.workV1EngineLabRestoreCheckpoint(
+				chain,
+				currentNumber,
+				currentHash,
+			)
+			if restoreErr != nil {
+				return nil, restoreErr
+			}
+			if restored {
+				cached, ok, err = l.workV1EngineLabCached(currentHash)
+				if err != nil {
+					return nil, err
+				}
+				// workV1EngineLabRestoreCheckpoint returns true only after the
+				// checkpoint runtime, canonical header, V4 claim ledger (when
+				// active), and persisted registry snapshot have all been
+				// validated and restored. Treat that checkpoint as the replay
+				// anchor immediately. Re-running the generic cache gate here can
+				// cause startup to walk every older 128-block checkpoint even
+				// though each checkpoint was already restored successfully.
+				if !ok || cached == nil || cached.Work == nil ||
+					cached.Work.Number != currentNumber ||
+					cached.Work.Hash != currentHash {
+					return nil, ErrWorkV1EngineLabUnavailable
+				}
+				runtime = cached
+				break
+			}
+		}
 		if ok && cached.Work.Number == currentNumber {
-			runtime = cached
-			break
+			if l.config == nil ||
+				l.config.RegistryProtocolBlock == 0 ||
+				currentNumber < l.config.RegistryProtocolBlock-1 {
+				runtime = cached
+				break
+			}
+			if _, registryOK := l.cachedRegistrySnapshot(
+				currentNumber,
+				currentHash,
+			); registryOK {
+				if !l.consensusLivenessV3Active(currentNumber) {
+					runtime = cached
+					break
+				}
+				if _, claimOK, claimErr := l.workV1EngineLabCachedClaimLedger(currentHash); claimErr != nil {
+					return nil, claimErr
+				} else if claimOK {
+					runtime = cached
+					break
+				}
+			}
 		}
 		if currentNumber == 0 {
 			genesisRuntime, genesisErr := l.workV1EngineLabGenesisRuntime(
@@ -580,7 +965,160 @@ func (l *LQC) workV1EngineLabRuntimeAt(
 		header := pending[index]
 		current := header.Number.Uint64()
 
-		if envelope, decodeErr := DecodeLQCHeaderExtraV3(
+		if l.consensusLivenessV3Active(current) {
+			if chain.Config() != nil && chain.Config().IsRabbitVRF(header.Number) {
+				envelopeV5, decodeErr := DecodeLQCHeaderExtraV5(
+					header.Extra,
+					MaxWorkTicketsPerBlockV1,
+				)
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				envelopeV3 := LQCHeaderEnvelopeV3{
+					Version:            LQCHeaderEnvelopeVersionV3,
+					BlockNumber:        envelopeV5.BlockNumber,
+					RegistryRoot:       envelopeV5.RegistryRoot,
+					WorkStateRoot:      envelopeV5.WorkStateRoot,
+					RegistryOperations: envelopeV5.RegistryOperations,
+					WorkTickets:        envelopeV5.WorkTickets,
+				}
+				registrySnapshot, err := l.workV1EngineLabReplayRegistryV3(
+					chain,
+					runtime,
+					header,
+					envelopeV3,
+				)
+				if err != nil {
+					return nil, err
+				}
+				ctx, err := l.workV1EngineLabContext(
+					chain,
+					runtime,
+					current,
+					envelopeV5.RegistryRoot,
+				)
+				if err != nil {
+					return nil, err
+				}
+				v4ctx, err := l.workV1EngineLabV4Context(
+					chain,
+					ctx,
+					header.ParentHash,
+				)
+				if err != nil {
+					return nil, err
+				}
+				_, next, nextClaims, _, err :=
+					ValidateAndApplyLQCHeaderExtraV5WithCanonicalRuntimeV1(
+						v4ctx,
+						header.Hash(),
+						header.Extra,
+					)
+				if err != nil {
+					return nil, err
+				}
+				runtime = next
+				if err := l.workV1EngineLabRememberClaimLedger(
+					header.Hash(),
+					nextClaims,
+				); err != nil {
+					return nil, err
+				}
+				l.rememberRegistrySnapshot(registrySnapshot)
+			} else {
+				envelopeV4, decodeErr := DecodeLQCHeaderExtraV4(
+					header.Extra,
+					MaxWorkTicketsPerBlockV1,
+				)
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				envelopeV3 := LQCHeaderEnvelopeV3{
+					Version:            LQCHeaderEnvelopeVersionV3,
+					BlockNumber:        envelopeV4.BlockNumber,
+					RegistryRoot:       envelopeV4.RegistryRoot,
+					WorkStateRoot:      envelopeV4.WorkStateRoot,
+					RegistryOperations: envelopeV4.RegistryOperations,
+					WorkTickets:        envelopeV4.WorkTickets,
+				}
+				registrySnapshot, err := l.workV1EngineLabReplayRegistryV3(
+					chain,
+					runtime,
+					header,
+					envelopeV3,
+				)
+				if err != nil {
+					return nil, err
+				}
+				ctx, err := l.workV1EngineLabContext(
+					chain,
+					runtime,
+					current,
+					envelopeV4.RegistryRoot,
+				)
+				if err != nil {
+					return nil, err
+				}
+				// Historical runtime reconstruction is not fresh block validation.
+				// This header is already part of the canonical chain, so rebuilding
+				// the V4 side states must not recursively re-resolve old committee
+				// selections across every 128-block boundary. Re-verify the Work
+				// transition, replay the claim ledger deterministically from the
+				// committed groups, and require both committed roots to match.
+				if envelopeV4.BlockNumber != current {
+					return nil, ErrLQCHeaderBlockMismatchV4
+				}
+				v3Extra, err := EncodeLQCHeaderExtraV3(
+					envelopeV4.BlockNumber,
+					envelopeV4.RegistryRoot,
+					envelopeV4.WorkStateRoot,
+					envelopeV4.RegistryOperations,
+					envelopeV4.WorkTickets,
+					MaxWorkTicketsPerBlockV1,
+				)
+				if err != nil {
+					return nil, err
+				}
+				_, next, err :=
+					ValidateAndApplyLQCHeaderExtraV3WithCanonicalWorkV1(
+						ctx,
+						header.Hash(),
+						v3Extra,
+					)
+				if err != nil {
+					return nil, err
+				}
+				parentClaims, err := l.workV1EngineLabParentClaimLedger(
+					current,
+					header.ParentHash,
+				)
+				if err != nil {
+					return nil, err
+				}
+				nextClaims, err := parentClaims.Apply(
+					current,
+					envelopeV4.CommitteeParticipationClaims,
+				)
+				if err != nil {
+					return nil, err
+				}
+				claimRoot, err := nextClaims.Root()
+				if err != nil {
+					return nil, err
+				}
+				if claimRoot != envelopeV4.CommitteeClaimRoot {
+					return nil, ErrLQCHeaderCommitteeClaimRootMismatchV4
+				}
+				runtime = next
+				if err := l.workV1EngineLabRememberClaimLedger(
+					header.Hash(),
+					nextClaims,
+				); err != nil {
+					return nil, err
+				}
+				l.rememberRegistrySnapshot(registrySnapshot)
+			}
+		} else if envelope, decodeErr := DecodeLQCHeaderExtraV3(
 			header.Extra,
 			MaxWorkTicketsPerBlockV1,
 		); decodeErr == nil {
@@ -664,9 +1202,37 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 		return nil
 	}
 
-	registryEnvelope, err := DecodeRegistryHeaderExtra(header.Extra)
-	if err != nil {
-		return err
+	registryEnvelope, registryErr := DecodeRegistryHeaderExtra(header.Extra)
+	var (
+		registryRoot       common.Hash
+		registryOperations []RegistryOperation
+	)
+	if registryErr == nil {
+		registryRoot = registryEnvelope.RegistryRoot
+		registryOperations = registryEnvelope.Operations
+	} else if l.consensusLivenessV3Active(header.Number.Uint64()) &&
+		chain != nil && chain.Config() != nil &&
+		chain.Config().IsRabbitVRF(header.Number) {
+		envelope, err := DecodeLQCHeaderExtraV5(header.Extra, MaxWorkTicketsPerBlockV1)
+		if err != nil {
+			return err
+		}
+		registryRoot = envelope.RegistryRoot
+		registryOperations = envelope.RegistryOperations
+	} else if l.consensusLivenessV3Active(header.Number.Uint64()) {
+		envelope, err := DecodeLQCHeaderExtraV4(header.Extra, MaxWorkTicketsPerBlockV1)
+		if err != nil {
+			return err
+		}
+		registryRoot = envelope.RegistryRoot
+		registryOperations = envelope.RegistryOperations
+	} else {
+		envelope, err := DecodeLQCHeaderExtraV3(header.Extra, MaxWorkTicketsPerBlockV1)
+		if err != nil {
+			return err
+		}
+		registryRoot = envelope.RegistryRoot
+		registryOperations = envelope.RegistryOperations
 	}
 
 	parent, err := l.workV1EngineLabRuntimeAt(
@@ -681,7 +1247,7 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 		chain,
 		parent,
 		header.Number.Uint64(),
-		registryEnvelope.RegistryRoot,
+		registryRoot,
 	)
 	if err != nil {
 		return err
@@ -694,6 +1260,9 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 	}
 	state.mu.Lock()
 	provider := state.provider
+	claimProvider := state.claimProvider
+	finalizationProvider := state.finalizationProvider
+	keysetCertificateProvider := state.keysetCertificateProvider
 	state.mu.Unlock()
 
 	if provider != nil {
@@ -715,11 +1284,69 @@ func (l *LQC) prepareWorkV1EngineLabHook(
 		}
 	}
 
-	extra, _, err := BuildLQCHeaderExtraV3WithCanonicalWorkV1(
-		ctx,
-		registryEnvelope.Operations,
-		tickets,
-	)
+	var extra []byte
+	if l.consensusLivenessV3Active(header.Number.Uint64()) {
+		var claims []CommitteeParticipationClaimGroupV1
+		if claimProvider != nil {
+			claims, err = claimProvider(header.Number.Uint64())
+			if err != nil {
+				return err
+			}
+		}
+		v4ctx, v4Err := l.workV1EngineLabV4Context(
+			chain,
+			ctx,
+			header.ParentHash,
+		)
+		if v4Err != nil {
+			return v4Err
+		}
+		// ParentClaims is the canonical authority. Never propose a
+		// committee participation already consumed by the parent ledger.
+		claims = filterAlreadyClaimedCommitteeParticipationsV1(
+			v4ctx.ParentClaims,
+			claims,
+		)
+
+		if chain.Config().IsRabbitVRF(header.Number) {
+			var finalizations []RabbitVRFFinalizationV1
+			if finalizationProvider != nil {
+				finalizations, err = finalizationProvider(header.Number.Uint64())
+				if err != nil {
+					return err
+				}
+			}
+			var certificate RabbitVRFKeysetCertificateV1
+			var hasCertificate bool
+			if keysetCertificateProvider != nil {
+				certificate, hasCertificate, err = keysetCertificateProvider(header.Number.Uint64())
+				if err != nil {
+					return err
+				}
+			}
+			if len(finalizations) > 0 && !hasCertificate {
+				finalizations = nil
+			}
+			if hasCertificate {
+				extra, _, _, err = BuildLQCHeaderExtraV5WithCanonicalRuntimeAndKeysetCertificateV1(v4ctx, registryOperations, tickets, claims, certificate, finalizations)
+			} else {
+				extra, _, _, err = BuildLQCHeaderExtraV5WithCanonicalRuntimeV1(v4ctx, registryOperations, tickets, claims, finalizations)
+			}
+		} else {
+			extra, _, _, err = BuildLQCHeaderExtraV4WithCanonicalRuntimeV1(
+				v4ctx,
+				registryOperations,
+				tickets,
+				claims,
+			)
+		}
+	} else {
+		extra, _, err = BuildLQCHeaderExtraV3WithCanonicalWorkV1(
+			ctx,
+			registryOperations,
+			tickets,
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -737,12 +1364,34 @@ func (l *LQC) verifyCanonicalRegistryHeaderMaybeWorkV1Lab(
 		return l.verifyCanonicalRegistryHeader(chain, header)
 	}
 
-	envelope, err := DecodeLQCHeaderExtraV3(
-		header.Extra,
-		MaxWorkTicketsPerBlockV1,
+	activeV4 := l.consensusLivenessV3Active(header.Number.Uint64())
+	activeV5 := activeV4 && chain.Config() != nil && chain.Config().IsRabbitVRF(header.Number)
+	var (
+		envelope   LQCHeaderEnvelopeV3
+		envelopeV4 LQCHeaderEnvelopeV4
+		envelopeV5 LQCHeaderEnvelopeV5
+		err        error
 	)
-	if err != nil {
-		return l.verifyCanonicalRegistryHeader(chain, header)
+	if activeV5 {
+		envelopeV5, err = DecodeLQCHeaderExtraV5(header.Extra, MaxWorkTicketsPerBlockV1)
+		if err != nil {
+			return HybridSelection{}, nil, err
+		}
+		envelope = LQCHeaderEnvelopeV3{Version: LQCHeaderEnvelopeVersionV3, BlockNumber: envelopeV5.BlockNumber, RegistryRoot: envelopeV5.RegistryRoot, WorkStateRoot: envelopeV5.WorkStateRoot, RegistryOperations: envelopeV5.RegistryOperations, WorkTickets: envelopeV5.WorkTickets}
+	} else if activeV4 {
+		envelopeV4, err = DecodeLQCHeaderExtraV4(header.Extra, MaxWorkTicketsPerBlockV1)
+		if err != nil {
+			return HybridSelection{}, nil, err
+		}
+		envelope = LQCHeaderEnvelopeV3{Version: LQCHeaderEnvelopeVersionV3, BlockNumber: envelopeV4.BlockNumber, RegistryRoot: envelopeV4.RegistryRoot, WorkStateRoot: envelopeV4.WorkStateRoot, RegistryOperations: envelopeV4.RegistryOperations, WorkTickets: envelopeV4.WorkTickets}
+	} else {
+		envelope, err = DecodeLQCHeaderExtraV3(
+			header.Extra,
+			MaxWorkTicketsPerBlockV1,
+		)
+		if err != nil {
+			return l.verifyCanonicalRegistryHeader(chain, header)
+		}
 	}
 
 	parentRuntime, err := l.workV1EngineLabRuntimeAt(
@@ -838,12 +1487,74 @@ func (l *LQC) verifyCanonicalRegistryHeaderMaybeWorkV1Lab(
 	if err != nil {
 		return HybridSelection{}, nil, err
 	}
-	_, next, err :=
-		ValidateAndApplyLQCHeaderExtraV3WithCanonicalWorkV1(
+	var next *CanonicalWorkRuntimeStateV1
+	if activeV4 {
+		v4ctx, err := l.workV1EngineLabV4Context(
+			chain,
 			ctx,
-			header.Hash(),
-			header.Extra,
+			header.ParentHash,
 		)
+		if err != nil {
+			return HybridSelection{}, nil, err
+		}
+		var nextClaims *CommitteeClaimLedgerV1
+		if activeV5 {
+			var v5Envelope LQCHeaderEnvelopeV5
+			v5Envelope, next, nextClaims, _, err = ValidateAndApplyLQCHeaderExtraV5WithCanonicalRuntimeV1(v4ctx, header.Hash(), header.Extra)
+			if err == nil && (len(v5Envelope.RabbitVRFKeysetCertificates) > 0 || len(v5Envelope.RabbitVRFFinalizations) > 0) {
+				bridge, exists, bridgeErr := l.rabbitVRFDKGBridgeForTargetBlockV1(chain, header.Number.Uint64()-1, header.ParentHash, header.Number.Uint64(), v4ctx.Work.Parent.Work.EpochLength)
+				if bridgeErr != nil {
+					err = bridgeErr
+				} else if !exists {
+					err = ErrInvalidRabbitVRFKeysetCertificateV1
+				} else {
+					if len(v5Envelope.RabbitVRFKeysetCertificates) > 0 {
+						_, err = ValidateRabbitVRFKeysetCertificateV1(bridge.Session, bridge.Members, v5Envelope.RabbitVRFKeysetCertificates[0])
+					}
+					if err == nil {
+						for _, finalization := range v5Envelope.RabbitVRFFinalizations {
+							certificate, found, certErr := l.rabbitVRFKeysetCertificateForRootV1(chain, header.Number.Uint64()-1, header.ParentHash, v4ctx.Work.Parent.Work.EpochLength, v5Envelope, bridge, finalization.KeysetRoot)
+							if certErr != nil {
+								err = certErr
+								break
+							}
+							if !found {
+								err = ErrInvalidRabbitVRFFinalizationV1
+								break
+							}
+							if err = ValidateRabbitVRFFinalizationProofV1(bridge.Session, bridge.Members, certificate, finalization); err != nil {
+								break
+							}
+						}
+					}
+				}
+			}
+			if err == nil {
+				err = l.workV1EngineLabRememberRabbitVRFFinalizations(
+					header.Hash(),
+					v5Envelope.RabbitVRFFinalizations,
+				)
+			}
+		} else {
+			_, next, nextClaims, _, err = ValidateAndApplyLQCHeaderExtraV4WithCanonicalRuntimeV1(v4ctx, header.Hash(), header.Extra)
+		}
+		if err != nil {
+			return HybridSelection{}, nil, err
+		}
+		if err := l.workV1EngineLabRememberClaimLedger(
+			header.Hash(),
+			nextClaims,
+		); err != nil {
+			return HybridSelection{}, nil, err
+		}
+	} else {
+		_, next, err =
+			ValidateAndApplyLQCHeaderExtraV3WithCanonicalWorkV1(
+				ctx,
+				header.Hash(),
+				header.Extra,
+			)
+	}
 	if err != nil {
 		return HybridSelection{}, nil, err
 	}

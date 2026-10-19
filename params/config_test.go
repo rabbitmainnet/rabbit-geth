@@ -333,3 +333,242 @@ func TestTimestampCompatError(t *testing.T) {
 	require.Equal(t, newTimestampCompatError(errWhat, newUint64(0), newUint64(1681338455)).Error(),
 		"mismatching Shanghai fork timestamp in database (have timestamp 0, want timestamp 1681338455, rewindto timestamp 0)")
 }
+
+func TestRabbitConsensusStabilizationConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{
+			LQC: &LQCConfig{
+				ConsensusStabilizationBlock: activation,
+			},
+		}
+	}
+
+	fork := config(100)
+	if fork.IsConsensusStabilization(big.NewInt(99)) {
+		t.Fatal("consensus stabilization active before block 100")
+	}
+	if !fork.IsConsensusStabilization(big.NewInt(100)) {
+		t.Fatal("consensus stabilization inactive at block 100")
+	}
+
+	stored := config(0)
+	upgraded := config(100)
+
+	if err := stored.CheckCompatible(upgraded, 99, 0); err != nil {
+		t.Fatalf("future stabilization rejected before activation: %v", err)
+	}
+
+	err := stored.CheckCompatible(upgraded, 100, 0)
+	if err == nil ||
+		err.What != "LQC consensus stabilization fork block" ||
+		err.RewindToBlock != 99 {
+		t.Fatalf("unexpected stabilization compatibility error: %+v", err)
+	}
+
+	if err := config(100).CheckCompatible(config(200), 99, 0); err != nil {
+		t.Fatalf("future stabilization change rejected: %v", err)
+	}
+
+	err = config(100).CheckCompatible(config(200), 100, 0)
+	if err == nil ||
+		err.What != "LQC consensus stabilization fork block" ||
+		err.RewindToBlock != 99 {
+		t.Fatalf("unexpected changed-fork compatibility error: %+v", err)
+	}
+}
+
+func TestRabbitConsensusLivenessV3ConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{LQC: &LQCConfig{
+			ConsensusFairnessBlock:   100,
+			ConsensusLivenessV3Block: activation,
+		}}
+	}
+
+	fork := config(200)
+	if fork.IsConsensusLivenessV3(big.NewInt(199)) {
+		t.Fatal("consensus liveness V3 active before block 200")
+	}
+	if !fork.IsConsensusLivenessV3(big.NewInt(200)) {
+		t.Fatal("consensus liveness V3 inactive at block 200")
+	}
+
+	if err := config(0).CheckCompatible(config(200), 199, 0); err != nil {
+		t.Fatalf("future liveness V3 rejected before activation: %v", err)
+	}
+
+	err := config(0).CheckCompatible(config(200), 200, 0)
+	if err == nil ||
+		err.What != "LQC consensus liveness V3 fork block" ||
+		err.RewindToBlock != 199 {
+		t.Fatalf("unexpected liveness V3 compatibility error: %+v", err)
+	}
+
+	invalid := config(99)
+	if err := invalid.CheckConfigForkOrder(); err == nil {
+		t.Fatal("liveness V3 preceding fairness was accepted")
+	}
+}
+
+func TestRabbitConsensusLivenessV4ConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{LQC: &LQCConfig{
+			ConsensusFairnessBlock:   100,
+			ConsensusLivenessV3Block: 200,
+			ConsensusLivenessV4Block: activation,
+		}}
+	}
+
+	fork := config(300)
+	if fork.IsConsensusLivenessV4(big.NewInt(299)) {
+		t.Fatal("consensus liveness V4 active before block 300")
+	}
+	if !fork.IsConsensusLivenessV4(big.NewInt(300)) {
+		t.Fatal("consensus liveness V4 inactive at block 300")
+	}
+
+	if err := config(0).CheckCompatible(config(300), 299, 0); err != nil {
+		t.Fatalf("future liveness V4 rejected before activation: %v", err)
+	}
+
+	err := config(0).CheckCompatible(config(300), 300, 0)
+	if err == nil ||
+		err.What != "LQC consensus liveness V4 fork block" ||
+		err.RewindToBlock != 299 {
+		t.Fatalf("unexpected liveness V4 compatibility error: %+v", err)
+	}
+
+	missingV3 := &ChainConfig{LQC: &LQCConfig{
+		ConsensusFairnessBlock:   100,
+		ConsensusLivenessV4Block: 300,
+	}}
+	if err := missingV3.CheckConfigForkOrder(); err == nil {
+		t.Fatal("liveness V4 without V3 was accepted")
+	}
+
+	beforeV3 := config(199)
+	if err := beforeV3.CheckConfigForkOrder(); err == nil {
+		t.Fatal("liveness V4 preceding V3 was accepted")
+	}
+}
+
+func TestRabbitVRFProtocolConfigCompatibility(t *testing.T) {
+	config := func(activation uint64) *ChainConfig {
+		return &ChainConfig{
+			LQC: &LQCConfig{
+				VRFProtocolBlock: activation,
+			},
+		}
+	}
+
+	fork := config(100)
+
+	if fork.IsRabbitVRF(big.NewInt(99)) {
+		t.Fatal("Rabbit VRF active before block 100")
+	}
+	if !fork.IsRabbitVRF(big.NewInt(100)) {
+		t.Fatal("Rabbit VRF inactive at block 100")
+	}
+	if config(0).IsRabbitVRF(big.NewInt(1_000_000)) {
+		t.Fatal("disabled Rabbit VRF fork became active")
+	}
+
+	stored := config(0)
+	upgraded := config(100)
+
+	if err := stored.CheckCompatible(upgraded, 99, 0); err != nil {
+		t.Fatalf("future Rabbit VRF fork rejected before activation: %v", err)
+	}
+
+	err := stored.CheckCompatible(upgraded, 100, 0)
+	if err == nil ||
+		err.What != "LQC VRF protocol fork block" ||
+		err.RewindToBlock != 99 {
+		t.Fatalf("unexpected Rabbit VRF compatibility error: %+v", err)
+	}
+
+	if err := config(100).CheckCompatible(config(200), 99, 0); err != nil {
+		t.Fatalf("future Rabbit VRF fork change rejected before activation: %v", err)
+	}
+
+	err = config(100).CheckCompatible(config(200), 100, 0)
+	if err == nil ||
+		err.What != "LQC VRF protocol fork block" ||
+		err.RewindToBlock != 99 {
+		t.Fatalf("unexpected changed Rabbit VRF fork compatibility error: %+v", err)
+	}
+
+	if err := config(0).CheckCompatible(config(0), 1_000_000, 0); err != nil {
+		t.Fatalf("disabled Rabbit VRF fork incompatible with itself: %v", err)
+	}
+}
+
+func TestRabbitVRFProtocolEpochAlignment(t *testing.T) {
+	config := func(activation, epochLength uint64) *ChainConfig {
+		return &ChainConfig{
+			LQC: &LQCConfig{
+				VRFProtocolBlock: activation,
+				EpochLength:      epochLength,
+			},
+		}
+	}
+
+	if err := config(0, 0).CheckConfigForkOrder(); err != nil {
+		t.Fatalf("disabled Rabbit VRF rejected: %v", err)
+	}
+	if err := config(385, 128).CheckConfigForkOrder(); err != nil {
+		t.Fatalf("aligned Rabbit VRF epoch 4 rejected: %v", err)
+	}
+	if err := config(386, 128).CheckConfigForkOrder(); err == nil {
+		t.Fatal("misaligned Rabbit VRF activation accepted")
+	}
+	if err := config(257, 128).CheckConfigForkOrder(); err == nil {
+		t.Fatal("Rabbit VRF activation before target epoch 4 accepted")
+	}
+	if err := config(385, 0).CheckConfigForkOrder(); err == nil {
+		t.Fatal("Rabbit VRF activation without epochLength accepted")
+	}
+}
+
+func TestRabbitVRFDKGPreparationGate(t *testing.T) {
+	config := func(activation, epochLength uint64) *ChainConfig {
+		return &ChainConfig{
+			LQC: &LQCConfig{
+				VRFProtocolBlock: activation,
+				EpochLength:      epochLength,
+			},
+		}
+	}
+
+	fork := config(385, 128)
+
+	if fork.IsRabbitVRFDKGPreparation(big.NewInt(256)) {
+		t.Fatal("Rabbit VRF DKG preparation active before block 257")
+	}
+	if !fork.IsRabbitVRFDKGPreparation(big.NewInt(257)) {
+		t.Fatal("Rabbit VRF DKG preparation inactive at block 257")
+	}
+	if !fork.IsRabbitVRFDKGPreparation(big.NewInt(384)) {
+		t.Fatal("Rabbit VRF DKG preparation inactive at block 384")
+	}
+
+	if fork.IsRabbitVRF(big.NewInt(384)) {
+		t.Fatal("Rabbit VRF protocol active during pre-fork DKG preparation")
+	}
+	if !fork.IsRabbitVRF(big.NewInt(385)) {
+		t.Fatal("Rabbit VRF protocol inactive at block 385")
+	}
+	if !fork.IsRabbitVRFDKGPreparation(big.NewInt(385)) {
+		t.Fatal("Rabbit VRF DKG preparation gate stopped at activation")
+	}
+
+	disabled := config(0, 128)
+	if disabled.IsRabbitVRFDKGPreparation(big.NewInt(1_000_000)) {
+		t.Fatal("disabled Rabbit VRF unexpectedly enabled DKG preparation")
+	}
+
+	malformed := config(385, 0)
+	if malformed.IsRabbitVRFDKGPreparation(big.NewInt(257)) {
+		t.Fatal("DKG preparation enabled without epochLength")
+	}
+}

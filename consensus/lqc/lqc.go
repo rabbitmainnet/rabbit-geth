@@ -111,6 +111,84 @@ func (l *LQC) Author(header *types.Header) (common.Address, error) {
 	return header.Coinbase, nil
 }
 
+func (l *LQC) isConsensusStabilizationBlock(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusStabilizationBlock != 0 &&
+		blockNumber == l.config.ConsensusStabilizationBlock
+}
+
+func (l *LQC) isConsensusFairnessBlock(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusFairnessBlock != 0 &&
+		blockNumber == l.config.ConsensusFairnessBlock
+}
+
+func (l *LQC) consensusFairnessActive(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusFairnessBlock != 0 &&
+		blockNumber >= l.config.ConsensusFairnessBlock
+}
+
+func (l *LQC) consensusLivenessV3Active(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV3Block != 0 &&
+		blockNumber >= l.config.ConsensusLivenessV3Block
+}
+
+func (l *LQC) consensusLivenessV4Active(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV4Block != 0 &&
+		blockNumber >= l.config.ConsensusLivenessV4Block
+}
+
+func (l *LQC) consensusLivenessV5Active(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV5Block != 0 &&
+		blockNumber >= l.config.ConsensusLivenessV5Block
+}
+
+//nolint:unused // Called by the rabbit_workv1 build.
+func (l *LQC) consensusLivenessV6Active(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusLivenessV6Block != 0 &&
+		blockNumber >= l.config.ConsensusLivenessV6Block
+}
+
+//nolint:unused // Called by the rabbit_workv1 build.
+func (l *LQC) vrfForkLivenessActive(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.VRFProtocolBlock != 0 &&
+		blockNumber >= l.config.VRFProtocolBlock
+}
+
+func (l *LQC) isAuthorAllowedAt(blockNumber uint64, selection HybridSelection, author common.Address) (bool, int) {
+	if l.consensusLivenessV5Active(blockNumber) {
+		return IsAuthorAllowedBounded(selection, author)
+	}
+	if l.consensusLivenessV4Active(blockNumber) {
+		return IsAuthorAllowed(selection, author)
+	}
+	if l.consensusLivenessV3Active(blockNumber) {
+		return IsAuthorAllowedBounded(selection, author)
+	}
+	return IsAuthorAllowed(selection, author)
+}
+
+func (l *LQC) consensusCommitteeLivenessActive(blockNumber uint64) bool {
+	return l != nil &&
+		l.config != nil &&
+		l.config.ConsensusStabilizationBlock != 0 &&
+		blockNumber > l.config.ConsensusStabilizationBlock
+}
+
 // ResolveLocalParticipant implements consensus.LocalParticipantResolver. The
 // miner passes the current head, so resolve the deterministic queue for the
 // next block using the current head hash as the parent seed.
@@ -119,7 +197,6 @@ func (l *LQC) ResolveLocalParticipant(
 	header *types.Header,
 	accounts []common.Address,
 ) consensus.LocalParticipant {
-
 	if header == nil || header.Number == nil || len(accounts) == 0 {
 		return consensus.LocalParticipant{QueuePos: -1}
 	}
@@ -146,7 +223,10 @@ func (l *LQC) ResolveLocalParticipant(
 		return consensus.LocalParticipant{QueuePos: -1}
 	}
 	now := time.Now().Unix()
-	if now >= 0 && l.recoveryOpenAt(header, uint64(now)) {
+	if now >= 0 &&
+		!l.isConsensusStabilizationBlock(blockNumber) &&
+		!l.isConsensusFairnessBlock(blockNumber) &&
+		l.recoveryOpenAt(header, uint64(now)) {
 		for _, addr := range accounts {
 			if addr != (common.Address{}) {
 				return consensus.LocalParticipant{Address: addr, QueuePos: 0, Allowed: true}
@@ -170,19 +250,27 @@ func (l *LQC) ResolveLocalParticipant(
 	}
 
 	sel := l.selectionForHeaderMaybeWorkV1Lab(chain, next)
-	for queuePos, participant := range sel.Ordered {
-		for _, local := range accounts {
-			if participant.Address == local {
-				return consensus.LocalParticipant{
-					Address:  local,
-					QueuePos: queuePos,
-					Allowed:  true,
-				}
+	best := consensus.LocalParticipant{QueuePos: -1}
+
+	for _, local := range accounts {
+		allowed, queuePos := l.isAuthorAllowedAt(
+			blockNumber,
+			sel,
+			local,
+		)
+		if !allowed {
+			continue
+		}
+		if best.QueuePos < 0 || queuePos < best.QueuePos {
+			best = consensus.LocalParticipant{
+				Address:  local,
+				QueuePos: queuePos,
+				Allowed:  true,
 			}
 		}
 	}
 
-	return consensus.LocalParticipant{QueuePos: -1}
+	return best
 }
 
 func (l *LQC) recoveryTimeoutSeconds() uint64 {
@@ -212,9 +300,14 @@ func (l *LQC) openActivationForHeader(chain consensus.ChainHeaderReader, header 
 	if header == nil || header.Number == nil || header.Number.Sign() <= 0 {
 		return false
 	}
+	if l.isConsensusStabilizationBlock(header.Number.Uint64()) ||
+		l.isConsensusFairnessBlock(header.Number.Uint64()) {
+		return false
+	}
 	if header.Number.Uint64() == 1 {
 		return l == nil || l.config == nil || len(l.config.BootstrapParticipants) == 0
 	}
+
 	if chain == nil {
 		return false
 	}
@@ -273,6 +366,13 @@ func (l *LQC) verifyHeader(chain consensus.ChainHeaderReader, header, batchParen
 // verifyHeaderAt contains the deterministic header checks. unixNow is passed
 // explicitly so boundary tests do not depend on the machine clock.
 func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchParent *types.Header, unixNow uint64) error {
+	diagStart := time.Now()
+	defer func() {
+		if duration := time.Since(diagStart); duration >= 500*time.Millisecond && header != nil {
+			log.Warn("RABBIT DIAG slow LCQ verification",
+				"number", header.Number, "elapsed", duration)
+		}
+	}()
 	if header == nil {
 		return errors.New("nil header")
 	}
@@ -310,6 +410,17 @@ func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchPar
 	if header.Time <= parent.Time {
 		return errors.New("non-increasing block time")
 	}
+
+	// Fairness: a future claimed timestamp must not open emergency recovery
+	// before the receiving node's own clock reaches the recovery threshold.
+	// Keep historical/pre-fork replay semantics unchanged.
+	if l.consensusFairnessActive(header.Number.Uint64()) &&
+		!l.isConsensusFairnessBlock(header.Number.Uint64()) &&
+		l.recoveryOpenAt(parent, header.Time) &&
+		!l.recoveryOpenAt(parent, unixNow) {
+		return consensus.ErrFutureBlock
+	}
+
 	if header.Difficulty == nil || header.Difficulty.Sign() != 0 {
 		return errors.New("lqc requires zero difficulty")
 	}
@@ -388,13 +499,18 @@ func (l *LQC) verifyHeaderAt(chain consensus.ChainHeaderReader, header, batchPar
 	}
 
 	if len(sel.Ordered) > 0 {
-		ok, queuePos := IsAuthorAllowed(sel, header.Coinbase)
+		ok, queuePos := l.isAuthorAllowedAt(header.Number.Uint64(), sel, header.Coinbase)
 		if !ok {
 			return fmt.Errorf("lqc unauthorized producer %s at block %d", header.Coinbase.Hex(), header.Number.Uint64())
 		}
 		minTime, err := l.minAllowedTimeChecked(parent.Time, queuePos)
 		if err != nil {
 			return err
+		}
+		// Fairness: a claimed future timestamp cannot open a queue slot early.
+		// The receiving node clock must also have reached the deterministic slot.
+		if l.consensusFairnessActive(header.Number.Uint64()) && unixNow < minTime {
+			return consensus.ErrFutureBlock
 		}
 		if header.Time < minTime {
 			return fmt.Errorf("lqc producer %s published too early at block %d: have %d want >= %d", header.Coinbase.Hex(), header.Number.Uint64(), header.Time, minTime)
@@ -578,7 +694,7 @@ func (l *LQC) Prepare(chain consensus.ChainHeaderReader, header *types.Header) e
 			sel = l.selectionForHeader(nil, header)
 		}
 		if len(sel.Ordered) > 0 {
-			ok, pos := IsAuthorAllowed(sel, header.Coinbase)
+			ok, pos := l.isAuthorAllowedAt(header.Number.Uint64(), sel, header.Coinbase)
 			if ok {
 				queuePos = pos
 			}
@@ -857,7 +973,7 @@ func (l *LQC) distributeRewards(chain consensus.ChainHeaderReader, header *types
 	if committeeBps > 10000 {
 		committeeBps = 10000
 	}
-	producerBps := uint64(10000 - committeeBps)
+	producerBps := 10000 - committeeBps
 
 	producerReward := new(uint256.Int).Set(totalReward)
 	producerReward.Mul(producerReward, uint256.NewInt(producerBps))
@@ -899,6 +1015,18 @@ func (l *LQC) Finalize(chain consensus.ChainHeaderReader, header *types.Header, 
 		return
 	}
 	l.distributeRewards(chain, header, statedb)
+
+	if err := l.maybeEnsureRabbitVRFDKGLifecycleV1(
+		chain,
+		header,
+	); err != nil {
+		log.Warn(
+			"Failed to ensure Rabbit VRF DKG lifecycle",
+			"number", header.Number,
+			"parent", header.ParentHash,
+			"err", err,
+		)
+	}
 }
 
 func (l *LQC) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, statedb *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
@@ -946,7 +1074,7 @@ func (l *LQC) Seal(chain consensus.ChainHeaderReader, block *types.Block, result
 		sel = l.selectionForHeader(chain, block.Header())
 	}
 	if len(sel.Ordered) > 0 {
-		ok, _ := IsAuthorAllowed(sel, block.Coinbase())
+		ok, _ := l.isAuthorAllowedAt(block.NumberU64(), sel, block.Coinbase())
 		if !ok {
 			return fmt.Errorf("lqc local node is not selected for block %d", block.NumberU64())
 		}

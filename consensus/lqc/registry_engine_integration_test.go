@@ -422,3 +422,104 @@ func TestCanonicalPrepareIncludesValidatedPoolOperation(t *testing.T) {
 		t.Fatal("pool newcomer was not admitted to the next canonical queue")
 	}
 }
+
+func TestRecoverySuppressedAtConsensusStabilizationBoundary(t *testing.T) {
+	producers := testParticipants(t, 2)
+	config := canonicalRegistryEngineConfig(nil, 1)
+	config.RegistryMode = "native"
+	config.RecoveryTimeoutMs = 60_000
+	config.ConsensusStabilizationBlock = 2
+
+	db := rawdb.NewMemoryDatabase()
+	engine := New(config, db)
+	genesis := &types.Header{
+		Number:   big.NewInt(0),
+		Time:     100,
+		GasLimit: 30_000_000,
+	}
+	chain := canonicalRegistryTestChain(config, genesis)
+
+	header1 := &types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     big.NewInt(1),
+		Coinbase:   producers[0],
+		Time:       110,
+		GasLimit:   genesis.GasLimit,
+	}
+	if err := engine.Prepare(chain, header1); err != nil {
+		t.Fatalf("prepare activation: %v", err)
+	}
+	signTestHeader(t, chain.Config().ChainID, header1)
+	if err := engine.VerifyHeader(chain, header1); err != nil {
+		t.Fatalf("verify activation: %v", err)
+	}
+	chain.headers[header1.Hash()] = header1
+	chain.current = header1
+
+	forbiddenRecovery := &types.Header{
+		ParentHash: header1.Hash(),
+		Number:     big.NewInt(2),
+		Coinbase:   producers[1],
+		Time:       header1.Time + 60,
+		GasLimit:   header1.GasLimit,
+	}
+	if err := engine.Prepare(chain, forbiddenRecovery); err == nil {
+		t.Fatal("recovery replaced registry at stabilization boundary")
+	}
+
+	header2 := prepareCanonicalTestHeader(
+		t,
+		engine,
+		chain,
+		header1,
+	)
+	if header2.Number.Uint64() != 2 {
+		t.Fatalf("prepared block=%d want=2", header2.Number.Uint64())
+	}
+	if err := engine.VerifyHeader(chain, header2); err != nil {
+		t.Fatalf("verify stabilization block: %v", err)
+	}
+	chain.headers[header2.Hash()] = header2
+	chain.current = header2
+
+	recoveryAfterBoundary := &types.Header{
+		ParentHash: header2.Hash(),
+		Number:     big.NewInt(3),
+		Coinbase:   producers[1],
+		Time:       header2.Time + 60,
+		GasLimit:   header2.GasLimit,
+	}
+	if err := engine.Prepare(chain, recoveryAfterBoundary); err != nil {
+		t.Fatalf("recovery unavailable after boundary: %v", err)
+	}
+	signTestHeader(t, chain.Config().ChainID, recoveryAfterBoundary)
+	if err := engine.VerifyHeader(chain, recoveryAfterBoundary); err != nil {
+		t.Fatalf("verify recovery after boundary: %v", err)
+	}
+
+	snapshot, ok := engine.cachedRegistrySnapshot(
+		3,
+		recoveryAfterBoundary.Hash(),
+	)
+	if !ok {
+		t.Fatal("preserved recovery snapshot was not cached")
+	}
+	registry, err := snapshot.Registry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	participants := registry.Participants()
+	if len(participants) != 2 {
+		t.Fatalf(
+			"recovery erased registry: participants=%d want=2",
+			len(participants),
+		)
+	}
+	seen := make(map[common.Address]bool, len(participants))
+	for _, participant := range participants {
+		seen[participant.Address] = true
+	}
+	if !seen[producers[0]] || !seen[producers[1]] {
+		t.Fatalf("recovery registry lost participants: %+v", participants)
+	}
+}

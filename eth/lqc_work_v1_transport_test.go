@@ -126,13 +126,13 @@ func TestLQCWorkV1TransportUsesDistinctBoundedProtocol(t *testing.T) {
 
 	protocol := transport.Protocol()
 	if protocol.Name != "lqcw" ||
-		protocol.Version != 2 ||
-		protocol.Length != 2 {
+		protocol.Version != 3 ||
+		protocol.Length != 3 {
 		t.Fatalf("protocol = %+v", protocol)
 	}
 
 	if MaxWorkV1CandidatesPerPacket != 8 ||
-		lqcWorkV1MaxMessageSize != 8*1024 ||
+		lqcWorkV1MaxMessageSize != 16*1024 ||
 		lqcWorkV1PeerBudget != 8 ||
 		lqcWorkV1GlobalBudget != 16 ||
 		lqcWorkV1MaxVerifyInFlight != 1 {

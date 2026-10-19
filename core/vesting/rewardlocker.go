@@ -163,7 +163,6 @@ func GetReleasedStage(
 	st vm.StateDB,
 	addr common.Address,
 ) uint8 {
-
 	value := st.GetState(
 		vestingSystemAddress,
 		releasedStageSlot(addr),
@@ -183,7 +182,6 @@ func SetReleasedStage(
 	addr common.Address,
 	stage uint8,
 ) {
-
 	st.SetState(
 		vestingSystemAddress,
 		releasedStageSlot(addr),
@@ -195,7 +193,6 @@ func GetOriginalLockedBalance(
 	st vm.StateDB,
 	addr common.Address,
 ) *uint256.Int {
-
 	value := st.GetState(
 		vestingSystemAddress,
 		originalLockedBalanceSlot(addr),
@@ -209,7 +206,6 @@ func SetOriginalLockedBalance(
 	addr common.Address,
 	amount *uint256.Int,
 ) {
-
 	if amount == nil {
 		amount = new(uint256.Int)
 	}
@@ -275,7 +271,6 @@ const BlocksPerYear uint64 = 3153600
 const BlocksPerQuarter uint64 = BlocksPerYear / 4
 
 func CurrentReleaseStage(block uint64) uint8 {
-
 	if block < VestingStartBlock+BlocksPerYear {
 		return 0
 	}
@@ -300,7 +295,6 @@ func ReleaseUnlockedRewards(
 	addr common.Address,
 	block uint64,
 ) {
-
 	currentStage := CurrentReleaseStage(block)
 	releasedStage := GetReleasedStage(st, addr)
 
@@ -354,14 +348,12 @@ func ReleaseUnlockedRewards(
 		release,
 		tracing.BalanceIncreaseRewardMineBlock,
 	)
-
 }
 
 func TargetReleasedAmount(
 	original *uint256.Int,
 	stage uint8,
 ) *uint256.Int {
-
 	if original == nil {
 		return new(uint256.Int)
 	}
@@ -369,7 +361,6 @@ func TargetReleasedAmount(
 	result := new(uint256.Int).Set(original)
 
 	switch stage {
-
 	case 0:
 		return new(uint256.Int)
 

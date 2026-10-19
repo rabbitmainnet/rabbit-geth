@@ -200,8 +200,22 @@ func (p *skeletonTestPeer) Head() (common.Hash, *big.Int) {
 	panic("skeleton sync must not request the remote head")
 }
 
-func (p *skeletonTestPeer) RequestHeadersByHash(common.Hash, int, int, bool, chan *eth.Response) (*eth.Request, error) {
-	panic("skeleton sync must not request headers by hash")
+func (p *skeletonTestPeer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
+	for _, header := range p.headers {
+		if header != nil && header.Hash() == origin {
+			return p.RequestHeadersByNumber(header.Number.Uint64(), amount, skip, reverse, sink)
+		}
+	}
+	// Malicious fixtures may remove or replace the requested header.
+	// Infer its height from the child and still send the adversarial
+	// numbered response, so rejection and peer-drop checks remain exercised.
+	for _, child := range p.headers {
+		if child != nil && child.Number != nil &&
+			child.Number.Sign() > 0 && child.ParentHash == origin {
+			return p.RequestHeadersByNumber(child.Number.Uint64()-1, amount, skip, reverse, sink)
+		}
+	}
+	return nil, errors.New("requested skeleton hash unavailable")
 }
 
 func (p *skeletonTestPeer) RequestBodies([]common.Hash, chan *eth.Response) (*eth.Request, error) {

@@ -18,16 +18,23 @@ package params
 
 import "github.com/ethereum/go-ethereum/common"
 
-// RabbitBootnodes are the default discovery-v4 bootstrap nodes for Rabbit Chain.
+// RabbitBootnodes are discovery-v4 entry points only. They bootstrap peer discovery and have no consensus authority or static-peer semantics.
 //
-// Keep this list empty until the clean Rabbit mainnet bootstrap nodes are created.
-// Never place laboratory/test enodes here.
-var RabbitBootnodes = []string{}
+// The built-in nodes are bootstrap entry points only. They do not become static
+// peers and have no consensus authority. Discovery must continue beyond them.
+var RabbitBootnodes = []string{
+	"enode://2fac5ffabae5e2202666279e2d06f86b6f3f11977fa0818ad795889a55b32e2d4bd651bb5860fc6e88072a01cad23df475a36487cdcd496e97932909600b7791@157.245.245.16:30303",
+	"enode://d106f46d3e37a5b8487b1a4b70a11519e77cf8c4532065a3508ebf943e44840867eaff2a4fa8e525e4dea6680d1aef7cb1c2824f3613fc3482b92eb026d357d4@24.144.112.140:30303",
+}
 
-// RabbitV5Bootnodes are the default discovery-v5 bootstrap nodes for Rabbit Chain.
+// RabbitV5Bootnodes are discovery-v5 entry points only. Nodes must continue discovering and dialing the permissionless P2P mesh.
 //
-// Keep this list empty until permanent Rabbit mainnet ENRs are available.
-var RabbitV5Bootnodes = []string{}
+// The built-in nodes bootstrap discovery only. Nodes must continue learning and
+// dialing the permissionless Rabbit P2P mesh.
+var RabbitV5Bootnodes = []string{
+	"enode://2fac5ffabae5e2202666279e2d06f86b6f3f11977fa0818ad795889a55b32e2d4bd651bb5860fc6e88072a01cad23df475a36487cdcd496e97932909600b7791@157.245.245.16:30303",
+	"enode://d106f46d3e37a5b8487b1a4b70a11519e77cf8c4532065a3508ebf943e44840867eaff2a4fa8e525e4dea6680d1aef7cb1c2824f3613fc3482b92eb026d357d4@24.144.112.140:30303",
+}
 
 // MainnetBootnodes are the enode URLs of the P2P bootstrap nodes running on
 // the main Ethereum network.

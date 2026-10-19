@@ -84,7 +84,9 @@ type Peer struct {
 	receiptBuffer     map[uint64]*receiptRequest // Previously requested receipts to buffer partial receipts
 	receiptBufferLock sync.Mutex                 // Lock for protecting the receiptBuffer
 
-	term chan struct{} // Termination channel to stop the broadcasters
+	lqcBroadcastQueue chan func() error
+	lqcBroadcastDone  chan struct{}
+	term              chan struct{} // Termination channel to stop the broadcasters
 }
 
 // NewPeer creates a wrapper for a network connection and negotiated  protocol
@@ -113,6 +115,9 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool, blo
 	// Start up all the broadcasters
 	go peer.broadcastTransactions()
 	go peer.announceTransactions()
+	peer.lqcBroadcastQueue = make(chan func() error, 16)
+	peer.lqcBroadcastDone = make(chan struct{})
+	go peer.broadcastLQC()
 	go peer.dispatcher()
 
 	return peer
@@ -716,4 +721,72 @@ func (k *knownCache) Contains(hash common.Hash) bool {
 // Cardinality returns the number of elements in the set.
 func (k *knownCache) Cardinality() int {
 	return k.hashes.Cardinality()
+}
+
+// broadcastLQC isolates network writes to this peer.
+func (p *Peer) broadcastLQC() {
+	defer close(p.lqcBroadcastDone)
+	for {
+		select {
+		case <-p.term:
+			return
+		case <-p.Done():
+			return
+		case send := <-p.lqcBroadcastQueue:
+			select {
+			case <-p.term:
+				return
+			case <-p.Done():
+				return
+			default:
+			}
+			if err := send(); err != nil {
+				p.Log().Warn("LQC peer broadcast failed", "err", err)
+				p.Disconnect(p2p.DiscUselessPeer)
+				return
+			}
+		}
+	}
+}
+
+func (p *Peer) enqueueLQCBroadcast(send func() error) bool {
+	select {
+	case <-p.term:
+		return false
+	case <-p.Done():
+		return false
+	default:
+	}
+	select {
+	case <-p.term:
+		return false
+	case <-p.Done():
+		return false
+	case p.lqcBroadcastQueue <- send:
+		return true
+	default:
+		p.Log().Warn("LQC peer broadcast queue full; disconnecting",
+			"capacity", cap(p.lqcBroadcastQueue))
+		p.Disconnect(p2p.DiscUselessPeer)
+		return false
+	}
+}
+
+func (p *Peer) AsyncSendLQCNewBlock(block *types.Block, td *big.Int) bool {
+	if block == nil || td == nil {
+		return false
+	}
+	difficulty := new(big.Int).Set(td)
+	return p.enqueueLQCBroadcast(func() error {
+		return p.SendNewBlock(block, difficulty)
+	})
+}
+
+func (p *Peer) AsyncSendLQCBlockRange(msg BlockRangeUpdatePacket) bool {
+	if p.version < ETH69 {
+		return true
+	}
+	return p.enqueueLQCBroadcast(func() error {
+		return p.SendBlockRangeUpdate(msg)
+	})
 }

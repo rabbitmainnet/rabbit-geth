@@ -50,13 +50,20 @@ var (
 	ErrClosed      = errors.New("rabbit RandomX hasher closed")
 )
 
+// Keep at most two epoch caches. Header verification and block execution may
+// alternate between adjacent epochs; neither may reuse a VM with a different key.
+const lightHasherCacheLimit = 2
+
+type lightHasherEpoch struct {
+	cache *C.randomx_cache
+	vm    *C.randomx_vm
+	key   common.Hash
+}
+
 type LightHasher struct {
-	mu          sync.Mutex
-	cache       *C.randomx_cache
-	vm          *C.randomx_vm
-	key         common.Hash
-	initialized bool
-	closed      bool
+	mu     sync.Mutex
+	epochs [lightHasherCacheLimit]*lightHasherEpoch // most recently used first
+	closed bool
 }
 
 // FullHasher uses the frozen Rabbit RandomX 1 GiB dataset for mining. Nodes
@@ -158,58 +165,65 @@ func (h *FullHasher) Close() {
 	h.closed = true
 }
 
-func (h *LightHasher) resetLocked(key common.Hash) error {
-	if h.vm != nil {
-		C.randomx_destroy_vm(h.vm)
-		h.vm = nil
+func (epoch *lightHasherEpoch) release() {
+	if epoch == nil {
+		return
 	}
-	if h.cache != nil {
-		C.randomx_release_cache(h.cache)
-		h.cache = nil
+	if epoch.vm != nil {
+		C.randomx_destroy_vm(epoch.vm)
+		epoch.vm = nil
 	}
+	if epoch.cache != nil {
+		C.randomx_release_cache(epoch.cache)
+		epoch.cache = nil
+	}
+}
 
+func (h *LightHasher) epochLocked(key common.Hash) (*lightHasherEpoch, error) {
+	for index, epoch := range h.epochs {
+		if epoch != nil && epoch.key == key {
+			if index == 1 {
+				h.epochs[0], h.epochs[1] = h.epochs[1], h.epochs[0]
+			}
+			return epoch, nil
+		}
+	}
+	// Release the oldest before allocating, so even transient use stays bounded.
+	h.epochs[1].release()
+	h.epochs[1] = nil
 	flags := C.rabbit_randomx_light_flags()
 	cache := C.randomx_alloc_cache(flags)
 	if cache == nil {
-		return ErrAllocation
+		return nil, ErrAllocation
 	}
 	C.randomx_init_cache(cache, unsafe.Pointer(&key[0]), C.size_t(len(key)))
-
 	vm := C.randomx_create_vm(flags, cache, nil)
 	if vm == nil {
 		C.randomx_release_cache(cache)
-		return ErrAllocation
+		return nil, ErrAllocation
 	}
-
-	h.cache = cache
-	h.vm = vm
-	h.key = key
-	h.initialized = true
-	return nil
+	epoch := &lightHasherEpoch{cache: cache, vm: vm, key: key}
+	h.epochs[1] = h.epochs[0]
+	h.epochs[0] = epoch
+	return epoch, nil
 }
 
 func (h *LightHasher) Hash(epochKey common.Hash, input []byte) (common.Hash, error) {
 	if h == nil || epochKey == (common.Hash{}) || len(input) == 0 {
 		return common.Hash{}, ErrUnavailable
 	}
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
 	if h.closed {
 		return common.Hash{}, ErrClosed
 	}
-	if !h.initialized || h.key != epochKey {
-		if err := h.resetLocked(epochKey); err != nil {
-			return common.Hash{}, err
-		}
+	epoch, err := h.epochLocked(epochKey)
+	if err != nil {
+		return common.Hash{}, err
 	}
-
 	var out common.Hash
 	C.randomx_calculate_hash(
-		h.vm,
-		unsafe.Pointer(&input[0]),
-		C.size_t(len(input)),
+		epoch.vm, unsafe.Pointer(&input[0]), C.size_t(len(input)),
 		unsafe.Pointer(&out[0]),
 	)
 	return out, nil
@@ -221,15 +235,9 @@ func (h *LightHasher) Close() {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	if h.vm != nil {
-		C.randomx_destroy_vm(h.vm)
-		h.vm = nil
+	for index, epoch := range h.epochs {
+		epoch.release()
+		h.epochs[index] = nil
 	}
-	if h.cache != nil {
-		C.randomx_release_cache(h.cache)
-		h.cache = nil
-	}
-	h.initialized = false
 	h.closed = true
 }

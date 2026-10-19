@@ -654,7 +654,12 @@ func (t *dialTask) dial(d *dialScheduler, dest *enode.Node) error {
 		dialConnectionError.Mark(1)
 		return &dialError{err}
 	}
-	return d.setupFunc(newMeteredConn(fd), t.flags, dest)
+	err = d.setupFunc(newMeteredConn(fd), t.flags, dest)
+	if err != nil {
+		addr, _ := dest.TCPEndpoint()
+		d.log.Trace("Dial setup failed", "id", dest.ID(), "addr", addr, "conn", t.flags, "err", err)
+	}
+	return err
 }
 
 func (t *dialTask) String() string {

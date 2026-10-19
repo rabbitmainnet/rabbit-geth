@@ -754,7 +754,7 @@ func (h *handler) broadcastCurrentLQCBlock() {
 
 	log.Info("Sending NewBlock", "peers", len(peerlist), "number", block.NumberU64(), "hash", block.Hash())
 	for _, p := range peerlist {
-		_ = p.SendNewBlock(block, td)
+		p.AsyncSendLQCNewBlock(block, td)
 	}
 }
 
@@ -769,7 +769,11 @@ func (h *handler) broadcastBlockRange(state *blockRangeState) {
 	msg := state.currentRange()
 	log.Info("Sending BlockRangeUpdate", "peers", len(peerlist), "earliest", msg.EarliestBlock, "latest", msg.LatestBlock)
 	for _, p := range peerlist {
-		p.SendBlockRangeUpdate(msg)
+		if cfg := h.chain.Config(); cfg != nil && cfg.LQC != nil {
+			p.AsyncSendLQCBlockRange(msg)
+		} else {
+			p.SendBlockRangeUpdate(msg)
+		}
 	}
 	state.prev = *state.next.Load()
 }

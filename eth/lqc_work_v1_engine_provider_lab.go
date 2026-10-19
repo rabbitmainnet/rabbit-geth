@@ -18,8 +18,9 @@ var errWorkV1EnginePoolProviderLab = errors.New(
 type workV1EnginePoolProviderLab struct {
 	mu sync.Mutex
 
-	pending    func() ([]lqc.WorkCommitCandidateV1, error)
-	includedAt func(
+	prepareEpoch func(uint64) error
+	pending      func() ([]lqc.WorkCommitCandidateV1, error)
+	includedAt   func(
 		blockNumber uint64,
 	) ([]lqc.SignedRandomXWorkTicketV1, bool)
 	removeIncluded func([]common.Hash) uint64
@@ -367,6 +368,15 @@ func (p *workV1EnginePoolProviderLab) provide(
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Engine block preparation can be the first Work V1 action after a
+	// process restart. Initialize the pool from the canonical commit epoch
+	// before reconciliation calls PendingV1.
+	if p.prepareEpoch != nil {
+		if err := p.prepareEpoch(commitEpoch); err != nil {
+			return nil, err
+		}
+	}
+
 	p.reconcileRemovedLocked(commitEpoch)
 	if err := p.reconcileCanonicalPendingLocked(
 		blockNumber,
@@ -424,6 +434,43 @@ func (p *workV1EnginePoolProviderLab) provide(
 	), nil
 }
 
+func workV1EnginePoolHeaderTicketsLab(
+	extra []byte,
+) ([]lqc.SignedRandomXWorkTicketV1, bool) {
+	var tickets []lqc.SignedRandomXWorkTicketV1
+
+	if envelopeV5, err := lqc.DecodeLQCHeaderExtraV5(
+		extra,
+		lqc.MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		tickets = envelopeV5.WorkTickets
+	} else if envelopeV4, err := lqc.DecodeLQCHeaderExtraV4(
+		extra,
+		lqc.MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		tickets = envelopeV4.WorkTickets
+	} else if envelopeV3, err := lqc.DecodeLQCHeaderExtraV3(
+		extra,
+		lqc.MaxWorkTicketsPerBlockV1,
+	); err == nil {
+		tickets = envelopeV3.WorkTickets
+	} else {
+		return nil, false
+	}
+
+	out := append(
+		[]lqc.SignedRandomXWorkTicketV1(nil),
+		tickets...,
+	)
+	for i := range out {
+		out[i].Signature = append(
+			[]byte(nil),
+			out[i].Signature...,
+		)
+	}
+	return out, true
+}
+
 func wireWorkV1EngineTicketProviderMaybeLab(
 	backend *Ethereum,
 	transport *lqcWorkV1Transport,
@@ -440,7 +487,8 @@ func wireWorkV1EngineTicketProviderMaybeLab(
 	}
 
 	provider := &workV1EnginePoolProviderLab{
-		pending: transport.pendingRaw,
+		prepareEpoch: transport.pool.ResetCommitEpochV1,
+		pending:      transport.pendingRaw,
 		includedAt: func(
 			blockNumber uint64,
 		) ([]lqc.SignedRandomXWorkTicketV1, bool) {
@@ -450,24 +498,7 @@ func wireWorkV1EngineTicketProviderMaybeLab(
 			if header == nil {
 				return nil, false
 			}
-			envelope, err := lqc.DecodeLQCHeaderExtraV3(
-				header.Extra,
-				lqc.MaxWorkTicketsPerBlockV1,
-			)
-			if err != nil {
-				return nil, false
-			}
-			out := append(
-				[]lqc.SignedRandomXWorkTicketV1(nil),
-				envelope.WorkTickets...,
-			)
-			for i := range out {
-				out[i].Signature = append(
-					[]byte(nil),
-					out[i].Signature...,
-				)
-			}
-			return out, true
+			return workV1EnginePoolHeaderTicketsLab(header.Extra)
 		},
 		removeIncluded: transport.pool.RemoveIncludedV1,
 		readmitRemoved: func(

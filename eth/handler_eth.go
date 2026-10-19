@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
@@ -286,11 +287,51 @@ func (h *ethHandler) requestAndSyncLQCHead(peer *eth.Peer, number uint64, hash c
 		peer.Log().Warn("LQC fork-recovery target mismatch", "wantNumber", number, "haveNumber", header.Number, "wantHash", hash, "haveHash", header.Hash())
 		return
 	}
+	// BlockRangeUpdate normally precedes NewBlock. Give a direct extension a
+	// bounded opportunity to finish live import before marking recovery busy.
+	if !waitForLQCLiveImport(h.chain.CurrentBlock, header, h.quitSync, 500*time.Millisecond) {
+		return
+	}
 	h.scheduleLQCSync(peer, header)
 }
 
-func (h *ethHandler) startLQCBeaconSync(peer *eth.Peer, header *types.Header) {
-	h.scheduleLQCSync(peer, header)
+// waitForLQCLiveImport suppresses recovery when normal import reaches the target.
+// Gaps and competing parents bypass the grace period; an absent live block still
+// falls back to the downloader after the bounded wait.
+func waitForLQCLiveImport(current func() *types.Header, target *types.Header, quit <-chan struct{}, grace time.Duration) bool {
+	if target == nil || target.Number == nil {
+		return false
+	}
+	local := current()
+	if !shouldStartLQCSync(local, target.Number.Uint64(), target.Hash()) {
+		return false
+	}
+	if local == nil || local.Number == nil ||
+		target.Number.Uint64() != local.Number.Uint64()+1 || target.ParentHash != local.Hash() {
+		return true
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-quit:
+			return false
+		case <-timer.C:
+			local = current()
+			return shouldStartLQCSync(local, target.Number.Uint64(), target.Hash())
+		case <-ticker.C:
+			local = current()
+			if !shouldStartLQCSync(local, target.Number.Uint64(), target.Hash()) {
+				return false
+			}
+			if local == nil || local.Number == nil ||
+				target.Number.Uint64() != local.Number.Uint64()+1 || target.ParentHash != local.Hash() {
+				return true
+			}
+		}
+	}
 }
 
 func (h *ethHandler) scheduleLQCSync(peer *eth.Peer, header *types.Header) {
@@ -340,12 +381,6 @@ func (h *ethHandler) takePendingLQCSyncTarget() *lqcSyncTarget {
 	return next
 }
 
-func (h *ethHandler) hasBetterPendingLQCSyncTarget(current *lqcSyncTarget) bool {
-	h.lqcSyncMu.Lock()
-	defer h.lqcSyncMu.Unlock()
-	return betterLQCSyncTarget(h.lqcSyncPending, current)
-}
-
 func (h *ethHandler) wakeLQCSync() {
 	select {
 	case h.lqcSyncWake <- struct{}{}:
@@ -354,6 +389,10 @@ func (h *ethHandler) wakeLQCSync() {
 }
 
 func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
+	syncEvents := make(chan downloader.SyncEvent, 16)
+	subscription := h.downloader.SubscribeSyncEvents(syncEvents)
+	defer subscription.Unsubscribe()
+	retries := 0
 	for target != nil {
 		peer := target.peer
 		header := target.header
@@ -377,7 +416,13 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 		}
 
 		deadline := time.Now().Add(2 * time.Minute)
+		var progressNumber uint64
+		if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
+			progressNumber = local.Number.Uint64()
+		}
 		ticker := time.NewTicker(250 * time.Millisecond)
+		failed := false
+	waitRecovery:
 		for {
 			if h.chain.GetCanonicalHash(header.Number.Uint64()) == header.Hash() {
 				break
@@ -391,15 +436,60 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 				}
 				break
 			}
-			if h.hasBetterPendingLQCSyncTarget(target) || time.Now().After(deadline) {
+			// Keep an advancing import alive. Only a stalled import times out.
+			if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
+				if number := local.Number.Uint64(); number > progressNumber {
+					progressNumber = number
+					deadline = time.Now().Add(2 * time.Minute)
+				}
+			}
+			if time.Now().After(deadline) {
+				peer.Log().Warn("LQC fork-recovery stalled",
+					"target", header.Number, "imported", progressNumber)
 				break
 			}
-			select {
-			case <-ticker.C:
-			case <-h.lqcSyncWake:
+			switch lqcWaitRecoverySignal(ticker.C, h.lqcSyncWake, syncEvents, h.quitSync, subscription.Err()) {
+			case 1:
+				peer.Log().Warn("LQC fork-recovery download failed; retry scheduled",
+					"target", header.Number, "hash", header.Hash())
+				failed = true
+				break waitRecovery
+			case 2:
+				ticker.Stop()
+				h.lqcSyncMu.Lock()
+				h.lqcSyncRunning = false
+				h.lqcSyncCurrent = nil
+				h.lqcSyncPending = nil
+				h.lqcSyncMu.Unlock()
+				return
 			}
 		}
 		ticker.Stop()
+		if failed && retries < 3 {
+			retries++
+			pause := time.NewTimer(time.Second)
+			select {
+			case <-pause.C:
+			case <-h.quitSync:
+				pause.Stop()
+				h.lqcSyncMu.Lock()
+				h.lqcSyncRunning = false
+				h.lqcSyncCurrent = nil
+				h.lqcSyncPending = nil
+				h.lqcSyncMu.Unlock()
+				return
+			}
+			// Keep ownership of this recovery worker while choosing its next target.
+			h.lqcSyncMu.Lock()
+			if h.lqcSyncPending != nil {
+				target = h.lqcSyncPending
+				h.lqcSyncPending = nil
+			}
+			h.lqcSyncCurrent = target
+			h.lqcSyncMu.Unlock()
+			continue
+		}
+		retries = 0
 		target = h.takePendingLQCSyncTarget()
 	}
 }
@@ -436,4 +526,30 @@ func handleTransactions(peer *eth.Peer, list []*types.Transaction, directBroadca
 		peer.MarkTransaction(hash)
 	}
 	return nil
+}
+
+// lqcWaitRecoverySignal distinguishes a failed asynchronous download from
+// ordinary progress. A failure never authorizes production by itself.
+func lqcWaitRecoverySignal(
+	tick <-chan time.Time,
+	wake <-chan struct{},
+	events <-chan downloader.SyncEvent,
+	quit <-chan struct{},
+	subscriptionErr <-chan error,
+) int {
+	select {
+	case <-tick:
+		return 0
+	case <-wake:
+		return 0
+	case event := <-events:
+		if event.Type == downloader.SyncFailed {
+			return 1
+		}
+		return 0
+	case <-quit:
+		return 2
+	case <-subscriptionErr:
+		return 2
+	}
 }

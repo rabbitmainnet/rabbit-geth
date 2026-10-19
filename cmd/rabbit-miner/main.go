@@ -66,10 +66,52 @@ type participantStatus struct {
 	LocalPool      bool           `json:"localPool"`
 }
 
+type registryParameters struct {
+	CurrentBlock         hexutil.Uint64 `json:"currentBlock"`
+	NextBlock            hexutil.Uint64 `json:"nextBlock"`
+	HeartbeatWindow      hexutil.Uint64 `json:"heartbeatWindow"`
+	HeartbeatGrace       hexutil.Uint64 `json:"heartbeatGrace"`
+	MaxOperationLifetime hexutil.Uint64 `json:"maxOperationLifetime"`
+	RegistryRoot         common.Hash    `json:"registryRoot"`
+}
+
+type registryParticipant struct {
+	JailedUntil    hexutil.Uint64 `json:"jailedUntil"`
+	MissedTurns    hexutil.Uint64 `json:"missedTurns"`
+	Exists         bool           `json:"exists"`
+	CanonicalBlock hexutil.Uint64 `json:"canonicalBlock"`
+	RegistryRoot   common.Hash    `json:"registryRoot"`
+	LastHeartbeat  hexutil.Uint64 `json:"lastHeartbeat"`
+	Sequence       hexutil.Uint64 `json:"sequence"`
+}
+
+type registryOperationArgs struct {
+	Version    hexutil.Uint64 `json:"version"`
+	Action     hexutil.Uint64 `json:"action"`
+	Address    common.Address `json:"address"`
+	Sequence   hexutil.Uint64 `json:"sequence"`
+	ValidUntil hexutil.Uint64 `json:"validUntil"`
+	ProofNonce hexutil.Uint64 `json:"proofNonce"`
+	Signature  hexutil.Bytes  `json:"signature"`
+}
+
 type observedBlock struct {
 	Number    hexutil.Uint64 `json:"number"`
 	Timestamp hexutil.Uint64 `json:"timestamp"`
 	Miner     common.Address `json:"miner"`
+}
+
+type rewardClaimRPC struct {
+	TargetBlock hexutil.Uint64 `json:"targetBlock"`
+	Amount      *hexutil.Big   `json:"amount"`
+}
+
+type rewardActivityRPC struct {
+	BlockNumber        hexutil.Uint64   `json:"blockNumber"`
+	Producer           common.Address   `json:"producer"`
+	ProducerReward     *hexutil.Big     `json:"producerReward"`
+	ProducerFullReward bool             `json:"producerFullReward"`
+	CommitteeClaims    []rewardClaimRPC `json:"committeeClaims"`
 }
 
 type rpcSyncProgress struct {
@@ -96,6 +138,9 @@ type readinessTracker struct {
 	wasSyncing    bool
 	highestTarget uint64
 	syncCompleted bool
+
+	recoveryStartedAt   time.Time
+	recoveryStartHeight uint64
 }
 
 type options struct {
@@ -107,6 +152,7 @@ type options struct {
 	statusEvery     uint64
 	once            bool
 	verbose         bool
+	randomXLight    bool
 }
 
 func parseOptions() options {
@@ -119,6 +165,7 @@ func parseOptions() options {
 	flag.Uint64Var(&opts.statusEvery, "status-every", 1000, "print progress after this many attempts (0 disables)")
 	flag.BoolVar(&opts.once, "once", false, "stop after the first accepted ticket")
 	flag.BoolVar(&opts.verbose, "verbose", false, "show technical Work V2 and RPC details")
+	flag.BoolVar(&opts.randomXLight, "randomx-light", false, "use low-memory RandomX admission mode")
 	flag.Parse()
 	return opts
 }
@@ -252,6 +299,105 @@ func fetchParticipantStatus(
 	return result, nil
 }
 
+func refreshWorkSeatAvailability(
+	ctx context.Context,
+	client *rpc.Client,
+	chainID *big.Int,
+	key *keystore.Key,
+) (bool, error) {
+	var parameters registryParameters
+	if err := client.CallContext(
+		ctx,
+		&parameters,
+		"lqc_registryParameters",
+	); err != nil {
+		return false, err
+	}
+
+	var participant registryParticipant
+	if err := client.CallContext(
+		ctx,
+		&participant,
+		"lqc_registryParticipant",
+		key.Address,
+	); err != nil {
+		return false, err
+	}
+
+	if !participant.Exists {
+		return restoreWorkSeatRegistry(ctx, client, chainID, key)
+	}
+	if participant.CanonicalBlock != parameters.CurrentBlock ||
+		participant.RegistryRoot != parameters.RegistryRoot {
+		return false, errors.New("canonical registry changed while preparing heartbeat")
+	}
+
+	window := uint64(parameters.HeartbeatWindow)
+	if window == 0 {
+		return false, errors.New("zero heartbeat window")
+	}
+	refreshAfter := uint64(participant.LastHeartbeat) + window/2
+	if refreshAfter < uint64(participant.LastHeartbeat) {
+		return false, errors.New("heartbeat refresh overflow")
+	}
+	if uint64(parameters.CurrentBlock) < refreshAfter {
+		return false, nil
+	}
+
+	sequence := uint64(participant.Sequence) + 1
+	if sequence == 0 {
+		return false, errors.New("heartbeat sequence overflow")
+	}
+
+	lifetime := uint64(parameters.MaxOperationLifetime)
+	if lifetime == 0 {
+		return false, errors.New("zero registry operation lifetime")
+	}
+	validUntil := uint64(parameters.NextBlock) + lifetime - 1
+	if validUntil < uint64(parameters.NextBlock) {
+		return false, errors.New("heartbeat validity overflow")
+	}
+
+	operation := lqc.RegistryOperation{
+		Version:    lqc.RegistryProtocolVersion,
+		Action:     lqc.RegistryActionHeartbeat,
+		Address:    key.Address,
+		Sequence:   sequence,
+		ValidUntil: validUntil,
+	}
+	signingHash := lqc.RegistryOperationWalletSigningHash(
+		chainID,
+		operation,
+	)
+	signature, err := crypto.Sign(signingHash[:], key.PrivateKey)
+	if err != nil {
+		return false, err
+	}
+
+	var accepted common.Hash
+	err = client.CallContext(
+		ctx,
+		&accepted,
+		"lqc_submitRegistryOperation",
+		registryOperationArgs{
+			Version:    hexutil.Uint64(operation.Version),
+			Action:     hexutil.Uint64(operation.Action),
+			Address:    operation.Address,
+			Sequence:   hexutil.Uint64(operation.Sequence),
+			ValidUntil: hexutil.Uint64(operation.ValidUntil),
+			ProofNonce: hexutil.Uint64(operation.ProofNonce),
+			Signature:  signature,
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+	if accepted == (common.Hash{}) {
+		return false, errors.New("node returned empty heartbeat hash")
+	}
+	return true, nil
+}
+
 func wait(ctx context.Context, duration time.Duration) bool {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
@@ -297,6 +443,11 @@ func (r *readinessTracker) observe(telemetry networkTelemetry, now time.Time) (b
 		}
 		return false, "blockchain synchronization is active"
 	}
+
+	if r.wasSyncing {
+		r.recoveryStartedAt = now
+		r.recoveryStartHeight = telemetry.Height
+	}
 	r.wasSyncing = false
 
 	if r.sawSync && !r.syncCompleted {
@@ -306,6 +457,14 @@ func (r *readinessTracker) observe(telemetry networkTelemetry, now time.Time) (b
 		}
 		if r.highestTarget > 0 {
 			return false, fmt.Sprintf("waiting for canonical sync target %d (local %d)", r.highestTarget, telemetry.Height)
+		}
+
+		if !r.recoveryStartedAt.IsZero() &&
+			now.Sub(r.recoveryStartedAt) >= syncDiscoveryGrace &&
+			telemetry.HeadFresh && telemetry.Peers > 0 &&
+			telemetry.Height > r.recoveryStartHeight {
+			r.syncCompleted = true
+			return true, "live canonical head advanced after synchronization"
 		}
 		return false, "waiting for successful blockchain synchronization"
 	}
@@ -443,12 +602,28 @@ func positiveBalanceDelta(current, previous *big.Int) *big.Int {
 	return new(big.Int).Sub(new(big.Int).Set(current), previous)
 }
 
-func shortAddress(address common.Address) string {
-	text := address.Hex()
-	if len(text) <= 14 {
-		return text
+func fetchRewardActivity(
+	ctx context.Context,
+	client *rpc.Client,
+	participant common.Address,
+	number uint64,
+) (rewardActivityRPC, error) {
+	var result rewardActivityRPC
+	err := client.CallContext(
+		ctx,
+		&result,
+		"lqc_rewardActivity",
+		hexutil.Uint64(number),
+		participant,
+	)
+	return result, err
+}
+
+func rewardRPCAmount(value *hexutil.Big) *big.Int {
+	if value == nil {
+		return new(big.Int)
 	}
-	return text[:8] + "..." + text[len(text)-4:]
+	return new(big.Int).Set((*big.Int)(value))
 }
 
 func syncPercent(current, highest uint64) float64 {
@@ -496,17 +671,49 @@ func monitorNetwork(
 	defer ticker.Stop()
 
 	var (
-		lastHeight       uint64
-		lastBalance      *big.Int
-		trackingLive     bool
-		produced         uint64
-		committeeRewards uint64
-		lastStatus       time.Time
-		lastSyncStatus   time.Time
+		lastHeight        uint64
+		lastBalance       *big.Int
+		trackingLive      bool
+		produced          uint64
+		committeeRewards  uint64
+		lastStatus        time.Time
+		lastSyncStatus    time.Time
+		lastPenaltyStatus time.Time
+		wasPenalized      bool
 	)
 
 	for {
 		telemetry, err := fetchNetworkTelemetry(ctx, client, participant)
+
+		var registryStatus registryParticipant
+		registryCtx, cancelRegistry := context.WithTimeout(ctx, 3*time.Second)
+		registryErr := client.CallContext(
+			registryCtx, &registryStatus, "lqc_registryParticipant", participant,
+		)
+		cancelRegistry()
+		penaltyKnown := registryErr == nil && registryStatus.Exists
+		penalized := penaltyKnown &&
+			registryStatus.JailedUntil > registryStatus.CanonicalBlock
+
+		if penaltyKnown {
+			if penalized {
+				if !wasPenalized || time.Since(lastPenaltyStatus) >= 10*time.Second {
+					fmt.Printf("PENALIZED | Block: %d | Until: %d | Remaining: %d blocks\n",
+						uint64(registryStatus.CanonicalBlock),
+						uint64(registryStatus.JailedUntil),
+						uint64(registryStatus.JailedUntil-registryStatus.CanonicalBlock))
+					fmt.Println("PENALTY | Missed assigned production turns. Production eligibility returns automatically when the penalty expires.")
+					lastPenaltyStatus = time.Now()
+				}
+			} else if wasPenalized {
+				fmt.Println("PENALTY ENDED | Production eligibility restored. Waiting for synchronization and selection.")
+				lastStatus = time.Time{}
+			}
+			if wasPenalized != penalized {
+				lastStatus = time.Time{}
+			}
+			wasPenalized = penalized
+		}
 		if err != nil {
 			if time.Since(lastStatus) >= syncStatusMessageEvery {
 				fmt.Println("STATUS | Waiting for node/network data | Mining: PAUSED")
@@ -566,50 +773,127 @@ func monitorNetwork(
 						}
 						delta := positiveBalanceDelta(balance, lastBalance)
 
-						switch {
-						case block.Miner == participant:
+						activity, rewardErr := fetchRewardActivity(
+							ctx,
+							client,
+							participant,
+							number,
+						)
+						if rewardErr != nil {
+							if verbose {
+								fmt.Printf(
+									"BLOCK_REWARD_ACTIVITY number=%d error=%q\n",
+									number,
+									rewardErr,
+								)
+							}
+							fmt.Printf(
+								"BLOCK  | #%d | Balance: %s %s | Reward details unavailable\n",
+								number,
+								formatRAB(balance),
+								unit,
+							)
+							lastBalance = balance
+							continue
+						}
+
+						if block.Miner != activity.Producer && verbose {
+							fmt.Printf(
+								"BLOCK_REWARD_PRODUCER_MISMATCH number=%d block=%s reward=%s\n",
+								number,
+								block.Miner.Hex(),
+								activity.Producer.Hex(),
+							)
+						}
+
+						printedReward := false
+
+						if activity.Producer == participant {
 							produced++
-							fmt.Printf("BLOCK  | #%d | 🐇 PRODUCER 🟢  | +%s %s | Balance: %s %s\n",
-								number,
-								formatRAB(delta),
-								unit,
-								formatRAB(balance),
-								unit,
+
+							producerReward := rewardRPCAmount(
+								activity.ProducerReward,
 							)
-						case delta.Sign() > 0 && activeSeat != nil && activeSeat.Load():
+
+							if activity.ProducerFullReward {
+								fmt.Printf(
+									"PRODUCED  | #%d | 🐇 +%s %s | FULL REWARD - NO ELIGIBLE COMMITTEE | Balance: %s %s\n",
+									number,
+									formatRAB(producerReward),
+									unit,
+									formatRAB(balance),
+									unit,
+								)
+							} else {
+								fmt.Printf(
+									"PRODUCED  | #%d | 🐇 +%s %s | PRODUCER REWARD | Balance: %s %s\n",
+									number,
+									formatRAB(producerReward),
+									unit,
+									formatRAB(balance),
+									unit,
+								)
+							}
+
+							printedReward = true
+						}
+
+						for _, claim := range activity.CommitteeClaims {
+							amount := rewardRPCAmount(claim.Amount)
+							if amount.Sign() <= 0 {
+								continue
+							}
+
 							committeeRewards++
-							fmt.Printf("BLOCK  | #%d | 🥕 COMMITTEE 🟠 | +%s %s | Balance: %s %s\n",
+
+							fmt.Printf(
+								"COMMITTEE | credited in #%d | 🥕 +%s %s | FOR BLOCK #%d | Balance: %s %s\n",
+								number,
+								formatRAB(amount),
+								unit,
+								uint64(claim.TargetBlock),
+								formatRAB(balance),
+								unit,
+							)
+
+							printedReward = true
+						}
+
+						if !printedReward && delta.Sign() > 0 {
+							fmt.Printf(
+								"CREDIT    | #%d | +%s %s | NON-LCQ CREDIT | Balance: %s %s\n",
 								number,
 								formatRAB(delta),
 								unit,
 								formatRAB(balance),
 								unit,
 							)
-						case delta.Sign() > 0:
-							fmt.Printf("BLOCK  | #%d | CREDIT | +%s %s | Balance: %s %s\n",
-								number,
-								formatRAB(delta),
-								unit,
-								formatRAB(balance),
-								unit,
-							)
-						default:
-							fmt.Printf("BLOCK  | #%d | Balance: %s %s\n",
+						} else if !printedReward && verbose {
+							fmt.Printf(
+								"NETWORK   | #%d | no wallet reward | Balance: %s %s\n",
 								number,
 								formatRAB(balance),
 								unit,
 							)
 						}
+
 						lastBalance = balance
 					}
 					lastHeight = telemetry.Height
 				}
 			}
 
-			if time.Since(lastStatus) >= 30*time.Second {
+			if time.Since(lastStatus) >= 10*time.Second {
 				state := "LCQ PENDING"
 				if activeSeat != nil && activeSeat.Load() {
 					state = "LCQ ACTIVE"
+				}
+				if !penaltyKnown {
+					state = "REGISTRY STATUS UNAVAILABLE"
+				} else if penalized {
+					state = "PENALIZED"
+				} else if telemetry.Peers == 0 {
+					state = "NO PEERS"
 				}
 				fmt.Printf("STATUS | %s | Block: %d | Peers: %d | Balance: %s %s | Produced: %d | Committee: %d\n",
 					state,
@@ -626,7 +910,7 @@ func monitorNetwork(
 			trackingLive = false
 			lastHeight = telemetry.Height
 			lastBalance = nil
-			if time.Since(lastStatus) >= 30*time.Second {
+			if time.Since(lastStatus) >= 10*time.Second {
 				fmt.Printf("STATUS | Checking canonical chain | Block: %d | Peers: %d | Mining: WAITING\n",
 					telemetry.Height,
 					telemetry.Peers,
@@ -659,6 +943,37 @@ func monitorNetwork(
 	}
 }
 
+type admissionHasher interface {
+	Hash(common.Hash, []byte) (common.Hash, error)
+	Close()
+}
+
+func newAdmissionHasher(forceLight bool) (admissionHasher, string, error) {
+	if forceLight {
+		light, err := rabbitx.NewLightHasher()
+		if err != nil {
+			return nil, "", fmt.Errorf("start RandomX low-memory miner: %w", err)
+		}
+		return light, "LIGHT", nil
+	}
+
+	full, fullErr := rabbitx.NewFullHasher()
+	if fullErr == nil {
+		return full, "FULL", nil
+	}
+
+	light, lightErr := rabbitx.NewLightHasher()
+	if lightErr != nil {
+		return nil, "", fmt.Errorf(
+			"RandomX unavailable: full-memory mode failed: %v; low-memory mode failed: %w",
+			fullErr,
+			lightErr,
+		)
+	}
+	fmt.Printf("WORK   | Full-memory RandomX unavailable (%v). Switching automatically to low-memory mode.\\n", fullErr)
+	return light, "LIGHT", nil
+}
+
 func run(ctx context.Context, opts options) error {
 	key, err := loadKey(opts.keyFile, opts.passwordFile)
 	if err != nil {
@@ -685,7 +1000,8 @@ func run(ctx context.Context, opts options) error {
 	var lastReadinessCheck time.Time
 	var readinessOK bool
 
-	var hasher *rabbitx.FullHasher
+	var hasher admissionHasher
+	var hasherMode string
 	defer func() {
 		if hasher != nil {
 			hasher.Close()
@@ -698,6 +1014,7 @@ func run(ctx context.Context, opts options) error {
 	var lastWaitingMessage time.Time
 	var waitingReason string
 	var seatWasActive bool
+	var lastHeartbeatAttempt time.Time
 	var lastSyncStatusMessage time.Time
 	var statusStarted = time.Now()
 	var statusAttempts uint64
@@ -768,6 +1085,22 @@ func run(ctx context.Context, opts options) error {
 		}
 		activeSeat.Store(status.ActiveSeat)
 		if status.ActiveSeat {
+			if time.Since(lastHeartbeatAttempt) >= 30*time.Second {
+				lastHeartbeatAttempt = time.Now()
+				refreshed, heartbeatErr := refreshWorkSeatAvailability(
+					ctx,
+					client,
+					chainID,
+					key,
+				)
+				if heartbeatErr != nil {
+					if opts.verbose {
+						fmt.Printf("HEARTBEAT | Submission failed: %v\n", heartbeatErr)
+					}
+				} else if refreshed {
+					fmt.Println("HEARTBEAT | WorkSeat availability renewed.")
+				}
+			}
 			if !seatWasActive {
 				fmt.Println()
 				fmt.Println("READY  | Your wallet has an ACTIVE LCQ seat.")
@@ -828,9 +1161,12 @@ func run(ctx context.Context, opts options) error {
 		}
 		waitingReason = ""
 		if hasher == nil {
-			hasher, err = rabbitx.NewFullHasher()
+			hasher, hasherMode, err = newAdmissionHasher(opts.randomXLight)
 			if err != nil {
-				return fmt.Errorf("start RandomX full-memory miner: %w", err)
+				return err
+			}
+			if hasherMode == "LIGHT" {
+				fmt.Println("WORK   | RandomX low-memory mode active. Mining remains fully compatible.")
 			}
 		}
 
@@ -841,7 +1177,7 @@ func run(ctx context.Context, opts options) error {
 			attempts = 0
 			statusAttempts = 0
 			statusStarted = time.Now()
-			fmt.Printf("WORK   | Admission epoch %d opened. Preparing RandomX 1 GiB dataset...\n", epoch)
+			fmt.Printf("WORK   | Admission epoch %d opened. RandomX mode: %s. Mining starts automatically.\n", epoch, hasherMode)
 			fmt.Println("       | This preparation happens once per epoch. Mining starts automatically.")
 			if opts.verbose {
 				fmt.Printf("WORK_CONTEXT epoch=%d difficulty=%s dataset=%s challenge=%s\n",
@@ -879,11 +1215,11 @@ func run(ctx context.Context, opts options) error {
 		firstAttempt := attempts == 0
 		proofHash, err := hasher.Hash(epochKey, input)
 		if err != nil {
-			return fmt.Errorf("RandomX full-memory mining: %w", err)
+			return fmt.Errorf("RandomX mining (%s mode): %w", hasherMode, err)
 		}
 		attempts++
 		if firstAttempt {
-			fmt.Println("MINE   | RandomX dataset ready. Searching for this wallet's Work V2 admission proof.")
+			fmt.Printf("MINE   | RandomX %s worker ready. Searching for this wallet's Work V2 admission proof.\n", hasherMode)
 		}
 
 		meets, err := lqc.RandomXWorkHashMeetsTargetV1(proofHash, (*big.Int)(work.Difficulty))

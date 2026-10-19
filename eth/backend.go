@@ -143,6 +143,18 @@ func isFrozenRabbitPublicNetwork(
 		isFrozenRabbitTestnet(chainConfig, genesis)
 }
 
+func migrateRabbitTestnetLivenessV4Config(
+	chainDb ethdb.Database,
+	genesisHash common.Hash,
+	chainConfig *params.ChainConfig,
+) bool {
+	return core.MigrateRabbitTestnetStoredChainConfig(
+		chainDb,
+		genesisHash,
+		chainConfig,
+	)
+}
+
 func validateLQCWorkTicketLabTransport(config *ethconfig.Config, chainConfig *params.ChainConfig, genesis *types.Block) error {
 	if config == nil || !config.WorkTicketLabTransport {
 		return nil
@@ -221,6 +233,9 @@ type Ethereum struct {
 	registryNetwork     *lqcRegistryNetwork
 	workTicketTransport *lqcWorkTicketTransport
 	workV1Transport     *lqcWorkV1Transport
+	vrfDKGTransport     *rabbitVRFDKGTransport
+	vrfDKGRuntime       *rabbitVRFDKGRuntime
+	vrfDKGInstanceDir   string
 	discmix             *enode.FairMix
 	dropper             *dropper
 
@@ -308,6 +323,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	migrateRabbitTestnetLivenessV4Config(
+		chainDb,
+		genesisHash,
+		chainConfig,
+	)
+	if err := core.ConfigureRabbitTestnetVRFAvailabilityV2(chainDb, genesisHash, chainConfig); err != nil {
+		return nil, err
+	}
+
 	if enforceLQCFullSync(config, chainConfig) {
 		log.Info(
 			"Rabbit LQC forced full sync",
@@ -326,17 +351,18 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Assemble the Ethereum object.
 	eth := &Ethereum{
-		config:          config,
-		chainDb:         chainDb,
-		accountManager:  stack.AccountManager(),
-		engine:          engine,
-		networkID:       networkID,
-		gasPrice:        config.Miner.GasPrice,
-		p2pServer:       stack.Server(),
-		discmix:         enode.NewFairMix(discmixTimeout),
-		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
-		fmHeadEventCh:   make(chan core.ChainEvent, 10),
-		fmBlockProcCh:   make(chan bool, 10),
+		config:            config,
+		chainDb:           chainDb,
+		accountManager:    stack.AccountManager(),
+		engine:            engine,
+		networkID:         networkID,
+		gasPrice:          config.Miner.GasPrice,
+		p2pServer:         stack.Server(),
+		vrfDKGInstanceDir: stack.InstanceDir(),
+		discmix:           enode.NewFairMix(discmixTimeout),
+		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
+		fmHeadEventCh:     make(chan core.ChainEvent, 10),
+		fmBlockProcCh:     make(chan bool, 10),
 	}
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
 	var dbVer = "<nil>"
@@ -459,6 +485,22 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			transport.Close()
 			return nil, err
 		}
+		if err := wireLQCCommitteeClaimProviderLab(
+			eth,
+			transport,
+			lqcEngine,
+		); err != nil {
+			transport.Close()
+			return nil, err
+		}
+		if err := startLQCCommitteeParticipantWorker(
+			eth,
+			transport,
+			lqcEngine,
+		); err != nil {
+			transport.Close()
+			return nil, err
+		}
 		log.Info(
 			"LQC Work V2 admission transport enabled",
 			"protocol", lqcWorkV1ProtocolName,
@@ -468,6 +510,29 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			"difficulty", "canonical-runtime",
 			"eligibility", "historical-registry",
 		)
+	}
+
+	if lqcEngine, ok := eth.engine.(*lqc.LQC); ok {
+		vrfRuntime, err :=
+			newRabbitVRFDKGRuntimeMaybeLab(
+				eth,
+				lqcEngine,
+			)
+		if err != nil {
+			return nil, err
+		}
+		eth.vrfDKGRuntime = vrfRuntime
+
+		vrfTransport, err :=
+			newRabbitVRFDKGTransportMaybeLab(
+				eth,
+				vrfRuntime,
+				networkID,
+			)
+		if err != nil {
+			return nil, err
+		}
+		eth.vrfDKGTransport = vrfTransport
 	}
 
 	// Initialize filtermaps log index.
@@ -630,9 +695,17 @@ func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
 func (s *Ethereum) IsListening() bool                  { return true } // Always listening
 func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downloader }
 func (s *Ethereum) Synced() bool                       { return s.handler.synced.Load() }
-func (s *Ethereum) SetSynced()                         { s.handler.enableSyncedFeatures() }
-func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
-func (s *Ethereum) EngineMaxReorgDepth() uint64        { return s.config.EngineMaxReorgDepth }
+
+func (s *Ethereum) PeerCount() int {
+	if s == nil || s.handler == nil {
+		return 0
+	}
+	return s.handler.peers.len()
+}
+
+func (s *Ethereum) SetSynced()                  { s.handler.enableSyncedFeatures() }
+func (s *Ethereum) ArchiveMode() bool           { return s.config.NoPruning }
+func (s *Ethereum) EngineMaxReorgDepth() uint64 { return s.config.EngineMaxReorgDepth }
 
 // Protocols returns all the currently configured
 // network protocols to start.
@@ -646,6 +719,9 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 	}
 	if s.workV1Transport != nil {
 		protos = append(protos, s.workV1Transport.Protocol())
+	}
+	if s.vrfDKGTransport != nil {
+		protos = append(protos, s.vrfDKGTransport.Protocol())
 	}
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.config.SnapV2)...)
@@ -674,7 +750,15 @@ func (s *Ethereum) Start() error {
 		lqcSyncSub = s.handler.downloader.SubscribeSyncEvents(lqcSyncCh)
 	}
 
-	// Start the networking layer
+	// Start the Rabbit VRF DKG observer before networking so the secret
+	// readiness gate cannot miss the initial downloader SyncStarted event.
+	if s.vrfDKGRuntime != nil {
+		if err := s.vrfDKGRuntime.Start(); err != nil {
+			return err
+		}
+	}
+
+	// Start the networking layer.
 	s.handler.Start(s.p2pServer.MaxPeers)
 
 	// Start the connection manager with inclusion-based peer protection.
@@ -704,17 +788,23 @@ func isLiveLQCHead(header *types.Header, now time.Time) bool {
 }
 
 func lqcMayRecoverWithoutSync(header *types.Header, peers int, elapsed time.Duration, now time.Time) bool {
-	// A fresh public client at genesis must never create an isolated local chain
-	// merely because peer discovery has not succeeded yet. Offline recovery is
-	// only valid for a node that already has non-genesis canonical history.
-	if header == nil || header.Number == nil || header.Number.Sign() == 0 {
+	if header == nil || header.Number == nil {
 		return false
 	}
+	// Public-chain production must fail closed while isolated. Recovery may
+	// relax head freshness, but zero peers must never authorize a private fork.
+	if peers <= 0 {
+		return false
+	}
+	if header.Number.Sign() == 0 {
+		// Block 1 remains permissionless after real peer discovery.
+		return elapsed >= lqcSyncDiscoveryGrace
+	}
 	if elapsed >= lqcOfflineRecoveryGrace {
+		// A stale network may recover after the bounded grace only while connected.
 		return true
 	}
-	return peers > 0 &&
-		elapsed >= lqcSyncDiscoveryGrace &&
+	return elapsed >= lqcSyncDiscoveryGrace &&
 		isLiveLQCHead(header, now)
 }
 
@@ -729,9 +819,53 @@ func (s *Ethereum) lqcHeadStateAvailable(header *types.Header) bool {
 	return true
 }
 
+// lqcPeerHeadConfirmed requires actual peer agreement before local production
+// resumes after a connectivity loss.
+func (s *Ethereum) lqcPeerHeadConfirmed(header *types.Header) bool {
+	if s == nil || s.handler == nil || header == nil || header.Number == nil {
+		return false
+	}
+
+	s.handler.lqcSyncMu.Lock()
+	syncBusy := s.handler.lqcSyncRunning ||
+		s.handler.lqcSyncCurrent != nil ||
+		s.handler.lqcSyncPending != nil
+	s.handler.lqcSyncMu.Unlock()
+	if syncBusy {
+		return false
+	}
+
+	localNumber := header.Number.Uint64()
+	localHash := header.Hash()
+	confirmed := false
+
+	for _, peer := range s.handler.peers.all() {
+		if peer == nil {
+			continue
+		}
+		r := peer.BlockRange()
+		if r == nil || r.LatestBlockHash == (common.Hash{}) {
+			continue
+		}
+		if r.LatestBlock > localNumber {
+			return false
+		}
+		if r.LatestBlock == localNumber {
+			if bytes.Compare(r.LatestBlockHash[:], localHash[:]) < 0 {
+				return false
+			}
+			if r.LatestBlockHash == localHash {
+				confirmed = true
+			}
+		}
+	}
+	return confirmed
+}
+
 // enableLQCWhenReady serializes initial sync and LQC production. The producer
 // is stopped whenever a downloader sync starts and is restarted only after a
-// successful sync with readable canonical state. If no sync is ever needed,
+// successful sync with readable canonical state, or after a failed sync followed
+// by confirmed, fully executed live imports. If no sync is ever needed,
 // the bounded recovery grace preserves bootstrap and offline-network liveness.
 func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSub event.Subscription) {
 	if s.blockchain == nil || s.miner == nil || syncSub == nil {
@@ -743,7 +877,7 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 	defer ticker.Stop()
 
 	startedAt := time.Now()
-	syncRequired := false
+	var syncGate lqcFailedSyncGate
 	producerRunning := false
 	producerEnabled := s.config != nil && s.config.Miner.Enabled
 
@@ -768,6 +902,9 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		if head == nil || head.Number == nil || !s.lqcHeadStateAvailable(head) {
 			return false
 		}
+		if !s.lqcPeerHeadConfirmed(head) || s.lqcProductionNeedsSync(head) {
+			return false
+		}
 		if !s.Synced() {
 			s.SetSynced()
 			log.Info("LQC post-sync features enabled", "head", head.Number, "hash", head.Hash(), "reason", reason)
@@ -788,21 +925,25 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 			}
 			switch ev.Type {
 			case downloader.SyncStarted:
-				syncRequired = true
+				syncGate.started()
 				stopProducer("downloader sync started")
 			case downloader.SyncFailed:
 				// Keep the producer blocked. Starting from a partially imported head
 				// is exactly the fresh-sync failure this gate is designed to prevent.
-				syncRequired = true
+				var failedNumber uint64
+				if head := s.blockchain.CurrentBlock(); head != nil && head.Number != nil {
+					failedNumber = head.Number.Uint64()
+				}
+				syncGate.failed(failedNumber)
 				stopProducer("downloader sync failed")
 				log.Warn("LQC production remains paused after failed synchronization", "err", ev.Err)
 			case downloader.SyncCompleted:
-				syncRequired = false
+				syncGate.completed()
 				if !markReady("downloader sync completed") {
-					// A successful downloader cycle without readable head state is not
-					// safe for production. Require another successful cycle/restart.
-					syncRequired = true
-					log.Warn("LQC production remains paused; canonical head state is unavailable after sync")
+					stopProducer("head not confirmed after downloader sync")
+					// Recheck peer agreement on subsequent ticks. A completed
+					// cycle alone does not authorize production on a fork.
+					log.Warn("LQC production waiting for canonical state and peer agreement after sync")
 				}
 			}
 		case <-ticker.C:
@@ -810,15 +951,35 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 			return
 		}
 
-		if syncRequired {
+		if syncGate.required {
+			head := s.blockchain.CurrentBlock()
+			if !syncGate.failedSync || head == nil || head.Number == nil ||
+				head.Number.Uint64() <= syncGate.failedNumber {
+				continue
+			}
+			if !syncGate.recover(head.Number.Uint64(),
+				isLiveLQCHead(head, time.Now()), s.lqcHeadStateAvailable(head),
+				s.lqcPeerHeadConfirmed(head), s.lqcProductionNeedsSync(head)) {
+				continue
+			}
+			log.Info("LQC failed sync gate recovered after confirmed live import", "head", head.Number, "hash", head.Hash())
+		}
+
+		peers := s.handler.peers.len()
+		if peers <= 0 {
+			stopProducer("no peers")
+			startedAt = time.Now()
 			continue
 		}
+
 		if producerRunning {
-			continue
-		}
-		if s.Synced() {
-			markReady("node already synchronized")
-			continue
+			if s.lqcProductionNeedsSync(s.blockchain.CurrentBlock()) {
+				stopProducer("peer chain conflict or fork recovery pending")
+				// Peer discovery grace belongs to startup or loss of all peers.
+				// Recovery still requires readable state and peer agreement.
+			} else {
+				continue
+			}
 		}
 
 		head := s.blockchain.CurrentBlock()
@@ -827,12 +988,18 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		}
 		now := time.Now()
 		elapsed := now.Sub(startedAt)
-		peers := s.handler.peers.len()
+
 		if !lqcMayRecoverWithoutSync(head, peers, elapsed, now) {
 			continue
 		}
 
-		reason := "offline/bootstrap recovery grace"
+		// Synced() is sticky. After reconnect, require an actual peer
+		// BlockRange agreement with the current local height and hash.
+		if !s.lqcPeerHeadConfirmed(head) {
+			continue
+		}
+
+		reason := "connected stale-head recovery grace"
 		if isLiveLQCHead(head, now) && peers > 0 && elapsed < lqcOfflineRecoveryGrace {
 			reason = "live head confirmed after peer discovery grace"
 		}
@@ -954,6 +1121,12 @@ func (s *Ethereum) Stop() error {
 	// Stop all the peer-related stuff first.
 	s.discmix.Close()
 	s.dropper.Stop()
+	if s.vrfDKGTransport != nil {
+		s.vrfDKGTransport.Close()
+	}
+	if s.vrfDKGRuntime != nil {
+		s.vrfDKGRuntime.Close()
+	}
 	if s.registryNetwork != nil {
 		s.registryNetwork.Close()
 	}
@@ -986,4 +1159,62 @@ func (s *Ethereum) Stop() error {
 	s.chainDb.Close()
 
 	return nil
+}
+
+// A peer behind on the same chain does not block production. A known
+// conflicting ancestor, conflicting head, or higher peer requires recovery.
+func lqcPeerHeadRequiresSync(
+	localNumber uint64,
+	localHash common.Hash,
+	peerNumber uint64,
+	peerHash common.Hash,
+	canonicalPeerHash common.Hash,
+) bool {
+	if peerHash == (common.Hash{}) {
+		return false
+	}
+	if peerNumber > localNumber {
+		return true
+	}
+	if peerNumber == localNumber {
+		return bytes.Compare(peerHash[:], localHash[:]) < 0
+	}
+	// A shorter peer chain is not a recovery target.
+	// Do not wait for a recovery the handler never schedules.
+	return false
+}
+
+func (s *Ethereum) lqcProductionNeedsSync(header *types.Header) bool {
+	if s == nil || s.handler == nil || s.blockchain == nil ||
+		header == nil || header.Number == nil {
+		return true
+	}
+	s.handler.lqcSyncMu.Lock()
+	busy := s.handler.lqcSyncRunning ||
+		s.handler.lqcSyncCurrent != nil ||
+		s.handler.lqcSyncPending != nil
+	s.handler.lqcSyncMu.Unlock()
+	if busy {
+		return true
+	}
+	for _, peer := range s.handler.peers.all() {
+		if peer == nil {
+			continue
+		}
+		r := peer.BlockRange()
+		if r == nil {
+			continue
+		}
+		var canonical common.Hash
+		if r.LatestBlock < header.Number.Uint64() {
+			canonical = s.blockchain.GetCanonicalHash(r.LatestBlock)
+		}
+		if lqcPeerHeadRequiresSync(
+			header.Number.Uint64(), header.Hash(),
+			r.LatestBlock, r.LatestBlockHash, canonical,
+		) {
+			return true
+		}
+	}
+	return false
 }

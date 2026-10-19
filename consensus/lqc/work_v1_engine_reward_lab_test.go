@@ -383,3 +383,25 @@ func TestWorkV1EngineLabZeroWorkPolicyIsRegistryNoSubsidy(
 		t.Fatalf("zero-work mode=%d", got)
 	}
 }
+
+func TestEmptyPaidCommitteeRewardsProducerInFull(t *testing.T) {
+	producer := common.HexToAddress("0x9000000000000000000000000000000000000009")
+	total := uint256.NewInt(1_200_000_000_000_000_000)
+
+	credits := workV1EngineLabSeatRewardCredits(
+		total,
+		producer,
+		nil,
+		3000,
+	)
+
+	if len(credits) != 1 {
+		t.Fatalf("credits=%d want=1", len(credits))
+	}
+	if credits[0].Address != producer {
+		t.Fatalf("recipient=%s want=%s", credits[0].Address, producer)
+	}
+	if credits[0].Amount.Cmp(total) != 0 {
+		t.Fatalf("producer=%s want=%s", credits[0].Amount, total)
+	}
+}

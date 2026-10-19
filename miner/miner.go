@@ -86,7 +86,8 @@ type Miner struct {
 
 	lqcMu      sync.Mutex
 	lqcRunning bool
-	lqcStop    chan struct{}
+	lqcCancel  context.CancelFunc
+	lqcDone    chan struct{}
 }
 
 // New creates a new miner with provided config.
@@ -218,23 +219,37 @@ func (miner *Miner) StartLQCDevnet() {
 	if miner.lqcRunning {
 		return
 	}
-	miner.lqcStop = make(chan struct{})
-	miner.lqcRunning = true
-
-	go miner.lqcDevnetLoop()
+	miner.startLQCDevnetLocked(miner.lqcDevnetLoop)
 	log.Info("LQC devnet producer loop started", "coinbase", coinbase)
+}
+
+// startLQCDevnetLocked requires lqcMu. Each worker owns its context and done
+// channel; neither can be replaced underneath a previous worker.
+func (miner *Miner) startLQCDevnetLocked(run func(context.Context)) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	miner.lqcCancel = cancel
+	miner.lqcDone = done
+	miner.lqcRunning = true
+	go func() {
+		defer close(done)
+		run(ctx)
+	}()
 }
 
 func (miner *Miner) StopLQCDevnet() {
 	miner.lqcMu.Lock()
 	defer miner.lqcMu.Unlock()
-
 	if !miner.lqcRunning {
 		return
 	}
-	close(miner.lqcStop)
+	miner.lqcCancel()
+	// Serialize restart with completion, including any in-flight block build.
+	// The worker must not acquire lqcMu.
+	<-miner.lqcDone
 	miner.lqcRunning = false
-	miner.lqcStop = nil
+	miner.lqcCancel = nil
+	miner.lqcDone = nil
 	log.Info("LQC devnet producer loop stopped")
 }
 
@@ -292,15 +307,36 @@ func insertLQCBlockIfParentCurrent(chain lqcBlockInserter, parent *types.Header,
 	return true, err
 }
 
-func (miner *Miner) lqcDevnetLoop() {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+type lqcPeerCounter interface {
+	PeerCount() int
+}
+
+// lqcHasConnectedPeer is the final fail-closed network gate used by the
+// internal LQC producer. A backend without peer telemetry is not allowed
+// to produce public-chain blocks.
+func lqcHasConnectedPeer(backend any) bool {
+	peerCounter, ok := backend.(lqcPeerCounter)
+	return ok && peerCounter.PeerCount() > 0
+}
+
+func (miner *Miner) lqcDevnetLoop(ctx context.Context) {
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 
 	for {
 		select {
-		case <-miner.lqcStop:
+		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
+			timer.Reset(time.Second)
+			if ctx.Err() != nil {
+				return
+			}
+			if !lqcHasConnectedPeer(miner.backend) {
+				log.Debug("LQC production blocked: no peers")
+				continue
+			}
+
 			coinbase := miner.lqcCoinbase()
 			if coinbase == (common.Address{}) {
 				log.Warn("LQC devnet skipped block: missing producer address")
@@ -318,7 +354,6 @@ func (miner *Miner) lqcDevnetLoop() {
 				local.Address == (common.Address{}) ||
 				local.Address != coinbase ||
 				local.QueuePos < 0 {
-
 				log.Info(
 					"LCQ local account outside producer queue",
 					"coinbase", coinbase,
@@ -353,7 +388,7 @@ func (miner *Miner) lqcDevnetLoop() {
 				withdrawals = []*types.Withdrawal{}
 			}
 
-			ret := miner.generateWork(context.Background(), &generateParams{
+			ret := miner.generateWork(ctx, &generateParams{
 				timestamp:   now,
 				forceTime:   false,
 				parentHash:  head.Hash(),
@@ -363,6 +398,9 @@ func (miner *Miner) lqcDevnetLoop() {
 				beaconRoot:  nil,
 				noTxs:       false,
 			}, false)
+			if ctx.Err() != nil {
+				return
+			}
 			if ret.err != nil {
 				log.Warn("LQC devnet block build failed", "err", ret.err)
 				continue
