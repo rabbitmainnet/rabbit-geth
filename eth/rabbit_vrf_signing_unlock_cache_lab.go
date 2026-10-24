@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -74,7 +75,11 @@ func rabbitVRFSigningFileV1(path string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 1048576 {
+	// Windows mode bits do not represent Unix owner/group permissions.
+	// Match the existing encrypted-store policy; retain type and size checks.
+	if !info.Mode().IsRegular() ||
+		(runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) ||
+		info.Size() > 1048576 {
 		return nil, errors.New("invalid private signing file")
 	}
 	return info, nil
