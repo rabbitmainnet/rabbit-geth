@@ -338,12 +338,16 @@ func (miner *Miner) lqcDevnetLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			ready, err := miner.chain.LQCLocalRecoveryReadyV2()
-			if err != nil || !ready {
-				continue
-			}
+
 			if !lqcHasConnectedPeer(miner.backend) {
 				log.Debug("LQC production blocked: no peers")
+				continue
+			}
+			if miner.chain == nil {
+				continue
+			}
+			ready, err := miner.chain.LQCLocalRecoveryReadyV2()
+			if err != nil || !ready {
 				continue
 			}
 
