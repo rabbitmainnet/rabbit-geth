@@ -493,14 +493,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			transport.Close()
 			return nil, err
 		}
-		if err := startLQCCommitteeParticipantWorker(
-			eth,
-			transport,
-			lqcEngine,
-		); err != nil {
-			transport.Close()
-			return nil, err
-		}
 		log.Info(
 			"LQC Work V2 admission transport enabled",
 			"protocol", lqcWorkV1ProtocolName,
@@ -512,7 +504,34 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		)
 	}
 
+	// Providers must be wired before replaying native Work/VRF headers. Do not
+	// expose a repaired lower head to networking or mining before local replay.
+	if chainConfig.LQC != nil {
+		lqcRecoveryTarget, err := core.ReadLQCLocalStateRecoveryV1(chainDb)
+		if err != nil {
+			if eth.workV1Transport != nil {
+				eth.workV1Transport.Close()
+			}
+			eth.blockchain.Stop()
+			return nil, fmt.Errorf("read LQC local state recovery: %w", err)
+		}
+		if err := eth.blockchain.RecoverLQCLocalStateV1(lqcRecoveryTarget); err != nil {
+			if eth.workV1Transport != nil {
+				eth.workV1Transport.Close()
+			}
+			eth.blockchain.Stop()
+			return nil, fmt.Errorf("recover LQC local state before startup: %w", err)
+		}
+	}
+	if workV1Enabled {
+		lqcEngine := eth.engine.(*lqc.LQC)
+		if err := startLQCCommitteeParticipantWorker(eth, eth.workV1Transport, lqcEngine); err != nil {
+			eth.workV1Transport.Close()
+			return nil, err
+		}
+	}
 	if lqcEngine, ok := eth.engine.(*lqc.LQC); ok {
+		log.Warn("RABBIT TRACE: entering DKG constructor")
 		vrfRuntime, err :=
 			newRabbitVRFDKGRuntimeMaybeLab(
 				eth,
@@ -522,6 +541,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return nil, err
 		}
 		eth.vrfDKGRuntime = vrfRuntime
+		log.Warn("RABBIT TRACE: DKG runtime constructed")
 
 		vrfTransport, err :=
 			newRabbitVRFDKGTransportMaybeLab(
@@ -533,6 +553,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return nil, err
 		}
 		eth.vrfDKGTransport = vrfTransport
+		log.Warn("RABBIT TRACE: DKG transport constructed")
 	}
 
 	// Initialize filtermaps log index.
@@ -721,7 +742,7 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 		protos = append(protos, s.workV1Transport.Protocol())
 	}
 	if s.vrfDKGTransport != nil {
-		protos = append(protos, s.vrfDKGTransport.Protocol())
+		protos = append(protos, s.vrfDKGTransport.Protocol(), s.vrfDKGTransport.ProtocolV2())
 	}
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.config.SnapV2)...)

@@ -149,7 +149,7 @@ func (sk *SecretKey) Sign(message []byte) (Signature, error) {
 	return out, nil
 }
 
-func decodePublicKey(encoded PublicKey) (bls12381.G1Affine, error) {
+func decodePublicKeyUncachedV1(encoded PublicKey) (bls12381.G1Affine, error) {
 	var point bls12381.G1Affine
 
 	consumed, err := point.SetBytes(encoded[:])

@@ -161,6 +161,7 @@ func (l *LQC) workV1EngineLabRestoreCheckpoint(
 		if err != nil {
 			return false, nil
 		}
+
 		if envelope.WorkStateRoot != checkpoint.Runtime.StateRoot ||
 			!checkpoint.HasClaimLedger ||
 			checkpoint.ClaimLedger == nil {
@@ -169,14 +170,13 @@ func (l *LQC) workV1EngineLabRestoreCheckpoint(
 		if err := checkpoint.ClaimLedger.Validate(); err != nil {
 			return false, nil
 		}
-		claimRoot, err := checkpoint.ClaimLedger.Root()
-		if err != nil || claimRoot != envelope.CommitteeClaimRoot {
+		root, err := checkpoint.ClaimLedger.Root()
+		if err != nil || root != envelope.CommitteeClaimRoot {
 			return false, nil
 		}
 	} else {
 		envelope, err := DecodeLQCHeaderExtraV3(
-			header.Extra,
-			MaxWorkTicketsPerBlockV1,
+			header.Extra, MaxWorkTicketsPerBlockV1,
 		)
 		if err != nil || envelope.BlockNumber != number ||
 			envelope.WorkStateRoot != checkpoint.Runtime.StateRoot {

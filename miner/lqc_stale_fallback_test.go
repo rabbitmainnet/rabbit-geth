@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -32,9 +33,12 @@ func (chain *lqcBlockInserterTestChain) CurrentBlock() *types.Header {
 	return chain.current
 }
 
-func (chain *lqcBlockInserterTestChain) InsertChain(blocks types.Blocks) (int, error) {
-	chain.inserted = append(chain.inserted, blocks...)
-	return len(blocks), nil
+func (chain *lqcBlockInserterTestChain) InsertLQCBlockIfParentCurrent(parent common.Hash, block *types.Block) (bool, error) {
+	if chain.current == nil || chain.current.Hash() != parent || block.ParentHash() != parent || block.NumberU64() != chain.current.Number.Uint64()+1 {
+		return false, nil
+	}
+	chain.inserted = append(chain.inserted, block)
+	return true, nil
 }
 
 func TestInsertLQCBlockIfParentCurrentDropsStaleFallback(t *testing.T) {

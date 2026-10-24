@@ -204,7 +204,7 @@ func (store *ThresholdPartialStoreV1) Store(
 	}
 	encoded = append(encoded, byte(10))
 
-	if err := atomicWritePrivateFileNoReplaceV1(path, encoded); err != nil {
+	if err := atomicWriteThresholdPartialFileV1(path, encoded); err != nil {
 		if _, statErr := os.Stat(path); statErr == nil {
 			existing, loadErr := store.Load(
 				context,

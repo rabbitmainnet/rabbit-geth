@@ -10,6 +10,7 @@ import (
 
 func (n *rabbitVRFDKGTransport) sendRetainedRemoteTransportArtifactsV1(
 	peer *rabbitVRFDKGPeer,
+	replay ...bool,
 ) error {
 	if n == nil || n.runtime == nil || peer == nil {
 		return nil
@@ -55,7 +56,7 @@ func (n *rabbitVRFDKGTransport) sendRetainedRemoteTransportArtifactsV1(
 			return nil
 		}
 
-		if err := peer.sendTransportArtifactV1(packet); err != nil {
+		if err := peer.sendTransportArtifactV1(packet, replay...); err != nil {
 			return err
 		}
 	}
@@ -65,6 +66,7 @@ func (n *rabbitVRFDKGTransport) sendRetainedRemoteTransportArtifactsV1(
 
 func (n *rabbitVRFDKGTransport) sendRetainedRemotePolynomialCommitmentsV1(
 	peer *rabbitVRFDKGPeer,
+	replay ...bool,
 ) error {
 	if n == nil || n.runtime == nil || peer == nil {
 		return nil
@@ -110,7 +112,7 @@ func (n *rabbitVRFDKGTransport) sendRetainedRemotePolynomialCommitmentsV1(
 			return nil
 		}
 
-		if err := peer.sendPolynomialCommitmentV1(packet); err != nil {
+		if err := peer.sendPolynomialCommitmentV1(packet, replay...); err != nil {
 			return err
 		}
 	}
@@ -120,21 +122,22 @@ func (n *rabbitVRFDKGTransport) sendRetainedRemotePolynomialCommitmentsV1(
 
 func (n *rabbitVRFDKGTransport) sendPendingTransportArtifactsV1(
 	peer *rabbitVRFDKGPeer,
+	replay ...bool,
 ) error {
-	if err := n.sendLocalTransportArtifactsV1(peer); err != nil {
+	if err := n.sendLocalTransportArtifactsV1(peer, replay...); err != nil {
 		return err
 	}
-	if err := n.sendRetainedRemoteTransportArtifactsV1(peer); err != nil {
-		return err
-	}
-
-	if err := n.sendLocalPolynomialCommitmentsV1(peer); err != nil {
+	if err := n.sendRetainedRemoteTransportArtifactsV1(peer, replay...); err != nil {
 		return err
 	}
 
-	if err := n.sendRetainedRemotePolynomialCommitmentsV1(peer); err != nil {
+	if err := n.sendLocalPolynomialCommitmentsV1(peer, replay...); err != nil {
 		return err
 	}
 
-	return n.sendRetainedKeysetCertificateSignaturesV1(peer)
+	if err := n.sendRetainedRemotePolynomialCommitmentsV1(peer, replay...); err != nil {
+		return err
+	}
+
+	return n.sendRetainedKeysetCertificateSignaturesV1(peer, replay...)
 }

@@ -4,6 +4,8 @@ package lqc
 
 import (
 	"errors"
+	"fmt"
+	"golang.org/x/sync/singleflight"
 	"math/big"
 	"sync"
 
@@ -87,6 +89,7 @@ type WorkV1EngineLabRabbitVRFKeysetCertificateProvider func(blockNumber uint64) 
 
 type workV1EngineLabRuntime struct {
 	mu                        sync.Mutex
+	replayBuilds              singleflight.Group
 	hasher                    WorkRelayHasherV1
 	close                     func()
 	runtimes                  map[common.Hash]*CanonicalWorkRuntimeStateV1
@@ -120,9 +123,10 @@ func workV1EngineLabRuntimeFor(
 	if err != nil {
 		return nil, err
 	}
+	memoHash, memoClose := newWorkV1MemoizedRandomXHasherV1(hasher.Hash, hasher.Close, 4096)
 	created := &workV1EngineLabRuntime{
-		hasher:                 hasher.Hash,
-		close:                  hasher.Close,
+		hasher:                 memoHash,
+		close:                  memoClose,
 		runtimes:               make(map[common.Hash]*CanonicalWorkRuntimeStateV1),
 		claimLedgers:           make(map[common.Hash]*CommitteeClaimLedgerV1),
 		validatedFinalizations: make(map[common.Hash][]RabbitVRFFinalizationV1),
@@ -705,6 +709,14 @@ func workV1EngineLabAncestorHeader(
 		return nil
 	}
 
+	// Use geth's branch-aware ancestor resolver when available.
+	// Readers without it retain the original parent-by-parent traversal.
+	if header := rabbitVRFIndexedAncestorV1(
+		chain, fromNumber, fromHash, targetNumber,
+	); header != nil {
+		return header
+	}
+
 	currentNumber := fromNumber
 	currentHash := fromHash
 	for {
@@ -840,7 +852,30 @@ func (l *LQC) workV1EngineLabReplayRegistryV3(
 	return rekeyWorkV1EngineLabRegistrySnapshot(header, snapshot)
 }
 
-func (l *LQC) workV1EngineLabRuntimeAt(
+// Coalesce reconstruction of the same immutable block hash. Recursive parent
+// reconstruction uses a strictly older block, hence a different flight key.
+func (l *LQC) workV1EngineLabRuntimeAt(chain consensus.ChainHeaderReader, number uint64, hash common.Hash) (*CanonicalWorkRuntimeStateV1, error) {
+	if chain == nil || hash == (common.Hash{}) {
+		return nil, ErrWorkV1EngineLabParentMissing
+	}
+	state, err := workV1EngineLabRuntimeFor(l)
+	if err != nil {
+		return nil, err
+	}
+	value, err, _ := state.replayBuilds.Do(fmt.Sprintf("%d:%x", number, hash[:]), func() (interface{}, error) {
+		return l.workV1EngineLabRuntimeAtUnshared(chain, number, hash)
+	})
+	if err != nil {
+		return nil, err
+	}
+	runtime, ok := value.(*CanonicalWorkRuntimeStateV1)
+	if !ok || runtime == nil {
+		return nil, ErrWorkV1EngineLabUnavailable
+	}
+	return runtime, nil
+}
+
+func (l *LQC) workV1EngineLabRuntimeAtUnshared(
 	chain consensus.ChainHeaderReader,
 	number uint64,
 	hash common.Hash,

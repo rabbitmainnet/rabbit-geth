@@ -162,6 +162,11 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 				return nil
 			}
 			if packet.Block.NumberU64() > localNumber+1 {
+				// The complete block already supplies the recovery target header.
+				// Do not depend on a separate range announcement/header response:
+				// that response may be delayed behind live imports on this peer.
+				// Normal downloader validation still checks the missing ancestors.
+				h.scheduleLQCSync(peer, packet.Block.Header())
 				return nil
 			}
 			if _, err := h.chain.InsertChain(types.Blocks{packet.Block}); err != nil {
@@ -424,8 +429,29 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 		failed := false
 	waitRecovery:
 		for {
-			if h.chain.GetCanonicalHash(header.Number.Uint64()) == header.Hash() {
+			// Direct block import can resolve the fork after BeaconSync starts.
+			// A losing equal-height target can never become canonical while
+			// this head is preferred. Retire it and drain the pending target
+			// instead of holding all newer recovery requests for two minutes.
+			if !lqcForkRecoveryTargetNeededV1(h.chain.CurrentBlock(), header,
+				h.chain.GetCanonicalHash(header.Number.Uint64())) {
 				break
+			}
+			// Keep the current backfill alive for direct descendants. BeaconExtend
+			// integrates them without cancelling downloads. If the newest queued
+			// target requires a fork or gap repair, let the outer loop force that
+			// target now instead of ignoring it until the two-minute deadline.
+			if next := h.takeBetterPendingLQCSyncTargetV1(target); next != nil {
+				if err := h.downloader.BeaconExtend(next.header); err != nil {
+					h.restorePendingLQCSyncTargetV1(next)
+					peer.Log().Info("LQC fork-recovery switching queued target", "from", header.Number, "to", next.header.Number, "reason", err)
+					break
+				}
+				target = next
+				peer, header = next.peer, next.header
+				h.lqcSyncMu.Lock()
+				h.lqcSyncCurrent = next
+				h.lqcSyncMu.Unlock()
 			}
 			peerRange := peer.BlockRange()
 			if !lqcPeerRangeContainsTarget(peerRange, header.Number.Uint64(), header.Hash()) {

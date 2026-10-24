@@ -3,6 +3,7 @@
 package eth
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -15,6 +16,9 @@ import (
 	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
 	"github.com/ethereum/go-ethereum/p2p"
 )
+
+// A sync/secret guard is temporarily closed; the sender must replay later.
+var errRabbitVRFDKGSecretOperationUnavailableV1 = errors.New("rabbit vrf dkg secret operation unavailable")
 
 func rabbitVRFDKGSignEncryptedEvaluationV1(
 	wallets []accounts.Wallet,
@@ -214,7 +218,7 @@ func rabbitVRFDKGEvaluationBytesV1(
 	return out
 }
 
-func (peer *rabbitVRFDKGPeer) sendEncryptedEvaluationV1(message lqc.RabbitVRFDKGEncryptedEvaluationV1) error {
+func (peer *rabbitVRFDKGPeer) sendEncryptedEvaluationV1(message lqc.RabbitVRFDKGEncryptedEvaluationV1, replay ...bool) error {
 	if peer == nil || peer.rw == nil {
 		return fmt.Errorf("invalid rabbit vrf dkg encrypted evaluation transport")
 	}
@@ -226,6 +230,10 @@ func (peer *rabbitVRFDKGPeer) sendEncryptedEvaluationV1(message lqc.RabbitVRFDKG
 	}
 	if peer.known == nil {
 		peer.known = make(map[common.Hash]struct{})
+	}
+	// A timed retry is not a new authorization; receivers authenticate again.
+	if len(replay) != 0 && replay[0] {
+		delete(peer.known, id)
 	}
 	if _, known := peer.known[id]; known {
 		return nil
@@ -240,14 +248,14 @@ func (peer *rabbitVRFDKGPeer) sendEncryptedEvaluationV1(message lqc.RabbitVRFDKG
 	return nil
 }
 
-func (n *rabbitVRFDKGTransport) sendEncryptedEvaluationToRecipientV1(message lqc.RabbitVRFDKGEncryptedEvaluationV1) error {
+func (n *rabbitVRFDKGTransport) sendEncryptedEvaluationToRecipientV1(message lqc.RabbitVRFDKGEncryptedEvaluationV1, replay ...bool) error {
 	if n == nil || n.runtime == nil {
 		return fmt.Errorf("rabbit vrf encrypted evaluation transport unavailable")
 	}
 	if _, err := n.retainEncryptedRelayPacketV1(message); err != nil {
 		return err
 	}
-	return n.broadcastEncryptedRelayPacketV1(message, "")
+	return n.broadcastEncryptedRelayPacketV1(message, "", replay...)
 }
 
 func (runtime *rabbitVRFDKGRuntime) validateInboundEncryptedEvaluationV1(message lqc.RabbitVRFDKGEncryptedEvaluationV1) error {
@@ -460,7 +468,7 @@ func (runtime *rabbitVRFDKGRuntime) validateInboundThresholdPartialV1(packet lqc
 	if runtime == nil || runtime.backend == nil || runtime.backend.vrfDKGInstanceDir == "" {
 		return fmt.Errorf("rabbit vrf threshold partial runtime unavailable")
 	}
-	context := runtime.currentContext()
+	context := runtime.thresholdContextV1()
 	if context.SessionID == (common.Hash{}) || packet.SessionID != context.SessionID {
 		return errRabbitVRFDKGArtifactSessionMismatch
 	}
@@ -644,7 +652,7 @@ func (runtime *rabbitVRFDKGRuntime) signLocalThresholdPartialV1(recipient lqc.Ra
 	}
 	defer runtime.endSecretOperationV1()
 
-	context := runtime.currentContext()
+	context := runtime.thresholdContextV1()
 	if context.SessionID == ([32]byte{}) {
 		return partialZero, verifiedZero, fmt.Errorf("rabbit vrf canonical dkg session unavailable")
 	}
@@ -697,7 +705,7 @@ func (runtime *rabbitVRFDKGRuntime) signLocalCompactThresholdParticipationV1(
 		return zero, fmt.Errorf("rabbit vrf compact participation signing runtime unavailable")
 	}
 
-	context := runtime.currentContext()
+	context := runtime.thresholdContextV1()
 	if context.SessionID == (common.Hash{}) ||
 		packet.SessionID != context.SessionID ||
 		packet.KeysetRoot == (common.Hash{}) ||
@@ -746,7 +754,7 @@ func (runtime *rabbitVRFDKGRuntime) signLocalThresholdParticipationV1(
 	}
 	defer runtime.endSecretOperationV1()
 
-	context := runtime.currentContext()
+	context := runtime.thresholdContextV1()
 	if context.SessionID == (common.Hash{}) ||
 		packet.SessionID != context.SessionID ||
 		context.CanonicalTransportKeySetRoot == (common.Hash{}) ||
@@ -782,17 +790,7 @@ func (runtime *rabbitVRFDKGRuntime) signLocalThresholdParticipationV1(
 		return zero, fmt.Errorf("derive rabbit vrf participation signing hash: %w", err)
 	}
 
-	password, err := readRabbitVRFDKGPasswordFileV1(runtime.backend.config.RabbitVRFDKGPasswordFile)
-	if err != nil {
-		return zero, fmt.Errorf("read rabbit vrf dkg password file: %w", err)
-	}
-	store, err := rabbitvrfstate.NewStandardDKGTransportKeyStoreV1(
-		filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-transport"),
-	)
-	if err != nil {
-		return zero, fmt.Errorf("open rabbit vrf dkg transport store: %w", err)
-	}
-	privateKey, persistedBinding, err := store.Load(context.CanonicalSession, member, password)
+	privateKey, persistedBinding, err := runtime.unlockedThresholdTransportV1(context.CanonicalSession, member)
 	if err != nil {
 		return zero, fmt.Errorf("load rabbit vrf participation transport key: %w", err)
 	}
@@ -852,4 +850,82 @@ func (runtime *rabbitVRFDKGRuntime) combineThresholdPartialsV1(message []byte, p
 	}
 
 	return rabbitVRFCombineThresholdPartialsWithKeysetV1(context.CanonicalSession.Threshold, keyset, message, partials)
+}
+
+func (runtime *rabbitVRFDKGRuntime) signLocalThresholdPacketOnceV1(recipient lqc.RabbitVRFCommitteeMemberV1, message []byte, root common.Hash, requestID common.Hash) (lqc.RabbitVRFThresholdPartialV1, error) {
+	var zero lqc.RabbitVRFThresholdPartialV1
+	if runtime == nil || runtime.backend == nil || runtime.backend.config == nil || runtime.backend.vrfDKGInstanceDir == "" || recipient.ShareID == 0 || len(message) == 0 {
+		return zero, fmt.Errorf("rabbit vrf threshold signing runtime unavailable")
+	}
+	if !runtime.beginSecretOperationV1() {
+		return zero, fmt.Errorf("rabbit vrf threshold secret operation unavailable")
+	}
+	defer runtime.endSecretOperationV1()
+
+	context := runtime.thresholdContextV1()
+	if context.SessionID == ([32]byte{}) {
+		return zero, fmt.Errorf("rabbit vrf canonical dkg session unavailable")
+	}
+
+	local := false
+	for _, member := range context.Members {
+		if member.ShareID == recipient.ShareID && member.Participant == recipient.Participant {
+			local = true
+			break
+		}
+	}
+	if !local {
+		return zero, fmt.Errorf("rabbit vrf threshold signer is not local")
+	}
+
+	share, err := runtime.unlockedThresholdShareV1(context.CanonicalSession, recipient)
+	if err != nil {
+		return zero, fmt.Errorf("load rabbit vrf dkg secret share %d: %w", recipient.ShareID, err)
+	}
+
+	defer share.Destroy()
+	keysetStore, err := rabbitvrfstate.NewDKGFinalKeysetStoreV1(filepath.Join(runtime.backend.vrfDKGInstanceDir, "rabbit-vrf", "dkg-final-keysets"))
+	if err != nil {
+		return zero, fmt.Errorf("open rabbit vrf dkg final keyset store: %w", err)
+	}
+	keyset, err := keysetStore.Load(context.CanonicalSession)
+	if err != nil {
+		return zero, fmt.Errorf("load rabbit vrf dkg final keyset: %w", err)
+	}
+
+	if keyset.KeysetRoot != root {
+		return zero, fmt.Errorf("rabbit vrf signing keyset changed")
+	}
+	packet, err := rabbitVRFSignThresholdPacketWithShareV1(context.CanonicalSession, recipient, keyset, share, requestID, message)
+	if err != nil {
+		return zero, err
+	}
+	if runtime.thresholdContextV1().SessionID != context.SessionID {
+		runtime.signingUnlock.clear()
+		return zero, errRabbitVRFDKGArtifactSessionMismatch
+	}
+	return packet, nil
+}
+
+// Both BLS messages use the same validated share opened once in the scoped secret operation.
+func rabbitVRFSignThresholdPacketWithShareV1(context lqc.RabbitVRFDKGSessionContextV1, recipient lqc.RabbitVRFCommitteeMemberV1, keyset rabbitvrfstate.DKGFinalKeysetV1, share *rabbitvrf.SecretShare, requestID common.Hash, message []byte) (lqc.RabbitVRFThresholdPartialV1, error) {
+	var zero lqc.RabbitVRFThresholdPartialV1
+	partial, _, err := rabbitVRFSignThresholdPartialWithKeysetV1(share, recipient.ShareID, keyset, message)
+	if err != nil {
+		return zero, err
+	}
+	packet, err := lqc.NewRabbitVRFThresholdPartialV1(context, keyset.KeysetRoot, requestID, partial)
+	if err != nil {
+		return zero, err
+	}
+	compact, _, err := lqc.RabbitVRFCompactParticipationMessageV1(context, keyset.KeysetRoot, requestID, packet.MessageHash, recipient)
+	if err != nil {
+		return zero, err
+	}
+	signed, _, err := rabbitVRFSignThresholdPartialWithKeysetV1(share, recipient.ShareID, keyset, compact)
+	if err != nil {
+		return zero, err
+	}
+	packet.CompactParticipationSignature = signed.Signature
+	return packet, nil
 }

@@ -4,6 +4,8 @@ package eth
 
 import (
 	"crypto/ecdsa"
+	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -161,11 +163,14 @@ func TestRabbitVRFKeysetCertificateRelayedSignatureV1(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No direct-author route exists: this models a retained signature relay.
-	peer := &rabbitVRFDKGPeer{}
-	if transport.keysetCertificatePeerAuthenticatedV1(peer, envelope) {
-		t.Fatal("fixture unexpectedly has a direct-author route")
+	// The connected relay is registered; canonical signer verification below
+	// remains mandatory without requiring a direct-author route.
+	peer := &rabbitVRFDKGPeer{peer: p2p.NewPeer(enode.ID{19}, "authenticated-relay", nil)}
+	transport.peers = map[string]*rabbitVRFDKGPeer{peer.id(): peer}
+	if !transport.keysetCertificatePeerAuthenticatedV1(peer, envelope) {
+		t.Fatal("registered relay not authenticated")
 	}
+
 	accepted, err := transport.handleInboundKeysetCertificateEnvelopeV1(peer, envelope)
 	if err != nil || !accepted {
 		t.Fatalf("valid relayed signature rejected: accepted=%v err=%v", accepted, err)

@@ -7,13 +7,54 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
+	"sync"
 )
 
-// This cache holds ciphertext only. One packet per canonical dealer/recipient
+// This cache holds ciphertext and public delivery IDs, never secrets. One packet per dealer/recipient
 // slot bounds memory independently of randomized ECIES message identifiers.
 type rabbitVRFEncryptedRelayCacheV1 struct {
-	session common.Hash
-	packets map[[2]uint64]lqc.RabbitVRFDKGEncryptedEvaluationV1
+	recipientMu     sync.Mutex                // Serializes recipient persistence without holding the transport lock.
+	delivered       map[[2]uint64]common.Hash // IDs only; populated after successful verified persistence.
+	deliveredRecent map[[2]uint64][]common.Hash
+	session         common.Hash
+	packets         map[[2]uint64]lqc.RabbitVRFDKGEncryptedEvaluationV1
+}
+
+// A restart or independent encryption can yield multiple valid ciphertext IDs
+// for the same evaluation slot. Remember a bounded window of completed IDs so
+// alternating authenticated replays do not repeatedly reopen encrypted stores.
+const rabbitVRFDeliveredReplayWindowV1 = 8
+
+// The transport mutex protects both methods. No plaintext or key is retained.
+func (cache *rabbitVRFEncryptedRelayCacheV1) deliveredIDV1(slot [2]uint64, id common.Hash) bool {
+	if cache.delivered[slot] == id && id != (common.Hash{}) {
+		return true
+	}
+	for _, previous := range cache.deliveredRecent[slot] {
+		if previous == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (cache *rabbitVRFEncryptedRelayCacheV1) rememberDeliveredIDV1(slot [2]uint64, id common.Hash) {
+	if id == (common.Hash{}) || cache.deliveredIDV1(slot, id) {
+		return
+	}
+	if cache.delivered == nil {
+		cache.delivered = make(map[[2]uint64]common.Hash)
+	}
+	if cache.deliveredRecent == nil {
+		cache.deliveredRecent = make(map[[2]uint64][]common.Hash)
+	}
+	ids := cache.deliveredRecent[slot]
+	if len(ids) == rabbitVRFDeliveredReplayWindowV1 {
+		copy(ids, ids[1:])
+		ids = ids[:len(ids)-1]
+	}
+	cache.deliveredRecent[slot] = append(ids, id)
+	cache.delivered[slot] = id
 }
 
 func cloneRabbitVRFEncryptedRelayPacketV1(p lqc.RabbitVRFDKGEncryptedEvaluationV1) lqc.RabbitVRFDKGEncryptedEvaluationV1 {
@@ -60,6 +101,8 @@ func (n *rabbitVRFDKGTransport) retainEncryptedRelayPacketV1(p lqc.RabbitVRFDKGE
 	}
 	if n.encryptedRelay.session != p.SessionID {
 		n.encryptedRelay.session = p.SessionID
+		n.encryptedRelay.delivered = make(map[[2]uint64]common.Hash)
+		n.encryptedRelay.deliveredRecent = make(map[[2]uint64][]common.Hash)
 		n.encryptedRelay.packets = make(map[[2]uint64]lqc.RabbitVRFDKGEncryptedEvaluationV1)
 	}
 	slot := [2]uint64{p.DealerShareID, p.RecipientShareID}
@@ -77,7 +120,7 @@ func (n *rabbitVRFDKGTransport) retainEncryptedRelayPacketV1(p lqc.RabbitVRFDKGE
 	return true, nil
 }
 
-func (n *rabbitVRFDKGTransport) broadcastEncryptedRelayPacketV1(p lqc.RabbitVRFDKGEncryptedEvaluationV1, exclude string) error {
+func (n *rabbitVRFDKGTransport) broadcastEncryptedRelayPacketV1(p lqc.RabbitVRFDKGEncryptedEvaluationV1, exclude string, replay ...bool) error {
 	n.mu.RLock()
 	peers := make([]*rabbitVRFDKGPeer, 0, len(n.peers))
 	for id, peer := range n.peers {
@@ -91,7 +134,7 @@ func (n *rabbitVRFDKGTransport) broadcastEncryptedRelayPacketV1(p lqc.RabbitVRFD
 	}
 	var first error
 	for _, peer := range peers {
-		if err := peer.sendEncryptedEvaluationV1(p); err != nil && first == nil {
+		if err := peer.sendEncryptedEvaluationV1(p, replay...); err != nil && first == nil {
 			first = err
 		}
 	}
@@ -112,10 +155,30 @@ func (n *rabbitVRFDKGTransport) handleInboundEncryptedRelayV1(peer *rabbitVRFDKG
 		}
 	}
 	if local {
-		// Only the recipient opens its transport key and decrypts. Duplicate sends
-		// retry local processing when synchronization previously delayed it.
-		_, err := n.runtime.decryptInboundEncryptedEvaluationV1(p)
-		return err
+		// Retention above authenticates every replay before this ID cache is
+		// consulted. Cache no secrets and never mark a deferred or failed write.
+		n.encryptedRelay.recipientMu.Lock()
+		defer n.encryptedRelay.recipientMu.Unlock()
+		id, err := lqc.RabbitVRFDKGEncryptedEvaluationIDV1(p)
+		if err != nil {
+			return err
+		}
+		slot := [2]uint64{p.DealerShareID, p.RecipientShareID}
+		n.mu.RLock()
+		done := n.encryptedRelay.session == p.SessionID && n.encryptedRelay.deliveredIDV1(slot, id)
+		n.mu.RUnlock()
+		if done {
+			return nil
+		}
+		if _, err := n.runtime.decryptInboundEncryptedEvaluationV1(p); err != nil {
+			return err
+		}
+		n.mu.Lock()
+		if !n.closed && n.encryptedRelay.session == p.SessionID {
+			n.encryptedRelay.rememberDeliveredIDV1(slot, id)
+		}
+		n.mu.Unlock()
+		return nil
 	}
 	if inserted {
 		// A relay never decrypts. Failed links are retried by periodic cache replay.
@@ -143,7 +206,7 @@ func (n *rabbitVRFDKGTransport) sendPendingAuthenticatedRelayV1(peer *rabbitVRFD
 	}
 	n.mu.RUnlock()
 	for _, p := range encrypted {
-		if err := peer.sendEncryptedEvaluationV1(p); err != nil {
+		if err := peer.sendEncryptedEvaluationV1(p, true); err != nil {
 			return err
 		}
 	}

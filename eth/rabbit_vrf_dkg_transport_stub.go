@@ -19,3 +19,6 @@ func (n *rabbitVRFDKGTransport) Protocol() p2p.Protocol {
 }
 
 func (n *rabbitVRFDKGTransport) Close() {}
+
+// ProtocolV2 is unreachable when the VRF transport is disabled.
+func (n *rabbitVRFDKGTransport) ProtocolV2() p2p.Protocol { return p2p.Protocol{} }

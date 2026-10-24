@@ -16,7 +16,7 @@ A faster CPU may find admission sooner, but it never receives extra consensus we
 - Explorer: `https://explorer-testnet.rabbitchain.org`
 - Website: `https://rabbitchain.org`
 - Source: `https://github.com/rabbitmainnet/rabbit-geth`
-- Genesis SHA-256: `17bfe51321f6e7befe8719ee35c34b1b876fda3e93672204903bd7b6d6bb69ba`
+- Genesis SHA-256: `4970159f077b62b7aa9bde1f81cb61ae837b42ef64861d7b23241e1af4d75c9f`
 
 ## Complete timeline on a fresh network
 
@@ -140,7 +140,7 @@ rabbit-miner \
 
 The package contains `rabbit-node`, `rabbit-miner`, `rabbit-core`, the frozen `genesis.json`, `bootnodes.txt`, launchers, build metadata, documentation, security notice, and checksums.
 
-## V2.4.11 monitoring and penalties
+## Historical V2.4.11 monitoring and penalties
 
 Normal operational status refreshes approximately every 10 to 12 seconds.
 Synchronization messages use their own reporting interval.
@@ -158,3 +158,35 @@ REGISTRY STATUS UNAVAILABLE means penalty status could not be verified.
 V2.4.11 isolates outgoing LCQ messages in bounded per-peer queues and
 retries failed asynchronous recovery downloads. It retains the existing
 consensus activation schedule and does not introduce a new hard fork.
+
+## V2.4.14 fork and upgrade
+
+
+RABBIT CORE V2.4.14 - TESTNET FORK AT BLOCK 320000
+
+Upgrade miners, full nodes and public infrastructure before activation.
+Retain the existing blockchain, encrypted wallet, node identity and
+participation state. Stop normally before replacing software.
+Do not reset the data directory to perform this upgrade.
+
+The public network remains Chain ID 9280.
+Genesis block hash remains:
+0x9b71d7f2922fdf8383a4a12be5594e25938625195e0d84c05c3bd71b7bcf93f7
+The SHA256 of the distributed genesis.json file is:
+4970159f077b62b7aa9bde1f81cb61ae837b42ef64861d7b23241e1af4d75c9f
+
+At block 320000, VRF economics V2 and WorkSeat admission V2 activate.
+The block target remains 10 seconds. Mining rewards remain 70/30.
+The VRF base pricing target becomes US$0.005 equivalent in tRUSD,
+payable in tRAB using quoteRequestFee(0); transaction gas is additional.
+At successful fulfillment, 20% goes to the fulfillment block producer,
+30% equally to validated VRF signers and 50% plus integer rounding
+remainders to the existing development allocation address.
+Pending requests retain their recorded fee; the split follows the
+fulfillment block.
+
+Fresh installations retain the verified automatic multipart bootstrap.
+Existing blockchain data must not be replaced by a fresh bootstrap.
+Use reliable SSD storage for latency-sensitive VRF persistence.
+Early proof verification is distinct from canonical on-chain fulfillment;
+local laboratory latency measurements are not a public-network SLA.

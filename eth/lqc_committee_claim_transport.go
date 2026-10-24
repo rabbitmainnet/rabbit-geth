@@ -57,6 +57,15 @@ func (n *lqcWorkV1Transport) acceptCommitteeClaims(
 			continue
 		}
 		if err := n.verifyCommitteeClaimGroup(group); err != nil {
+			// Compact claims omit the signing block hash. A peer on a temporary
+			// fork can relay an authentic signature for a different context.
+			// Reject the entire group before pool insertion or relay, while
+			// keeping the connection needed to reconcile canonical heads.
+			// Local submissions still expose every verification failure.
+			if peer != nil && errors.Is(err, lqc.ErrInvalidCommitteeSignatureV1) {
+				peer.peer.Log().Debug("Rejected LQC committee claim for local canonical context", "target", group.TargetBlock, "err", err)
+				continue
+			}
 			return err
 		}
 		changed, err := n.claimPool.add(group)

@@ -285,7 +285,7 @@ func (miner *Miner) lqcMinAllowedTime(parentTime uint64, queuePos int) uint64 {
 
 type lqcBlockInserter interface {
 	CurrentBlock() *types.Header
-	InsertChain(types.Blocks) (int, error)
+	InsertLQCBlockIfParentCurrent(common.Hash, *types.Block) (bool, error)
 }
 
 // insertLQCBlockIfParentCurrent prevents a block built by a fallback slot from
@@ -303,8 +303,9 @@ func insertLQCBlockIfParentCurrent(chain lqcBlockInserter, parent *types.Header,
 		block.ParentHash() != parent.Hash() {
 		return false, nil
 	}
-	_, err := chain.InsertChain(types.Blocks{block})
-	return true, err
+	// The optimistic check above avoids work; core repeats it while holding
+	// chainmu so an in-flight remote import cannot invalidate the decision.
+	return chain.InsertLQCBlockIfParentCurrent(parent.Hash(), block)
 }
 
 type lqcPeerCounter interface {

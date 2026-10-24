@@ -426,7 +426,10 @@ func (l *LQC) RabbitVRFExecutionFinalizations(
 		return nil, nil
 	}
 
-	epochLength := config.LQC.EpochLength
+	epochLength, err := l.rabbitVRFCanonicalWorkEpochLengthV1(chain, header.Number.Uint64()-1, header.ParentHash)
+	if err != nil {
+		return nil, err
+	}
 	bridge, exists, err := l.rabbitVRFDKGBridgeForTargetBlockV1(
 		chain,
 		header.Number.Uint64()-1,

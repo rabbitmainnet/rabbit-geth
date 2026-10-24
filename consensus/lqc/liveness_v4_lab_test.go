@@ -253,3 +253,80 @@ func TestLivenessV4RestoredWorkSeatRemainsSelectableNextBlock(t *testing.T) {
 		t.Fatalf("restored WorkSeat disappeared after V4 activation: %+v", ordered)
 	}
 }
+
+func TestLivenessV5PermissionlessSeatsWithoutHeartbeatStaySelectable(t *testing.T) {
+	registry := NewCanonicalRegistry()
+	seats := make([]WorkSeatV1, 3)
+	for i := range seats {
+		seats[i] = WorkSeatV1{Participant: common.BigToAddress(big.NewInt(int64(i + 11))), TicketHash: common.BigToHash(big.NewInt(int64(i + 11)))}
+	}
+	engine := &LQC{config: &params.LQCConfig{ConsensusLivenessV5Block: 13, WorkSeatAdmissionV2Block: 2689}}
+	ordered, err := engine.workV1EngineLabOrderSeatsByLivenessV4(registry, seats, 2689)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ordered) != 3 {
+		t.Fatalf("valid WorkSeats discarded: %d", len(ordered))
+	}
+	for i, seat := range ordered {
+		if seat.Participant != seats[i].Participant {
+			t.Fatal("deterministic order changed")
+		}
+	}
+	fallbackCount, committeeSize := workV1EngineLabRoleCounts(3, 5, 2, true)
+	selection := workV1EngineLabHybridSelection(buildWorkSelectionFromOrderedSeatsV1(ordered, fallbackCount, committeeSize))
+	if selection.Producer == nil {
+		t.Fatal("no producer")
+	}
+	if allowed, pos := IsAuthorAllowedBounded(selection, selection.Producer.Address); !allowed || pos != 0 {
+		t.Fatal("producer denied")
+	}
+	for _, member := range selection.Committee {
+		if allowed, _ := IsAuthorAllowedBounded(selection, member.Address); allowed {
+			t.Fatal("committee allowed to produce")
+		}
+	}
+}
+
+func TestRabbitWorkSeatAdmissionV2HistoricalBoundary(t *testing.T) {
+	registry := NewCanonicalRegistry()
+	address := common.BigToAddress(big.NewInt(99))
+	seats := []WorkSeatV1{{
+		Participant: address,
+		TicketHash:  common.BigToHash(big.NewInt(99)),
+	}}
+	engine := &LQC{config: &params.LQCConfig{
+		ConsensusLivenessV5Block: 115000,
+		WorkSeatAdmissionV2Block: 312000,
+	}}
+	for _, item := range []struct {
+		height uint64
+		count  int
+	}{
+		{115001, 0},
+		{311999, 0},
+		{312000, 1},
+		{312001, 1},
+	} {
+		got, err := engine.workV1EngineLabOrderSeatsByLivenessV4(
+			registry, seats, item.height,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != item.count {
+			t.Fatalf("height=%d seats=%d want=%d",
+				item.height, len(got), item.count)
+		}
+	}
+	engine.config.WorkSeatAdmissionV2Block = 0
+	got, err := engine.workV1EngineLabOrderSeatsByLivenessV4(
+		registry, seats, 999999,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatal("omitted activation changed historical eligibility")
+	}
+}

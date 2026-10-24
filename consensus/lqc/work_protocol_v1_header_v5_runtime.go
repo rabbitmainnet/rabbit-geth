@@ -1,6 +1,9 @@
 package lqc
 
-import "github.com/ethereum/go-ethereum/common"
+import (
+	"fmt"
+	"github.com/ethereum/go-ethereum/common"
+)
 
 // BuildLQCHeaderExtraV5WithCanonicalRuntimeV1 extends the deterministic V4
 // runtime transition with canonical Rabbit VRF finalizations. Work and
@@ -86,7 +89,19 @@ func buildLQCHeaderExtraV5WithCanonicalRuntimeV1(
 		MaxWorkTicketsPerBlockV1,
 	)
 	if err != nil {
-		return nil, common.Hash{}, common.Hash{}, err
+		return nil, common.Hash{}, common.Hash{}, fmt.Errorf(
+			"rabbit V5 runtime encode: block=%d registryRoot=%s workRoot=%s claimRoot=%s registryOps=%d tickets=%d claims=%d certificates=%d finalizations=%d: %w",
+			ctx.Work.BlockNumber,
+			ctx.Work.RegistryRoot.Hex(),
+			nextWork.StateRoot.Hex(),
+			claimRoot.Hex(),
+			len(registryOperations),
+			len(canonicalTickets),
+			len(canonicalClaims),
+			len(vrfKeysetCertificates),
+			len(canonicalFinalizations),
+			err,
+		)
 	}
 	return extra, nextWork.StateRoot, claimRoot, nil
 }

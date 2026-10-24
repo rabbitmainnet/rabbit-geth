@@ -200,13 +200,18 @@ func (l *LQC) workV1EngineLabOrderSeatsByLivenessV4(
 	for _, seat := range ordered {
 		participant, exists := registry.Participant(seat.Participant)
 
-		// Missing or never-live identities cannot author yet.
-		if !exists || participant.LastHeartbeat == 0 {
+		// Canonical WorkSeats already passed signed-ticket/RandomX admission.
+		// Permissionless admission does not require a registry heartbeat;
+		// a seat without one must not disappear from the producer queue.
+		// Existing registry jail state remains a hard exclusion.
+
+		admissionV2 := l != nil && l.config != nil &&
+			l.config.WorkSeatAdmissionV2Block != 0 &&
+			blockNumber >= l.config.WorkSeatAdmissionV2Block
+		if !admissionV2 && (!exists || participant.LastHeartbeat == 0) {
 			continue
 		}
-
-		// A real active jail remains a hard authorization exclusion.
-		if participant.JailedUntil > blockNumber {
+		if exists && participant.JailedUntil > blockNumber {
 			continue
 		}
 
@@ -527,6 +532,12 @@ func (l *LQC) workV1EngineLabBuildSeatSelection(
 	}
 	if err != nil {
 		return HybridSelection{}, false, err
+	}
+	// Preserve the historical selection flag until admission V2 activates.
+	if len(orderedSeats) == 0 && l != nil && l.config != nil &&
+		l.config.WorkSeatAdmissionV2Block != 0 &&
+		blockNumber >= l.config.WorkSeatAdmissionV2Block {
+		return HybridSelection{}, false, nil
 	}
 	workSelection := buildWorkSelectionFromOrderedSeatsV1(
 		orderedSeats,
