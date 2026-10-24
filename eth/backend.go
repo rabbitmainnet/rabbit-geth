@@ -516,11 +516,15 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return nil, fmt.Errorf("read LQC local state recovery: %w", err)
 		}
 		if err := eth.blockchain.RecoverLQCLocalStateV1(lqcRecoveryTarget); err != nil {
-			if eth.workV1Transport != nil {
-				eth.workV1Transport.Close()
+			if errors.Is(err, core.ErrLQCLocalRecoveryNeedsSyncV2) {
+				log.Warn("LQC local recovery waiting for validated network synchronization", "target", lqcRecoveryTarget, "err", err)
+			} else {
+				if eth.workV1Transport != nil {
+					eth.workV1Transport.Close()
+				}
+				eth.blockchain.Stop()
+				return nil, fmt.Errorf("recover LQC local state before startup: %w", err)
 			}
-			eth.blockchain.Stop()
-			return nil, fmt.Errorf("recover LQC local state before startup: %w", err)
 		}
 	}
 	if workV1Enabled {
@@ -715,7 +719,18 @@ func (s *Ethereum) Engine() consensus.Engine           { return s.engine }
 func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
 func (s *Ethereum) IsListening() bool                  { return true } // Always listening
 func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downloader }
-func (s *Ethereum) Synced() bool                       { return s.handler.synced.Load() }
+func (s *Ethereum) Synced() bool {
+	if s.handler == nil || !s.handler.synced.Load() {
+		return false
+	}
+	if s.blockchain != nil {
+		pending, err := s.blockchain.LQCLocalRecoveryPendingV2()
+		if err != nil || pending {
+			return false
+		}
+	}
+	return true
+}
 
 func (s *Ethereum) PeerCount() int {
 	if s == nil || s.handler == nil {
@@ -906,6 +921,10 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		if !producerEnabled || producerRunning {
 			return
 		}
+		ready, err := s.blockchain.LQCLocalRecoveryReadyV2()
+		if err != nil || !ready {
+			return
+		}
 		s.miner.StartLQCDevnet()
 		producerRunning = true
 		log.Info("LQC producer enabled after sync gate", "reason", reason)
@@ -919,6 +938,10 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		log.Info("LQC producer paused for synchronization", "reason", reason)
 	}
 	markReady := func(reason string) bool {
+		ready, err := s.blockchain.LQCLocalRecoveryReadyV2()
+		if err != nil || !ready {
+			return false
+		}
 		head := s.blockchain.CurrentBlock()
 		if head == nil || head.Number == nil || !s.lqcHeadStateAvailable(head) {
 			return false

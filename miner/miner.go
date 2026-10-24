@@ -203,7 +203,12 @@ func (miner *Miner) signConsensusHeader(address common.Address, payload []byte) 
 }
 
 func (miner *Miner) StartLQCDevnet() {
-	if miner.chainConfig == nil || miner.chainConfig.LQC == nil {
+	if miner.chainConfig == nil || miner.chainConfig.LQC == nil || miner.chain == nil {
+		return
+	}
+	ready, err := miner.chain.LQCLocalRecoveryReadyV2()
+	if err != nil || !ready {
+		log.Warn("LQC production blocked by local recovery guard", "err", err)
 		return
 	}
 	coinbase := miner.lqcCoinbase()
@@ -332,6 +337,10 @@ func (miner *Miner) lqcDevnetLoop(ctx context.Context) {
 			timer.Reset(time.Second)
 			if ctx.Err() != nil {
 				return
+			}
+			ready, err := miner.chain.LQCLocalRecoveryReadyV2()
+			if err != nil || !ready {
+				continue
 			}
 			if !lqcHasConnectedPeer(miner.backend) {
 				log.Debug("LQC production blocked: no peers")

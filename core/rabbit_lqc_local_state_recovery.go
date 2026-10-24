@@ -65,7 +65,7 @@ func (bc *BlockChain) RecoverLQCLocalStateV1(target common.Hash) error {
 	}
 	tip := bc.GetBlockByHash(target)
 	if tip == nil {
-		return fmt.Errorf("LQC recovery block unavailable locally: %s", target)
+		return fmt.Errorf("%w: LQC recovery block unavailable locally: %s", ErrLQCLocalRecoveryNeedsSyncV2, target)
 	}
 	head := bc.CurrentBlock()
 	if head.Number.Cmp(tip.Number()) >= 0 {
@@ -82,13 +82,16 @@ func (bc *BlockChain) RecoverLQCLocalStateV1(target common.Hash) error {
 		if bc.GetCanonicalHash(block.NumberU64()) == block.Hash() && bc.HasState(block.Root()) {
 			break
 		}
-		if block.NumberU64() == 0 || len(reverse) == maxBlocks {
+		if block.NumberU64() == 0 {
 			return fmt.Errorf("LQC recovery has no available local ancestor within %d blocks", maxBlocks)
+		}
+		if len(reverse) == maxBlocks {
+			return fmt.Errorf("%w: LQC recovery exceeds local replay limit of %d blocks", ErrLQCLocalRecoveryNeedsSyncV2, maxBlocks)
 		}
 		reverse = append(reverse, block.Hash())
 		parent := bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
 		if parent == nil {
-			return fmt.Errorf("LQC recovery parent unavailable: number=%d hash=%s", block.NumberU64()-1, block.ParentHash())
+			return fmt.Errorf("%w: LQC recovery parent unavailable: number=%d hash=%s", ErrLQCLocalRecoveryNeedsSyncV2, block.NumberU64()-1, block.ParentHash())
 		}
 		block = parent
 	}

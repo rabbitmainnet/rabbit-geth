@@ -111,3 +111,14 @@ Existing blockchain data must not be replaced by a fresh bootstrap.
 Use reliable SSD storage for latency-sensitive VRF persistence.
 Early proof verification is distinct from canonical on-chain fulfillment;
 local laboratory latency measurements are not a public-network SLA.
+
+V2.4.15 RECOVERY HOTFIX CANDIDATE
+
+The Testnet fork remains scheduled at block 320000.
+This update changes startup recovery, not the fork height or fee allocation.
+If local recovery blocks are missing after state repair, the node may fetch
+them through normal validated synchronization. Block production and synced
+features remain blocked until the preserved recovery target is canonical
+and the current head state is available. Invalid recovery blocks remain errors.
+Keep existing blockchain, wallet, node identity and participation data.
+Real Windows startup validation is required before publication.
