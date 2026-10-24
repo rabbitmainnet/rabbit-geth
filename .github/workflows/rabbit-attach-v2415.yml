@@ -1,0 +1,47 @@
+name: Attach verified v2.4.15 packages
+on:
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  attach:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify approved build and draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api repos/$GH_REPO/actions/runs/40123096309 > /tmp/build.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("/tmp/build.json"))
+          assert d["status"]=="completed"
+          assert d["conclusion"]=="success"
+          assert d["head_sha"]=="0ed187dffbe7a516ccc4f9196c6a6b165c8a6500"
+          PY
+          gh release view v2.4.15 --json isDraft --jq .isDraft | grep -x true
+      - name: Download approved release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: rabbit-core-testnet-v2.4.15-release-bundle
+          path: bundle
+          github-token: ${{ github.token }}
+          repository: rabbitmainnet/rabbit-geth
+          run-id: 40123096309
+      - name: Verify and attach packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd bundle
+          sha256sum -c SHA256SUMS.txt
+          test -f rabbit-core-testnet-v2.4.15-linux-amd64.tar.gz
+          test -f rabbit-core-testnet-v2.4.15-windows-amd64.zip
+          test -f rabbit-core-testnet-v2.4.15-darwin-amd64.tar.gz
+          test -f rabbit-core-testnet-v2.4.15-darwin-arm64.tar.gz
+          gh release upload v2.4.15 *
+          echo "Packages attached. Release remains a draft."
