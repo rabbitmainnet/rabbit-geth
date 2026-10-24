@@ -12,7 +12,7 @@ env:
   GO_VERSION: "1.25.13"
   RANDOMX_REPOSITORY: https://github.com/tevador/RandomX.git
   RANDOMX_COMMIT: 7c761cf007c758056dcb6eb438a32f780f81bdbd
-  TESTNET_GENESIS_SHA256: 17bfe51321f6e7befe8719ee35c34b1b876fda3e93672204903bd7b6d6bb69ba
+  TESTNET_GENESIS_SHA256: 4970159f077b62b7aa9bde1f81cb61ae837b42ef64861d7b23241e1af4d75c9f
 
 jobs:
   native:
@@ -82,7 +82,7 @@ jobs:
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.13-${{ matrix.target }}
+          name: rabbit-core-testnet-v2.4.14-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -96,7 +96,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-v2.4.13-*
+          pattern: rabbit-core-testnet-v2.4.14-*
           path: releases
           merge-multiple: true
 
@@ -114,14 +114,14 @@ jobs:
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.13-release-bundle
+          name: rabbit-core-testnet-v2.4.14-release-bundle
           path: releases/*
           if-no-files-found: error
           retention-days: 30
 
 
   publish-existing:
-    name: Publish existing V2.4.13 artifacts
+    name: Publish existing V2.4.14 artifacts
     if: ${{ inputs.publish_run_id != '' }}
     runs-on: ubuntu-24.04
     permissions:
@@ -145,10 +145,10 @@ jobs:
           [[ "$conclusion" == success ]]
           [[ "$source_sha" == "$GITHUB_SHA" ]]
 
-      - name: Download verified V2.4.13 bundle
+      - name: Download verified V2.4.14 bundle
         uses: actions/download-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.13-release-bundle
+          name: rabbit-core-testnet-v2.4.14-release-bundle
           path: release
           github-token: ${{ github.token }}
           repository: rabbitmainnet/rabbit-geth
@@ -160,12 +160,12 @@ jobs:
           cd release
           sha256sum -c SHA256SUMS.txt
 
-      - name: Publish V2.4.13 GitHub release
+      - name: Publish V2.4.14 GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v2.4.13"
+          TAG="v2.4.14"
           TARGET="$GITHUB_SHA"
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -175,7 +175,7 @@ jobs:
             gh release create "$TAG" release/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$TARGET" \
-              --title "Rabbit Core Testnet v2.4.13" \
+              --title "Rabbit Core Testnet v2.4.14" \
               --draft
           fi
 

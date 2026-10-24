@@ -478,6 +478,13 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 			//
 			// Note it's unnecessary in path mode which always keep trie data and
 			// state data consistent.
+			// Native LQC must replay its original local head before producing on
+			// the repaired lower state, even if every peer restarted together.
+			if chainConfig.LQC != nil && compatErr == nil {
+				if _, err := PrepareLQCLocalStateRecoveryV1(bc.db); err != nil {
+					return nil, fmt.Errorf("preserve LQC state recovery target: %w", err)
+				}
+			}
 			var diskRoot common.Hash
 			if bc.cfg.SnapshotLimit > 0 && bc.cfg.StateScheme == rawdb.HashScheme {
 				diskRoot = rawdb.ReadSnapshotRoot(bc.db)
@@ -535,7 +542,14 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 	// The first thing the node will do is reconstruct the verification data for
 	// the head block (ethash cache or clique voting snapshot). Might as well do
 	// it in advance.
-	bc.engine.VerifyHeader(bc, bc.CurrentHeader())
+	// Rabbit LQC restores its canonical runtime lazily when consensus
+	// verification is required. Prewarming the head here can replay the
+	// historical RandomX committee claims before RPC/P2P startup.
+	// This call is only an optional startup prewarm; normal block
+	// verification remains unchanged.
+	if chainConfig.LQC == nil {
+		bc.engine.VerifyHeader(bc, bc.CurrentHeader())
+	}
 
 	if bc.logger != nil && bc.logger.OnBlockchainInit != nil {
 		bc.logger.OnBlockchainInit(chainConfig)
@@ -1647,7 +1661,7 @@ func (bc *BlockChain) writeBlockWithoutState(block *types.Block) (err error) {
 // and introduces chain reorg if necessary.
 func (bc *BlockChain) writeKnownBlock(block *types.Block) error {
 	current := bc.CurrentBlock()
-	if bc.lqcRejectSameHeightHead(block, current) {
+	if bc.lqcRejectSameHeightHead(block, current) || (bc.chainConfig.LQC != nil && !rabbitLQCPreferCanonicalHeaderV1(current, block.Header())) {
 		return nil
 	}
 	if block.ParentHash() != current.Hash() {
@@ -1780,7 +1794,7 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 		return NonStatTy, err
 	}
 	currentBlock := bc.CurrentBlock()
-	if bc.lqcRejectSameHeightHead(block, currentBlock) {
+	if bc.lqcRejectSameHeightHead(block, currentBlock) || (bc.chainConfig.LQC != nil && !rabbitLQCPreferCanonicalHeaderV1(currentBlock, block.Header())) {
 		return SideStatTy, nil
 	}
 

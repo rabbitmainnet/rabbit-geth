@@ -80,7 +80,15 @@ func encodeLQCHeaderExtraV5(
 	if blockNumber == 0 || registryRoot == (common.Hash{}) ||
 		workStateRoot == (common.Hash{}) || committeeClaimRoot == (common.Hash{}) ||
 		maxWorkTickets == 0 {
-		return nil, ErrInvalidLQCHeaderExtraV5
+		return nil, fmt.Errorf(
+			"%w: block=%d registryZero=%t workZero=%t claimsZero=%t maxTickets=%d",
+			ErrInvalidLQCHeaderExtraV5,
+			blockNumber,
+			registryRoot == (common.Hash{}),
+			workStateRoot == (common.Hash{}),
+			committeeClaimRoot == (common.Hash{}),
+			maxWorkTickets,
+		)
 	}
 	if len(vrfFinalizations) > MaxRabbitVRFFinalizationsPerBlockV1 {
 		return nil, ErrTooManyRabbitVRFFinalizationsPerBlock

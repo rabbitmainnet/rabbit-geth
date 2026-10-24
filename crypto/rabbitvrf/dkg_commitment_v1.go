@@ -22,7 +22,7 @@ type DKGCoefficientCommitmentV1 [PublicKeySize]byte
 //
 // When allowInfinity is false, the commitment must represent a non-zero group
 // element. When true, the canonical point-at-infinity encoding is permitted.
-func ValidateDKGCoefficientCommitmentV1(
+func validateDKGCoefficientCommitmentUncachedV1(
 	commitment DKGCoefficientCommitmentV1,
 	allowInfinity bool,
 ) error {

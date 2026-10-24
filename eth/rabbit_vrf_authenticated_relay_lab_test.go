@@ -191,6 +191,9 @@ func TestRabbitVRFRelayFourMinersWithoutDirectRoutes(t *testing.T) {
 		downstream := &rabbitVRFRelayMemoryWireV1{recipient: runtime, incoming: minerInbound}
 		runtime.backend.vrfDKGTransport.peers[relayID.String()] = &rabbitVRFDKGPeer{peer: minerInbound.peer, rw: upstream}
 		relay.backend.vrfDKGTransport.peers[minerID.String()] = &rabbitVRFDKGPeer{peer: relayInbound.peer, rw: downstream}
+		// Inbound messages must name the actual registered RLPx peer object.
+		upstream.incoming = relay.backend.vrfDKGTransport.peers[minerID.String()]
+		downstream.incoming = runtime.backend.vrfDKGTransport.peers[relayID.String()]
 		wires = append(wires, upstream, downstream)
 		if len(runtime.backend.vrfDKGTransport.routes) != 0 {
 			t.Fatal("fixture unexpectedly has a direct member route")
@@ -316,6 +319,36 @@ func TestRabbitVRFRelayFourMinersWithoutDirectRoutes(t *testing.T) {
 		clear(peer.known)
 		if err := relayTransport.sendPendingAuthenticatedRelayV1(peer); err != nil {
 			t.Fatal(err)
+		}
+	}
+	// Successful replay must not reopen the recipient's password or run the
+	// expensive KDF again. Initial delivery above uses real encrypted stores.
+	for _, runtime := range runtimes {
+		transport := runtime.backend.vrfDKGTransport
+		var received lqc.RabbitVRFDKGEncryptedEvaluationV1
+		for slot, deliveredID := range transport.encryptedRelay.delivered {
+			candidate := transport.encryptedRelay.packets[slot]
+			candidateID, err := lqc.RabbitVRFDKGEncryptedEvaluationIDV1(candidate)
+			if err == nil && candidateID == deliveredID {
+				received = candidate
+				break
+			}
+		}
+		if received.RecipientShareID == 0 {
+			t.Fatal("recipient has no persisted delivery ID")
+		}
+		passwordFile := runtime.backend.config.RabbitVRFDKGPasswordFile
+		runtime.backend.config.RabbitVRFDKGPasswordFile = filepath.Join(t.TempDir(), "absent-password")
+		err := transport.handleInboundEncryptedRelayV1(nil, received)
+		forged := cloneRabbitVRFEncryptedRelayPacketV1(received)
+		forged.Ciphertext[0] ^= 1
+		forgedErr := transport.handleInboundEncryptedRelayV1(nil, forged)
+		runtime.backend.config.RabbitVRFDKGPasswordFile = passwordFile
+		if err != nil {
+			t.Fatalf("persisted replay reopened secret store: %v", err)
+		}
+		if forgedErr == nil {
+			t.Fatal("forged replay bypassed authentication")
 		}
 	}
 	requestID := common.HexToHash("0x1234")

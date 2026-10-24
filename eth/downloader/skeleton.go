@@ -149,6 +149,7 @@ type headerRequest struct {
 
 	head       uint64      // Head number of the requested batch of headers
 	originHash common.Hash // Expected first header when the boundary is known
+	anchor     common.Hash // Exact LCQ branch boundary for every recovery batch
 }
 
 // headerResponse is an already verified remote response to a header request.
@@ -206,9 +207,10 @@ type backfiller interface {
 // is wasted disk IO, but it's a price we're going to pay to keep things simple
 // for now.
 type skeleton struct {
-	db     ethdb.Database // Database backing the skeleton
-	filler backfiller     // Chain syncer suspended/resumed by head events
-	chain  chainReader    // Underlying block chain
+	db              ethdb.Database // Database backing the skeleton
+	filler          backfiller     // Chain syncer suspended/resumed by head events
+	chain           chainReader    // Underlying block chain
+	lqcHashAnchored bool           // LCQ recovery follows a selected hash, not arbitrary canonical heights
 
 	peers *peerSet                   // Set of peers we can sync from
 	idles map[string]*peerConnection // Set of idle peers in the current sync cycle
@@ -243,15 +245,16 @@ type chainReader interface {
 // header chain until it's linked into an existing set of blocks.
 func newSkeleton(db ethdb.Database, peers *peerSet, drop peerDropFn, filler backfiller, chain chainReader) *skeleton {
 	sk := &skeleton{
-		db:         db,
-		filler:     filler,
-		chain:      chain,
-		peers:      peers,
-		drop:       drop,
-		requests:   make(map[uint64]*headerRequest),
-		headEvents: make(chan *headUpdate),
-		terminate:  make(chan chan error),
-		terminated: make(chan struct{}),
+		db:              db,
+		filler:          filler,
+		chain:           chain,
+		lqcHashAnchored: lqcSkeletonHashAnchoredV1(chain),
+		peers:           peers,
+		drop:            drop,
+		requests:        make(map[uint64]*headerRequest),
+		headEvents:      make(chan *headUpdate),
+		terminate:       make(chan chan error),
+		terminated:      make(chan struct{}),
 	}
 	go sk.startup()
 	return sk
@@ -758,6 +761,12 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 
 	// Find header regions not yet downloading and fill them
 	for task, owner := range s.scratchOwners {
+		// LCQ has no external finalized beacon head shared by every peer.
+		// Fetch the next boundary by its exact hash before scheduling lower
+		// boundaries. Never mix canonical-by-number batches from different forks.
+		if s.lqcHashAnchored && task > 0 {
+			return
+		}
 		// If we're out of idle peers, stop assigning tasks
 		if len(idlers.peers) == 0 {
 			return
@@ -808,7 +817,9 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 			stale:   make(chan struct{}),
 			head:    s.scratchHead - uint64(task*requestHeaders),
 		}
-		if task == 0 {
+		if s.lqcHashAnchored {
+			req.anchor = s.progress.Subchains[0].Next
+		} else if task == 0 {
 			req.originHash = s.progress.Subchains[0].Next
 		}
 		s.requests[reqid] = req
@@ -840,7 +851,9 @@ func (s *skeleton) executeTask(peer *peerConnection, req *headerRequest) {
 	peer.log.Trace("Fetching skeleton headers", "from", req.head, "count", requestCount)
 	var netreq *eth.Request
 	var err error
-	if req.originHash != (common.Hash{}) {
+	if req.anchor != (common.Hash{}) {
+		netreq, err = peer.peer.RequestHeadersByHash(req.anchor, requestCount, 0, true, resCh)
+	} else if req.originHash != (common.Hash{}) {
 		netreq, err = peer.peer.RequestHeadersByHash(req.originHash, requestCount, 0, true, resCh)
 	} else {
 		netreq, err = peer.peer.RequestHeadersByNumber(req.head, requestCount, 0, true, resCh)
@@ -893,7 +906,18 @@ func (s *skeleton) executeTask(peer *peerConnection, req *headerRequest) {
 		case len(headers) == 0:
 			// No headers were delivered, reject the response and reschedule
 			peer.log.Debug("No headers delivered")
-			res.Done <- errors.New("no headers delivered")
+			if req.anchor != (common.Hash{}) {
+				// The peer may legitimately lack this fork. Reject the empty
+				// response, retry another idle peer, and keep the connection.
+				res.Done <- nil
+			} else {
+				res.Done <- errors.New("no headers delivered")
+			}
+			s.scheduleRevertRequest(req)
+
+		case req.anchor != (common.Hash{}) && headers[0].Hash() != req.anchor:
+			peer.log.Warn("Invalid hash-anchored skeleton response", "want", req.anchor, "have", headers[0].Hash())
+			res.Done <- errors.New("invalid hash-anchored header batch")
 			s.scheduleRevertRequest(req)
 
 		case headers[0].Number.Uint64() != req.head:

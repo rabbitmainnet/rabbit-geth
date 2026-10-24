@@ -634,6 +634,8 @@ type LQCConfig struct {
 	ConsensusLivenessV5Block    uint64           `json:"consensusLivenessV5Block,omitempty"`
 	ConsensusLivenessV6Block    uint64           `json:"consensusLivenessV6Block,omitempty"`
 	VRFProtocolBlock            uint64           `json:"vrfProtocolBlock,omitempty"`
+	VRFEconomicsV2Block         uint64           `json:"vrfEconomicsV2Block,omitempty"`
+	WorkSeatAdmissionV2Block    uint64           `json:"workSeatAdmissionV2Block,omitempty"`
 	MiningRewardV5Block         uint64           `json:"miningRewardV5Block,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
@@ -1390,6 +1392,9 @@ func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64, time u
 // CheckConfigForkOrder checks that we don't "skip" any forks, geth isn't pluggable enough
 // to guarantee that forks can be implemented in a different order than on official networks
 func (c *ChainConfig) CheckConfigForkOrder() error {
+	if err := c.LQC.validateRabbitForkV2Order(); err != nil {
+		return err
+	}
 	if err := c.LQC.validateRegistryProtocol(); err != nil {
 		return fmt.Errorf("invalid LQC registry configuration: %v", err)
 	}
@@ -1532,6 +1537,18 @@ func (bc *BlobConfig) validate() error {
 }
 
 func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, headTimestamp uint64) *ConfigCompatError {
+
+	for _, economics := range []bool{true, false} {
+		stored := rabbitNewForkHeightV2(c.LQC, economics)
+		proposed := rabbitNewForkHeightV2(newcfg.LQC, economics)
+		if isForkBlockIncompatible(stored, proposed, headNumber) {
+			name := "LQC WorkSeat admission V2 fork block"
+			if economics {
+				name = "LQC VRF economics V2 fork block"
+			}
+			return newBlockCompatError(name, stored, proposed)
+		}
+	}
 	storedHardeningFork := c.LQC.consensusHardeningForkBlock()
 	newHardeningFork := newcfg.LQC.consensusHardeningForkBlock()
 	if isForkBlockIncompatible(storedHardeningFork, newHardeningFork, headNumber) {

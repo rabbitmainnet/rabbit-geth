@@ -45,7 +45,9 @@ type rabbitVRFDKGLocalContextV1 struct {
 //
 // For canonical local committee members, the secret-ready path may read the
 // explicit DKG password file and load or create an encrypted transport key.
-// Only the public transport binding is retained in runtime state.
+// Signing keys for the active session and one prepared next session may remain
+// unlocked in bounded separate slots. Synchronization/shutdown clear both;
+// session promotion requires an exact session ID and rechecks file fingerprints.
 //
 // It still deliberately performs no:
 //   - wallet signing;
@@ -55,7 +57,8 @@ type rabbitVRFDKGRuntime struct {
 	backend *Ethereum
 	engine  *lqc.LQC
 
-	secretGate sync.RWMutex
+	secretGate    sync.RWMutex
+	signingUnlock rabbitVRFSigningUnlockCacheV1
 
 	mu          sync.RWMutex
 	started     bool
@@ -65,10 +68,18 @@ type rabbitVRFDKGRuntime struct {
 	done        chan struct{}
 	current     rabbitVRFDKGLocalContextV1
 
-	evaluationDispatch rabbitVRFDKGEvaluationDispatchV1
-	localSharesReady   rabbitVRFDKGLocalSharesReadyV1
+	evalDispatchSession   common.Hash
+	evalLastSent          map[[2]uint64]time.Time
+	evalCiphertextSession common.Hash
+	evalCiphertexts       map[[2]uint64]lqc.RabbitVRFDKGEncryptedEvaluationV1
+	dkgFinalizedSession   common.Hash
+	dkgWaitSession        common.Hash
+	dkgWaitAt             time.Time
 
-	canonicalRequestLookup func(common.Hash) (rabbitVRFCanonicalRequestV1, error)
+	rabbitVRFLastPendingReplayV1 time.Time
+	canonicalRequestLookup       func(common.Hash) (rabbitVRFCanonicalRequestV1, error)
+	evaluationDispatch           rabbitVRFDKGEvaluationDispatchV1
+	localSharesReady             rabbitVRFDKGLocalSharesReadyV1
 }
 
 func newRabbitVRFDKGRuntimeMaybeLab(
@@ -350,6 +361,10 @@ func (runtime *rabbitVRFDKGRuntime) setCurrent(
 ) common.Hash {
 	runtime.mu.Lock()
 	previous := runtime.current.SessionID
+	if previous != context.SessionID {
+		runtime.evalCiphertextSession = context.SessionID
+		runtime.evalCiphertexts = nil
+	}
 	if previous == context.SessionID {
 		context.TransportBindings =
 			cloneRabbitVRFDKGTransportBindingsV1(
@@ -423,6 +438,9 @@ func (runtime *rabbitVRFDKGRuntime) setSyncingV1(syncing bool) {
 		runtime.secretReady = false
 	}
 	runtime.mu.Unlock()
+	if syncing {
+		runtime.signingUnlock.clear()
+	}
 }
 
 func (runtime *rabbitVRFDKGRuntime) secretReadyV1() bool {
@@ -526,6 +544,11 @@ func (runtime *rabbitVRFDKGRuntime) refreshSecretReadyV1() bool {
 
 	runtime.mu.Unlock()
 
+	if !ready {
+		runtime.secretGate.Lock()
+		runtime.signingUnlock.clear()
+		runtime.secretGate.Unlock()
+	}
 	return ready && !previous
 }
 
@@ -821,7 +844,7 @@ func (runtime *rabbitVRFDKGRuntime) processCurrentHead() error {
 		)
 	}
 
-	return nil
+	return runtime.progressDKGV1()
 }
 
 func (runtime *rabbitVRFDKGRuntime) Start() error {
@@ -837,10 +860,11 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 	runtime.started = true
 	runtime.mu.Unlock()
 
-	headCh := make(chan core.ChainHeadEvent, 16)
+	headCh := make(chan core.ChainHeadEvent, 1)
+	rawHeadCh := make(chan core.ChainHeadEvent, 16)
 	headSub :=
 		runtime.backend.blockchain.SubscribeChainHeadEvent(
-			headCh,
+			rawHeadCh,
 		)
 
 	if runtime.backend.handler == nil ||
@@ -855,8 +879,12 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 			syncCh,
 		)
 
+	headPumpStop := make(chan struct{})
+	go rabbitVRFDKGCoalesceHeadsV1(rawHeadCh, headCh, headPumpStop)
+
 	go func() {
 		defer close(runtime.done)
+		defer close(headPumpStop)
 		defer headSub.Unsubscribe()
 		defer syncSub.Unsubscribe()
 
@@ -867,7 +895,41 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 			Next: runtime.rabbitVRFRequestScanStartV1(),
 		}
 
+		// Restore only a checkpoint bound to the current canonical chain.
+		activation := runtime.rabbitVRFRequestScanStartV1()
+		if runtime.backend.chainDb != nil {
+			checkpoint, err := rabbitVRFLoadCheckpointV1(runtime.backend.chainDb, activation)
+			if err == nil {
+				valid := checkpoint.Next == activation
+				if checkpoint.Next > activation {
+					previous := runtime.backend.blockchain.GetBlockByNumber(checkpoint.Next - 1)
+					valid = previous != nil && previous.Hash() == checkpoint.LastHash
+				}
+				genesis := runtime.backend.blockchain.GetBlockByNumber(0)
+				valid = valid && genesis != nil &&
+					checkpoint.Genesis == genesis.Hash()
+				if valid {
+					requestScan.Next = checkpoint.Next
+					requestScan.LastHash = checkpoint.LastHash
+					requestScan.Pending = append(requestScan.Pending, checkpoint.Pending...)
+					log.Info("Rabbit VRF request checkpoint restored", "next", requestScan.Next, "pending", len(requestScan.Pending))
+				} else {
+					log.Warn("Rabbit VRF checkpoint not canonical; scanning from activation")
+				}
+			}
+		}
+
 		process := func() {
+			defer func() {
+				if err := runtime.warmPreparationSigningKeysV2(); err != nil {
+					log.Debug("Rabbit VRF next epoch unlock preparation waiting", "err", err)
+				}
+			}()
+			defer func() {
+				if err := runtime.progressPreparationCertificateV1(); err != nil {
+					log.Warn("Rabbit VRF preparation certificate waiting", "err", err)
+				}
+			}()
 			if err := runtime.processCurrentHead(); err != nil {
 				log.Debug(
 					"Rabbit VRF DKG local runtime waiting",
@@ -876,35 +938,88 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 			}
 		}
 
-		processRequests := func() {
-			if err := runtime.dispatchLocalEvaluationsV1(); err != nil {
-				log.Debug("Rabbit VRF DKG evaluation dispatch waiting", "err", err)
-			}
-			ready, err := runtime.ensureFinalKeysetV1()
-			if err != nil {
-				log.Debug("Rabbit VRF DKG final keyset waiting", "err", err)
-				return
-			}
-			if !ready {
-				return
-			}
+		var lastCheckpoint rabbitVRFRequestCheckpointV1
+		checkpointSaved := false
 
-			sharesReady, shareErr := runtime.ensureLocalSecretSharesV1()
-			if shareErr != nil {
-				log.Debug("Rabbit VRF DKG local secret shares waiting", "err", shareErr)
-				return
-			}
-			if !sharesReady {
-				return
-			}
-			if err := runtime.processCanonicalPendingRequestsV1(&requestScan); err != nil {
-				log.Debug(
-					"Rabbit VRF canonical request worker waiting",
-					"next", requestScan.Next,
-					"err", err,
-				)
+		processRequests := func() {
+			defer func() {
+				if runtime.backend.chainDb == nil {
+					return
+				}
+				// Never persist a cursor without verifying its canonical anchor.
+				if requestScan.Next > activation {
+					previous := runtime.backend.blockchain.GetBlockByNumber(requestScan.Next - 1)
+					if previous == nil || previous.Hash() != requestScan.LastHash {
+						log.Warn("Rabbit VRF checkpoint canonical anchor invalid",
+							"next", requestScan.Next)
+						return
+					}
+				}
+				checkpoint := rabbitVRFRequestCheckpointV1{
+					Version:  1,
+					Genesis:  runtime.backend.blockchain.GetBlockByNumber(0).Hash(),
+					Next:     requestScan.Next,
+					LastHash: requestScan.LastHash,
+					Pending:  append([]common.Hash(nil), requestScan.Pending...),
+				}
+				unchanged := checkpointSaved &&
+					lastCheckpoint.Next == checkpoint.Next &&
+					lastCheckpoint.LastHash == checkpoint.LastHash &&
+					len(lastCheckpoint.Pending) == len(checkpoint.Pending)
+				if unchanged {
+					for i := range checkpoint.Pending {
+						if lastCheckpoint.Pending[i] != checkpoint.Pending[i] {
+							unchanged = false
+							break
+						}
+					}
+				}
+				if unchanged {
+					return
+				}
+				if err := rabbitVRFSaveCheckpointV1(runtime.backend.chainDb, checkpoint, activation); err != nil {
+					log.Warn("Rabbit VRF checkpoint save failed", "err", err)
+				} else {
+					lastCheckpoint = checkpoint
+					checkpointSaved = true
+				}
+			}()
+			for batch := 0; batch < 8; batch++ {
+				before := requestScan.Next
+				if err := runtime.processCanonicalPendingRequestsV1(&requestScan); err != nil {
+					log.Debug("Rabbit VRF canonical request worker waiting",
+						"next", requestScan.Next, "err", err)
+					return
+				}
+				if requestScan.Next == before {
+					return
+				}
+				head := runtime.backend.blockchain.CurrentBlock()
+				if head == nil || head.Number == nil ||
+					!head.Number.IsUint64() ||
+					requestScan.Next > head.Number.Uint64() {
+					return
+				}
 			}
 		}
+
+		// requestScan and its checkpoint belong exclusively to this worker.
+		// Preparation can perform expensive encrypted-store operations without
+		// delaying the next canonical request scan. Existing secret/sync guards
+		// remain in the signing and request paths.
+		runRequests := processRequests
+		wakeRequests, stopRequests := rabbitVRFStartRequestLaneV1(runtime.stop, time.Second, func() {
+			started := time.Now()
+			if err := runtime.warmThresholdSigningKeysV1(); err != nil {
+				log.Debug("Rabbit VRF signing unlock preparation waiting", "err", err)
+			}
+			runRequests()
+			if elapsed := time.Since(started); elapsed >= time.Second {
+				log.Info("Rabbit VRF request worker cycle slow", "elapsed", elapsed)
+			}
+		})
+		defer stopRequests()
+		processRequests = wakeRequests
 
 		refresh := func() {
 			if runtime.refreshSecretReadyV1() {
@@ -915,9 +1030,9 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 			}
 		}
 
+		processRequests()
 		process()
 		refresh()
-		processRequests()
 
 		for {
 			select {
@@ -957,6 +1072,7 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 
 			case <-ticker.C:
 				refresh()
+				process()
 				processRequests()
 			}
 		}
@@ -973,6 +1089,7 @@ func (runtime *rabbitVRFDKGRuntime) Close() {
 	runtime.mu.Lock()
 	if !runtime.started {
 		runtime.mu.Unlock()
+		runtime.setSyncingV1(true)
 		return
 	}
 	runtime.started = false
@@ -981,4 +1098,5 @@ func (runtime *rabbitVRFDKGRuntime) Close() {
 	runtime.mu.Unlock()
 
 	<-done
+	runtime.setSyncingV1(true)
 }

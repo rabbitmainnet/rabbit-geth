@@ -79,10 +79,34 @@ func (n *rabbitVRFDKGTransport) currentKeysetCertificateBaseV1() (
 				err,
 				rabbitvrfstate.ErrDKGTransportKeyStoreMissingV1,
 			) {
-			return session, members, certificate, common.Hash{},
-				false, nil
+			// Non-dealers derive only PUBLIC data from authenticated commitments.
+			// No secret share is generated, copied or required by observers.
+			commitments := make([]lqc.RabbitVRFDKGPolynomialCommitmentV1, 0, len(members))
+			for _, member := range members {
+				commitment, ok := n.commitmentForDealerV1(sessionID, member.ShareID)
+				if !ok {
+					return session, members, certificate, common.Hash{}, false, nil
+				}
+				commitments = append(commitments, commitment)
+			}
+			root, publicKey, transcriptRoot, shares, deriveErr := lqc.RabbitVRFDKGFinalKeysetV1(session, commitments)
+			if deriveErr != nil {
+				return session, nil, certificate, common.Hash{}, false, deriveErr
+			}
+			if n.runtime.currentContext().SessionID != sessionID {
+				return session, nil, certificate, common.Hash{}, false, errRabbitVRFDKGArtifactSessionMismatch
+			}
+			keyset = rabbitvrfstate.DKGFinalKeysetV1{
+				KeysetRoot: root, ThresholdPublicKey: publicKey,
+				TranscriptRoot: transcriptRoot, VerificationShares: shares,
+			}
+			if storeErr := keysetStore.Store(session, keyset); storeErr != nil {
+				return session, nil, certificate, common.Hash{}, false, storeErr
+			}
+		} else {
+			return session, nil, certificate, common.Hash{}, false, err
 		}
-		return session, nil, certificate, common.Hash{}, false, err
+
 	}
 
 	if session.Threshold == 0 ||
@@ -311,27 +335,21 @@ func (n *rabbitVRFDKGTransport) collectKeysetCertificateEnvelopeV1(
 	return true, nil
 }
 
+// A certificate envelope is relayable: its participant signature authenticates
+// the signer. The RLPx connection authenticates the relay, which must be registered.
+// Do not apply the direct-owner route rule used for threshold partials here.
 func (n *rabbitVRFDKGTransport) keysetCertificatePeerAuthenticatedV1(
 	peer *rabbitVRFDKGPeer,
 	envelope lqc.RabbitVRFDKGEnvelopeV1,
 ) bool {
-	if n == nil ||
-		peer == nil ||
-		envelope.SessionID == (common.Hash{}) ||
-		envelope.SenderShareID == 0 {
+	if n == nil || peer == nil || peer.peer == nil ||
+		envelope.SessionID == (common.Hash{}) || envelope.SenderShareID == 0 {
 		return false
 	}
-
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-
-	if n.closed ||
-		n.routeSession != envelope.SessionID {
-		return false
-	}
-
-	peerID, ok := n.routes[envelope.SenderShareID]
-	return ok && peerID == peer.id()
+	registered, ok := n.peers[peer.id()]
+	return !n.closed && ok && registered == peer
 }
 
 func (n *rabbitVRFDKGTransport) handleInboundKeysetCertificateEnvelopeV1(
@@ -350,6 +368,21 @@ func (n *rabbitVRFDKGTransport) handleInboundKeysetCertificateEnvelopeV1(
 	if closed {
 		return false, errors.New("rabbit vrf keyset certificate transport closed")
 	}
+	if n == nil || n.runtime == nil {
+		return false, errors.New("rabbit vrf keyset certificate runtime unavailable")
+	}
+	current := n.runtime.currentContext()
+	if current.SessionID == (common.Hash{}) || envelope.SessionID != current.SessionID {
+		return false, errRabbitVRFDKGArtifactSessionMismatch
+	}
+	if !n.keysetCertificatePeerAuthenticatedV1(
+		peer,
+		envelope,
+	) {
+		return false, errors.New(
+			"rabbit vrf keyset certificate sender route mismatch",
+		)
+	}
 
 	// Retained signatures can be relayed by a different connected peer.
 	// Collection verifies the canonical member, session, payload and signature.
@@ -358,6 +391,7 @@ func (n *rabbitVRFDKGTransport) handleInboundKeysetCertificateEnvelopeV1(
 
 func (peer *rabbitVRFDKGPeer) sendKeysetCertificateEnvelopeV1(
 	envelope lqc.RabbitVRFDKGEnvelopeV1,
+	replay ...bool,
 ) error {
 	if peer == nil || peer.rw == nil {
 		return errors.New(
@@ -377,7 +411,7 @@ func (peer *rabbitVRFDKGPeer) sendKeysetCertificateEnvelopeV1(
 		peer.known = make(map[common.Hash]struct{})
 	}
 
-	if _, known := peer.known[messageID]; known {
+	if _, known := peer.known[messageID]; known && !(len(replay) > 0 && replay[0]) {
 		return nil
 	}
 
@@ -421,6 +455,7 @@ func (n *rabbitVRFDKGTransport) broadcastKeysetCertificateEnvelopeV1(
 
 func (n *rabbitVRFDKGTransport) sendRetainedKeysetCertificateSignaturesV1(
 	peer *rabbitVRFDKGPeer,
+	replay ...bool,
 ) error {
 	if n == nil || peer == nil {
 		return nil
@@ -468,7 +503,7 @@ func (n *rabbitVRFDKGTransport) sendRetainedKeysetCertificateSignaturesV1(
 			append([]byte(nil), signature...)
 
 		if err := peer.sendKeysetCertificateEnvelopeV1(
-			envelope,
+			envelope, replay...,
 		); err != nil {
 			return err
 		}
@@ -598,9 +633,19 @@ func cloneRabbitVRFKeysetCertificateV1(
 	return out
 }
 
-func (n *rabbitVRFDKGTransport) rabbitVRFKeysetCertificateForBlockV1(
-	blockNumber uint64,
-) (lqc.RabbitVRFKeysetCertificateV1, bool, error) {
+// activeKeysetCertificateV1 loads and verifies the persisted canonical active certificate.
+func (n *rabbitVRFDKGTransport) activeKeysetCertificateV1() (lqc.RabbitVRFKeysetCertificateV1, error) {
+	context := n.runtime.thresholdContextV1()
+	if context.SessionID == (common.Hash{}) {
+		return lqc.RabbitVRFKeysetCertificateV1{}, errRabbitVRFDKGArtifactSessionMismatch
+	}
+	store, err := n.keysetCertificateStoreV1()
+	if err != nil {
+		return lqc.RabbitVRFKeysetCertificateV1{}, err
+	}
+	return store.Load(context.CanonicalSession, context.CanonicalMembers)
+}
+func (n *rabbitVRFDKGTransport) rabbitVRFKeysetCertificateForBlockV1(blockNumber uint64) (lqc.RabbitVRFKeysetCertificateV1, bool, error) {
 	var empty lqc.RabbitVRFKeysetCertificateV1
 	if n == nil || n.runtime == nil {
 		return empty, false, nil

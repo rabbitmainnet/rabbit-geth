@@ -52,7 +52,8 @@ func validateRabbitGenesisConfig(cfg *params.ChainConfig) error {
 	}
 	if cfg.ChainID == nil ||
 		(cfg.ChainID.Cmp(big.NewInt(928)) != 0 &&
-			cfg.ChainID.Cmp(big.NewInt(9280)) != 0) {
+			cfg.ChainID.Cmp(big.NewInt(9280)) != 0 &&
+			!rabbitVRFLocalnetChainIDAllowed(cfg.ChainID)) {
 		return errors.New("rabbit genesis requires chainId 928 or 9280")
 	}
 	if cfg.Ethash != nil {
@@ -385,6 +386,9 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		if err := ConfigureRabbitTestnetVRFAvailabilityV2(db, suppliedHash, genesis.Config); err != nil {
 			return nil, common.Hash{}, nil, err
 		}
+		if err := ConfigureRabbitTestnetFork320000(db, suppliedHash, genesis.Config); err != nil {
+			return nil, common.Hash{}, nil, err
+		}
 	}
 	// Commit the genesis if the database is empty
 	ghash := rawdb.ReadCanonicalHash(db, 0)
@@ -448,6 +452,9 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 	MigrateRabbitTestnetStoredChainConfig(db, ghash, storedCfg)
 	storedConfigBeforeAvailability, _ := json.Marshal(storedCfg)
 	if err := ConfigureRabbitTestnetVRFAvailabilityV2(db, ghash, storedCfg); err != nil {
+		return nil, common.Hash{}, nil, err
+	}
+	if err := ConfigureRabbitTestnetFork320000(db, ghash, storedCfg); err != nil {
 		return nil, common.Hash{}, nil, err
 	}
 

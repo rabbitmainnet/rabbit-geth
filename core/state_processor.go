@@ -189,6 +189,16 @@ func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent *types.He
 		misc.ApplyRabbitVRFCoordinatorV1(evm.StateDB)
 	}
 
+	// Replace code only: preserve coordinator storage, balance and nonce.
+	if config.IsRabbitVRFEconomicsV2(number) &&
+		!config.IsRabbitVRFEconomicsV2(parent.Number) {
+		evm.StateDB.SetCode(
+			params.RabbitVRFCoordinatorV1Address,
+			params.RabbitVRFCoordinatorV2Code,
+			tracing.CodeChangeUnspecified,
+		)
+	}
+
 	if config.IsRabbitVRF(number) {
 		ProcessRabbitVRFPriceObservation(evm, blockAccessList)
 	}
@@ -605,11 +615,14 @@ func ProcessRabbitVRFFinalizations(
 			)
 		}
 
-		producerBig, participantBig, rabbitBig, err :=
-			rabbitVRFSplitProtocolFeeV1(
-				feePaid.ToBig(),
-				len(value.Participants),
-			)
+		splitFee := rabbitVRFSplitProtocolFeeV1
+		if evm.ChainConfig().IsRabbitVRFEconomicsV2(evm.Context.BlockNumber) {
+			splitFee = rabbitVRFSplitProtocolFeeV2
+		}
+		producerBig, participantBig, rabbitBig, err := splitFee(
+			feePaid.ToBig(),
+			len(value.Participants),
+		)
 		if err != nil {
 			return err
 		}

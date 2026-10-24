@@ -856,8 +856,7 @@ func readPrivateFileV1(
 	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil,
-				ErrDKGTransportKeyStoreMissingV1
+			return nil, fmt.Errorf("%w: %w", ErrDKGTransportKeyStoreMissingV1, err)
 		}
 
 		return nil,

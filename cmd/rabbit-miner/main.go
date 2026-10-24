@@ -249,7 +249,7 @@ func fetchChainID(ctx context.Context, client *rpc.Client) (*big.Int, error) {
 		return nil, err
 	}
 	chainID := new(big.Int).Set((*big.Int)(&encoded))
-	if !chainID.IsUint64() || chainID.Uint64() != officialChainID {
+	if !chainID.IsUint64() || !allowedMinerChainID(chainID.Uint64()) {
 		return nil, fmt.Errorf("wrong chain ID %s; expected %d", chainID, officialChainID)
 	}
 	return chainID, nil

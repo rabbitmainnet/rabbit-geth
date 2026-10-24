@@ -85,6 +85,14 @@ func (s *SecretShare) Bytes() ([SecretKeySize]byte, error) {
 	return out, nil
 }
 
+// Destroy clears this share. Callers must serialize destruction with use.
+func (s *SecretShare) Destroy() {
+	if s != nil {
+		s.scalar.SetZero()
+		s.id = 0
+	}
+}
+
 func (s *SecretShare) ID() uint64 {
 	if s == nil {
 		return 0

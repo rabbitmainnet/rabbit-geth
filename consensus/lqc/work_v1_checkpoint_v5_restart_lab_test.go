@@ -4,6 +4,7 @@ package lqc
 
 import (
 	"math/big"
+	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -60,5 +61,24 @@ func TestWorkV1CheckpointV5Restart(t *testing.T) {
 	if err != nil || !found || runtime == nil {
 		t.Fatalf("restored runtime missing: found=%v err=%v", found, err)
 	}
+	t.Run("concurrent-cold-checkpoint-readers", func(t *testing.T) {
+		cold := New(config, db)
+		var wg sync.WaitGroup
+		for i := 0; i < 32; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				runtime, err := cold.workV1EngineLabRuntimeAt(chain, 512, parent.Hash())
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if runtime == nil || runtime.Work.Number != 512 || runtime.Work.Hash != parent.Hash() {
+					t.Error("concurrent replay returned another canonical state")
+				}
+			}()
+		}
+		wg.Wait()
+	})
 	t.Log("Checkpoint V5 do bloco 512 restaurado sem replay desde o bloco 384.")
 }

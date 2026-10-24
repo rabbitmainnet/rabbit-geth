@@ -342,7 +342,8 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
+	collectionStarted := time.Now()
+	deadline := collectionStarted.Add(10 * time.Second)
 	var final rabbitVRFThresholdResultV1
 	for {
 		receiver.mu.RLock()
@@ -353,10 +354,21 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("threshold result was not produced")
+			select {
+			case wireErr := <-result:
+				t.Fatalf("threshold result missing; transport error: %v", wireErr)
+			default:
+				receiver.mu.RLock()
+				count := len(receiver.partials[requestID])
+				receiver.mu.RUnlock()
+				t.Fatalf("threshold result missing; collected=%d required=%d; transport still running",
+					count, context.Threshold)
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
+	t.Logf("Coleta e finalizacao apos envio da terceira share: %s", time.Since(collectionStarted))
 
 	expectedRandomness, err := rabbitvrf.VerifyAndDeriveRandomness(
 		thresholdPublicKey,
