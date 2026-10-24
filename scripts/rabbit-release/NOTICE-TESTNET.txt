@@ -35,8 +35,38 @@ Safety:
 - Testnet tokens have no guaranteed monetary value.
 
 Build identity:
-- Genesis SHA-256: 17bfe51321f6e7befe8719ee35c34b1b876fda3e93672204903bd7b6d6bb69ba
+- Genesis SHA-256: 4970159f077b62b7aa9bde1f81cb61ae837b42ef64861d7b23241e1af4d75c9f
 - RandomX base commit: 7c761cf007c758056dcb6eb438a32f780f81bdbd
 - Rabbit RandomX dataset: 1073741824 bytes (1 GiB)
 
 Verify the published archive checksum and internal SHA256SUMS.txt. Read rabbit-core.md and rabbit-miner.md completely before participation.
+
+
+RABBIT CORE V2.4.14 - TESTNET FORK AT BLOCK 320000
+
+Upgrade miners, full nodes and public infrastructure before activation.
+Retain the existing blockchain, encrypted wallet, node identity and
+participation state. Stop normally before replacing software.
+Do not reset the data directory to perform this upgrade.
+
+The public network remains Chain ID 9280.
+Genesis block hash remains:
+0x9b71d7f2922fdf8383a4a12be5594e25938625195e0d84c05c3bd71b7bcf93f7
+The SHA256 of the distributed genesis.json file is:
+4970159f077b62b7aa9bde1f81cb61ae837b42ef64861d7b23241e1af4d75c9f
+
+At block 320000, VRF economics V2 and WorkSeat admission V2 activate.
+The block target remains 10 seconds. Mining rewards remain 70/30.
+The VRF base pricing target becomes US$0.005 equivalent in tRUSD,
+payable in tRAB using quoteRequestFee(0); transaction gas is additional.
+At successful fulfillment, 20% goes to the fulfillment block producer,
+30% equally to validated VRF signers and 50% plus integer rounding
+remainders to the existing development allocation address.
+Pending requests retain their recorded fee; the split follows the
+fulfillment block.
+
+Fresh installations retain the verified automatic multipart bootstrap.
+Existing blockchain data must not be replaced by a fresh bootstrap.
+Use reliable SSD storage for latency-sensitive VRF persistence.
+Early proof verification is distinct from canonical on-chain fulfillment;
+local laboratory latency measurements are not a public-network SLA.
