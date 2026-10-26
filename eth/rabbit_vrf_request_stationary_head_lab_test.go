@@ -3,9 +3,10 @@
 package eth
 
 import (
-	"github.com/ethereum/go-ethereum/common"
 	"testing"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // A pending canonical request must retry without requiring a new head event.

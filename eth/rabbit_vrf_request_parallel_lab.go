@@ -4,11 +4,12 @@ package eth
 
 import (
 	"errors"
-	"github.com/ethereum/go-ethereum/common"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // The request lane remains the sole owner of queue/cursor mutations. Workers

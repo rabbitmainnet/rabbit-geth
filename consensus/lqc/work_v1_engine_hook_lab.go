@@ -5,9 +5,10 @@ package lqc
 import (
 	"errors"
 	"fmt"
-	"golang.org/x/sync/singleflight"
 	"math/big"
 	"sync"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"

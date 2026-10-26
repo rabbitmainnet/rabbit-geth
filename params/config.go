@@ -636,6 +636,7 @@ type LQCConfig struct {
 	VRFProtocolBlock            uint64           `json:"vrfProtocolBlock,omitempty"`
 	VRFEconomicsV2Block         uint64           `json:"vrfEconomicsV2Block,omitempty"`
 	WorkSeatAdmissionV2Block    uint64           `json:"workSeatAdmissionV2Block,omitempty"`
+	WorkSeatLivenessV2Block     uint64           `json:"workSeatLivenessV2Block,omitempty"`
 	MiningRewardV5Block         uint64           `json:"miningRewardV5Block,omitempty"`
 
 	OpenRegistry       bool     `json:"openRegistry,omitempty"`
@@ -1392,6 +1393,9 @@ func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64, time u
 // CheckConfigForkOrder checks that we don't "skip" any forks, geth isn't pluggable enough
 // to guarantee that forks can be implemented in a different order than on official networks
 func (c *ChainConfig) CheckConfigForkOrder() error {
+	if err := c.LQC.validateWorkSeatLivenessV2(); err != nil {
+		return err
+	}
 	if err := c.LQC.validateRabbitForkV2Order(); err != nil {
 		return err
 	}
@@ -1537,7 +1541,6 @@ func (bc *BlobConfig) validate() error {
 }
 
 func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, headTimestamp uint64) *ConfigCompatError {
-
 	for _, economics := range []bool{true, false} {
 		stored := rabbitNewForkHeightV2(c.LQC, economics)
 		proposed := rabbitNewForkHeightV2(newcfg.LQC, economics)
@@ -1588,6 +1591,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	newLivenessV6Fork := newcfg.LQC.consensusLivenessV6ForkBlock()
 	if isForkBlockIncompatible(storedLivenessV6Fork, newLivenessV6Fork, headNumber) {
 		return newBlockCompatError("LQC consensus liveness V6 fork block", storedLivenessV6Fork, newLivenessV6Fork)
+	}
+
+	storedWorkSeatLivenessV2 := c.LQC.workSeatLivenessV2ForkBlock()
+	newWorkSeatLivenessV2 := newcfg.LQC.workSeatLivenessV2ForkBlock()
+	if isForkBlockIncompatible(storedWorkSeatLivenessV2, newWorkSeatLivenessV2, headNumber) {
+		return newBlockCompatError("LQC WorkSeat liveness V2 fork block", storedWorkSeatLivenessV2, newWorkSeatLivenessV2)
 	}
 
 	storedMiningRewardFork := c.LQC.miningRewardV5ForkBlock()

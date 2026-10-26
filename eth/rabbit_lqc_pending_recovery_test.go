@@ -1,9 +1,10 @@
 package eth
 
 import (
-	"github.com/ethereum/go-ethereum/core/types"
 	"math/big"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 func TestLQCRecoveryQueuedTargetAdvancesWithoutDeadlineV1(t *testing.T) {

@@ -3,11 +3,12 @@
 package eth
 
 import (
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
-	"time"
 )
 
 // Only verified, locally eligible finalizations are gossiped to v2 peers.

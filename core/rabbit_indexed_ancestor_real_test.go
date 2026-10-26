@@ -1,13 +1,14 @@
 package core
 
 import (
+	"math/big"
+	"testing"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
-	"math/big"
-	"testing"
 )
 
 func TestRabbitIndexedAncestorRealHeaderChainV1(t *testing.T) {

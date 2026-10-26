@@ -82,7 +82,7 @@ jobs:
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.15-${{ matrix.target }}
+          name: rabbit-core-testnet-v2.4.16-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -96,7 +96,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-v2.4.15-*
+          pattern: rabbit-core-testnet-v2.4.16-*
           path: releases
           merge-multiple: true
 
@@ -114,14 +114,14 @@ jobs:
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.15-release-bundle
+          name: rabbit-core-testnet-v2.4.16-release-bundle
           path: releases/*
           if-no-files-found: error
           retention-days: 30
 
 
   publish-existing:
-    name: Publish existing V2.4.15 artifacts
+    name: Publish existing V2.4.16 artifacts
     if: ${{ inputs.publish_run_id != '' }}
     runs-on: ubuntu-24.04
     permissions:
@@ -145,10 +145,10 @@ jobs:
           [[ "$conclusion" == success ]]
           [[ "$source_sha" == "$GITHUB_SHA" ]]
 
-      - name: Download verified V2.4.15 bundle
+      - name: Download verified V2.4.16 bundle
         uses: actions/download-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.15-release-bundle
+          name: rabbit-core-testnet-v2.4.16-release-bundle
           path: release
           github-token: ${{ github.token }}
           repository: rabbitmainnet/rabbit-geth
@@ -160,12 +160,12 @@ jobs:
           cd release
           sha256sum -c SHA256SUMS.txt
 
-      - name: Publish V2.4.15 GitHub release
+      - name: Publish V2.4.16 GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v2.4.15"
+          TAG="v2.4.16"
           TARGET="$GITHUB_SHA"
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -175,7 +175,7 @@ jobs:
             gh release create "$TAG" release/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$TARGET" \
-              --title "Rabbit Core Testnet v2.4.15" \
+              --title "Rabbit Core Testnet v2.4.16" \
               --draft
           fi
 

@@ -1,9 +1,10 @@
 package rabbitvrf
 
 import (
-	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"sync"
 	"testing"
+
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 )
 
 func TestPublicKeyDecodeMemoV1(t *testing.T) {
@@ -37,9 +38,10 @@ func TestPublicKeyDecodeMemoV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	expected := point
 	point = bls12381.G1Affine{}
 	again, err := m.decode(first)
-	if err != nil || again == point {
+	if err != nil || again == point || again != expected {
 		t.Fatal("returned value modified cached point")
 	}
 

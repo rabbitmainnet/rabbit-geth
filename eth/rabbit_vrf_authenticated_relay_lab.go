@@ -5,9 +5,10 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"sync"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
-	"sync"
 )
 
 // This cache holds ciphertext and public delivery IDs, never secrets. One packet per dealer/recipient

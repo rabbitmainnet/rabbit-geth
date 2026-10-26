@@ -3,13 +3,14 @@
 package eth
 
 import (
+	"math/big"
+	"path/filepath"
+	"testing"
+
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/crypto"
 	vrf "github.com/ethereum/go-ethereum/crypto/rabbitvrf"
 	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
-	"math/big"
-	"path/filepath"
-	"testing"
 )
 
 func TestRabbitVRFObserverCertificatePublicKeysetV1(t *testing.T) {

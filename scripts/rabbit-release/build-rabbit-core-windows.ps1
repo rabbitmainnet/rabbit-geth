@@ -24,7 +24,7 @@ if ((Get-FileHash networks/rabbit-testnet/genesis.json -Algorithm SHA256).Hash.T
 
 $Work = Join-Path $env:RUNNER_TEMP "rabbit-native-$([guid]::NewGuid())"
 $RandomX = Join-Path $Work "RandomX"
-$Package = "rabbit-core-testnet-v2.4.15-$Target"
+$Package = "rabbit-core-testnet-v2.4.16-$Target"
 $Stage = Join-Path $Work $Package
 $Dist = Join-Path $PWD "dist"
 
@@ -75,7 +75,7 @@ Write-Host "RABBIT_RANDOMX_GCC_PATH=$RandomXForGcc"
 Write-Host "RABBIT_CGO_CFLAGS=$env:CGO_CFLAGS"
 Write-Host "RABBIT_CGO_LDFLAGS=$env:CGO_LDFLAGS"
 
-go test -tags "rabbit_workv1 rabbit_randomx" ./core -run "RabbitTestnetAvailabilityFork|LQCSiblingPrunedParentRecovery|LQCEqualHeight" -count=1 -timeout=8m -p=1
+go test -tags "rabbit_workv1 rabbit_randomx" ./core -run "RabbitTestnetAvailabilityFork|LQCSiblingPrunedParentRecovery|LQCEqualHeight|RabbitWorkSeatLivenessV2|RabbitFork320000Startup" -count=1 -timeout=8m -p=1
 if ($LASTEXITCODE -ne 0) { throw "Rabbit fork and recovery tests failed" }
 go test -tags "rabbit_workv1 rabbit_randomx" ./params ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc ./eth ./eth/protocols/eth ./eth/downloader ./miner -count=1 -timeout=10m -p=1
 if ($LASTEXITCODE -ne 0) { throw "Rabbit Windows tests failed" }
@@ -121,7 +121,7 @@ Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
 Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
 
 @(
-    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.15"
+    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.16"
     "SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth"
     "SOURCE_COMMIT=$SourceCommit"
     "TARGET=$Target"
@@ -132,6 +132,7 @@ Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
     "FORK_BLOCK=320000"
     "VRF_ECONOMICS_V2_BLOCK=320000"
     "WORK_SEAT_ADMISSION_V2_BLOCK=320000"
+    "WORK_SEAT_LIVENESS_V2_BLOCK=323800"
     "CONSENSUS_FAIRNESS_BLOCK=73000"
     "CONSENSUS_LIVENESS_V3_BLOCK=77000"
     "CONSENSUS_LIVENESS_V4_BLOCK=97991"

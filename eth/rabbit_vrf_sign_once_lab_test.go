@@ -3,11 +3,12 @@
 package eth
 
 import (
+	"testing"
+
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/crypto"
 	vrf "github.com/ethereum/go-ethereum/crypto/rabbitvrf"
 	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
-	"testing"
 )
 
 func TestRabbitVRFSingleShareSignsBothMessagesV1(t *testing.T) {

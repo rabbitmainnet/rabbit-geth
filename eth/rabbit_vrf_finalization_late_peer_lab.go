@@ -4,6 +4,7 @@ package eth
 
 import (
 	"errors"
+
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 )
 

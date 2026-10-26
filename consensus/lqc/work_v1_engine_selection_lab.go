@@ -949,7 +949,8 @@ func (l *LQC) workV1EngineLabApplySeatLiveness(
 		}
 	} else if l.consensusLivenessV4Active(blockNumber) || !l.consensusFairnessActive(blockNumber) {
 		for index := 0; index < queuePos; index++ {
-			if err := registry.ApplyWorkSeatMissedTurn(
+			if err := l.workSeatMissedTurnWithLivenessV2(
+				registry,
 				selection.Ordered[index].Address,
 				blockNumber,
 				rules.MaxMissedTurns,

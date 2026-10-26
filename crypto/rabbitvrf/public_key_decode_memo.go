@@ -1,8 +1,9 @@
 package rabbitvrf
 
 import (
-	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"sync"
+
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 )
 
 type publicKeyDecodeMemoV1 struct {

@@ -4,11 +4,12 @@ package eth
 
 import (
 	"errors"
-	"github.com/ethereum/go-ethereum/common"
 	"math/big"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func TestRabbitVRFRequestParallelBoundedThreeAndQueueOwnership(t *testing.T) {

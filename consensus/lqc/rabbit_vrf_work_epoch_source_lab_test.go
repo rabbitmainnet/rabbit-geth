@@ -3,11 +3,12 @@
 package lqc
 
 import (
+	"math/big"
+	"testing"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"math/big"
-	"testing"
 )
 
 func TestRabbitVRFActiveBridgeUsesWorkEpochDespiteLegacyEightV1(

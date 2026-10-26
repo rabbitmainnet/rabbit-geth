@@ -3,11 +3,12 @@
 package lqc
 
 import (
+	"math/big"
+	"testing"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
-	"math/big"
-	"testing"
 )
 
 type rabbitAncestorReaderTestV1 struct {

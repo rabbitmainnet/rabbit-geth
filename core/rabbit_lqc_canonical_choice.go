@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+
 	"github.com/ethereum/go-ethereum/core/types"
 )
 

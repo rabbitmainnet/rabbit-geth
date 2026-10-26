@@ -2,9 +2,10 @@ package rabbitvrf
 
 import (
 	"errors"
-	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"sync"
 	"testing"
+
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 )
 
 func TestDKGCommitmentValidationMemoV1(t *testing.T) {

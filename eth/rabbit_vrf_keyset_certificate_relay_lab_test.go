@@ -4,11 +4,12 @@ package eth
 
 import (
 	"crypto/ecdsa"
-	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/enode"
 	"math/big"
 	"path/filepath"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	gethcrypto "github.com/ethereum/go-ethereum/crypto"

@@ -3,10 +3,11 @@
 package eth
 
 import (
+	"testing"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/crypto"
-	"testing"
 )
 
 // The projection consumes public bindings already validated by the engine loader.

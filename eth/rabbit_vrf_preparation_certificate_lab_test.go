@@ -3,14 +3,15 @@
 package eth
 
 import (
+	"math/big"
+	"path/filepath"
+	"testing"
+
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
-	"math/big"
-	"path/filepath"
-	"testing"
 )
 
 func TestRabbitVRFPreparationCertificatePublishesWithoutFinalizationV1(t *testing.T) {
