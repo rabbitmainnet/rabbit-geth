@@ -1177,7 +1177,7 @@ func (n *rabbitVRFDKGTransport) handleInboundThresholdPartialV1(peer *rabbitVRFD
 	if _, err := lqc.RabbitVRFThresholdPartialMessageIDV1(packet); err != nil {
 		return err
 	}
-	if _, err := n.runtime.canonicalPendingRequestV1(packet.RequestID); err != nil {
+	if _, err := n.thresholdPartialRequestReadyV1(packet.RequestID); err != nil {
 		return err
 	}
 	if n.runtime.backend == nil || n.runtime.backend.vrfDKGInstanceDir == "" {
@@ -1681,4 +1681,14 @@ func (n *rabbitVRFDKGTransport) syncPeerArtifactsUntilDoneV1(
 			peer.mu.Unlock()
 		}
 	}
+}
+
+// An unknown request is not accepted or persisted. Keep the connection alive
+// so canonical synchronization and later sender replay can proceed.
+func (n *rabbitVRFDKGTransport) thresholdPartialRequestReadyV1(requestID common.Hash) (rabbitVRFCanonicalRequestV1, error) {
+	request, err := n.runtime.canonicalPendingRequestV1(requestID)
+	if errors.Is(err, errRabbitVRFRequestMissingV1) {
+		return rabbitVRFCanonicalRequestV1{}, errRabbitVRFThresholdContextNotReadyV1
+	}
+	return request, err
 }

@@ -133,6 +133,7 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	}
 
 	requestID := gethcrypto.Keccak256Hash([]byte("rabbit-vrf-threshold-wire-request"))
+	missingRequestID := gethcrypto.Keccak256Hash([]byte("rabbit-vrf-wire-missing-request"))
 
 	runtime := &rabbitVRFDKGRuntime{
 		backend: &Ethereum{
@@ -146,6 +147,10 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 			CanonicalTransportBindings:   append([]lqc.RabbitVRFDKGTransportKeyBindingV1(nil), bindings...),
 		},
 		canonicalRequestLookup: func(got common.Hash) (rabbitVRFCanonicalRequestV1, error) {
+
+			if got == missingRequestID {
+				return rabbitVRFCanonicalRequestV1{}, errRabbitVRFRequestMissingV1
+			}
 			if got != requestID {
 				return rabbitVRFCanonicalRequestV1{}, errors.New("request not canonical")
 			}
@@ -253,6 +258,29 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 	}
 	packet1 = attachParticipation(packet1, 0)
 
+	missingMessage, _, err := lqc.RabbitVRFThresholdMessageV1(
+		context, keysetRoot, missingRequestID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingPartial, _, err := rabbitVRFSignThresholdPartialWithKeysetV1(
+		shares[0], 1, keyset, missingMessage,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingPacket, err := lqc.NewRabbitVRFThresholdPartialV1(
+		context, keysetRoot, missingRequestID, missingPartial,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingPacket = attachParticipation(missingPacket, 0)
+	if err := p2p.Send(rw, rabbitVRFDKGThresholdPartialMsg, missingPacket); err != nil {
+		t.Fatalf("send missing request partial: %v", err)
+	}
+
 	nonCanonical := packet1
 	nonCanonical.RequestID = gethcrypto.Keccak256Hash([]byte("rabbit-vrf-non-canonical-request"))
 	if err := runtime.validateInboundThresholdPartialV1(nonCanonical); err == nil || !strings.Contains(err.Error(), "request not canonical") {
@@ -292,6 +320,27 @@ func TestRabbitVRFDKGTransportV1WireThresholdPartialCollector(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
+	// Persistence of packet1 above proves the same session processed the
+	// preceding unknown request and continued to accept valid messages.
+	receiver.mu.RLock()
+	missingCount := len(receiver.partials[missingRequestID])
+	_, missingFinal := receiver.partialResults[missingRequestID]
+	receiver.mu.RUnlock()
+	if missingCount != 0 || missingFinal {
+		t.Fatal("unknown request was collected or finalized")
+	}
+	if _, loadErr := partialStore.Load(
+		context, keysetRoot, missingRequestID, missingPacket.ShareID,
+	); loadErr == nil {
+		t.Fatal("unknown request partial was persisted")
+	}
+	select {
+	case wireErr := <-result:
+		t.Fatalf("session closed after unknown request: %v", wireErr)
+	default:
+	}
+	t.Log("UNKNOWN REQUEST DISCARDED; SAME SESSION ACCEPTED AND PERSISTED VALID PARTIAL")
 
 	partial2, _, err := rabbitVRFSignThresholdPartialWithKeysetV1(
 		shares[1],
