@@ -74,12 +74,20 @@ type RewardClaimResult struct {
 	Amount      *hexutil.Big   `json:"amount"`
 }
 
+type VRFRewardCreditResult struct {
+	RequestID common.Hash  `json:"requestId"`
+	Role      string       `json:"role"`
+	Amount    *hexutil.Big `json:"amount"`
+}
+
 type RewardActivityResult struct {
-	BlockNumber        hexutil.Uint64      `json:"blockNumber"`
-	Producer           common.Address      `json:"producer"`
-	ProducerReward     *hexutil.Big        `json:"producerReward"`
-	ProducerFullReward bool                `json:"producerFullReward"`
-	CommitteeClaims    []RewardClaimResult `json:"committeeClaims"`
+	VRFCredits         []VRFRewardCreditResult `json:"vrfCredits"`
+	VRFDetailsError    string                  `json:"vrfDetailsError,omitempty"`
+	BlockNumber        hexutil.Uint64          `json:"blockNumber"`
+	Producer           common.Address          `json:"producer"`
+	ProducerReward     *hexutil.Big            `json:"producerReward"`
+	ProducerFullReward bool                    `json:"producerFullReward"`
+	CommitteeClaims    []RewardClaimResult     `json:"committeeClaims"`
 }
 
 type RegistrySigningRequestResult struct {
@@ -173,6 +181,10 @@ func (api *LQCRegistryAPI) RewardActivity(
 		)
 	}
 
+	result.VRFCredits, err = api.vrfRewardCredits(header.Number.Uint64(), header.Hash(), participant)
+	if err != nil {
+		result.VRFDetailsError = err.Error()
+	}
 	return result, nil
 }
 

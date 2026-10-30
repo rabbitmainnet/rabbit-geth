@@ -106,12 +106,20 @@ type rewardClaimRPC struct {
 	Amount      *hexutil.Big   `json:"amount"`
 }
 
+type vrfRewardCreditRPC struct {
+	RequestID common.Hash  `json:"requestId"`
+	Role      string       `json:"role"`
+	Amount    *hexutil.Big `json:"amount"`
+}
+
 type rewardActivityRPC struct {
-	BlockNumber        hexutil.Uint64   `json:"blockNumber"`
-	Producer           common.Address   `json:"producer"`
-	ProducerReward     *hexutil.Big     `json:"producerReward"`
-	ProducerFullReward bool             `json:"producerFullReward"`
-	CommitteeClaims    []rewardClaimRPC `json:"committeeClaims"`
+	VRFCredits         []vrfRewardCreditRPC `json:"vrfCredits"`
+	VRFDetailsError    string               `json:"vrfDetailsError,omitempty"`
+	BlockNumber        hexutil.Uint64       `json:"blockNumber"`
+	Producer           common.Address       `json:"producer"`
+	ProducerReward     *hexutil.Big         `json:"producerReward"`
+	ProducerFullReward bool                 `json:"producerFullReward"`
+	CommitteeClaims    []rewardClaimRPC     `json:"committeeClaims"`
 }
 
 type rpcSyncProgress struct {
@@ -859,6 +867,16 @@ func monitorNetwork(
 							printedReward = true
 						}
 
+						for _, line := range vrfRewardLines(activity, number, balance, unit) {
+							fmt.Print(line)
+							printedReward = true
+						}
+						if verbose && activity.VRFDetailsError != "" {
+							fmt.Printf(
+								"VRF_DETAILS_UNAVAILABLE | #%d | %s\n",
+								number, activity.VRFDetailsError,
+							)
+						}
 						if !printedReward && delta.Sign() > 0 {
 							fmt.Printf(
 								"CREDIT    | #%d | +%s %s | NON-LCQ CREDIT | Balance: %s %s\n",

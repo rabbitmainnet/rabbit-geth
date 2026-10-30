@@ -27,6 +27,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -917,7 +918,13 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	// Downloaded blocks are always regarded as trusted after the
 	// transition. Because the downloaded chain is guided by the
 	// consensus-layer.
-	if index, err := d.blockchain.InsertChain(blocks); err != nil {
+	if index, err := d.insertChainWithFutureRetry(blocks, 3*time.Second); err != nil {
+		// A future block is temporarily inadmissible, not an invalid chain.
+		// Keep its identity so callers can distinguish it from permanent faults.
+		if errors.Is(err, consensus.ErrFutureBlock) || errors.Is(err, errCancelContentProcessing) {
+			return err
+		}
+
 		if index < len(results) {
 			log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 
@@ -1293,4 +1300,44 @@ func (d *Downloader) reportSnapSyncProgress(force bool) {
 	)
 	log.Info("Syncing: chain download in progress", "synced", progress, "chain", syncedBytes, "headers", headers, "bodies", bodies, "receipts", receipts, "eta", common.PrettyDuration(eta))
 	d.syncLogTime = time.Now()
+}
+
+// insertChainWithFutureRetry revalidates temporarily future blocks within a
+// bounded window. Permanent errors and shutdown terminate the retry.
+func (d *Downloader) insertChainWithFutureRetry(blocks types.Blocks, window time.Duration) (int, error) {
+	d.cancelLock.RLock()
+	cancel := d.cancelCh
+	d.cancelLock.RUnlock()
+	deadline := time.Now().Add(window)
+	for {
+		select {
+		case <-cancel:
+			return 0, errCancelContentProcessing
+		case <-d.quitCh:
+			return 0, errCancelContentProcessing
+		default:
+		}
+		index, err := d.blockchain.InsertChain(blocks)
+		if !errors.Is(err, consensus.ErrFutureBlock) {
+			return index, err
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return index, err
+		}
+		delay := 100 * time.Millisecond
+		if remaining < delay {
+			delay = remaining
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-cancel:
+			timer.Stop()
+			return index, errCancelContentProcessing
+		case <-d.quitCh:
+			timer.Stop()
+			return index, errCancelContentProcessing
+		case <-timer.C:
+		}
+	}
 }
