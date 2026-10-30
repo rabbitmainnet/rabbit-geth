@@ -137,11 +137,12 @@ type handler struct {
 	// Multiple honest producers may announce competing heads during fallback
 	// windows. Keep the best pending target instead of dropping it merely because
 	// another recovery is already running.
-	lqcSyncMu      sync.Mutex
-	lqcSyncRunning bool
-	lqcSyncCurrent *lqcSyncTarget
-	lqcSyncPending *lqcSyncTarget
-	lqcSyncWake    chan struct{}
+	lqcLiveImportMu sync.Mutex
+	lqcSyncMu       sync.Mutex
+	lqcSyncRunning  bool
+	lqcSyncCurrent  *lqcSyncTarget
+	lqcSyncPending  *lqcSyncTarget
+	lqcSyncWake     chan struct{}
 
 	database ethdb.Database
 	txpool   txPool

@@ -137,7 +137,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 					"localHash", head.Hash(),
 					"remoteHash", packet.Block.Hash(),
 				)
-				if _, err := h.chain.InsertChain(types.Blocks{packet.Block}); err != nil {
+				if _, err := h.insertLQCLiveBlock(packet.Block); err != nil {
 					peer.Log().Warn("LQC same-height NewBlock direct import failed; scheduling fork recovery",
 						"number", packet.Block.NumberU64(),
 						"hash", packet.Block.Hash(),
@@ -169,7 +169,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 				h.scheduleLQCSync(peer, packet.Block.Header())
 				return nil
 			}
-			if _, err := h.chain.InsertChain(types.Blocks{packet.Block}); err != nil {
+			if _, err := h.insertLQCLiveBlock(packet.Block); err != nil {
 				peer.Log().Warn("LQC live NewBlock insert failed",
 					"number", packet.Block.NumberU64(),
 					"hash", packet.Block.Hash(),
@@ -414,7 +414,7 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 			continue
 		}
 		peer.Log().Info("LQC fork-recovery started", "target", header.Number, "hash", header.Hash())
-		if err := h.downloader.BeaconSync(header, nil); err != nil {
+		if err := h.startLQCRecoveryAfterLiveImport(header); err != nil {
 			peer.Log().Warn("LQC fork-recovery start failed", "target", header.Number, "hash", header.Hash(), "err", err)
 			target = h.takePendingLQCSyncTarget()
 			continue
