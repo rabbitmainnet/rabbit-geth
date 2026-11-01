@@ -368,10 +368,15 @@ func (h *ethHandler) scheduleLQCSync(peer *eth.Peer, header *types.Header) {
 	if betterLQCSyncTarget(h.lqcSyncPending, best) {
 		best = h.lqcSyncPending
 	}
+	queued := false
 	if betterLQCSyncTarget(candidate, best) {
 		h.lqcSyncPending = candidate
+		queued = true
 	}
 	h.lqcSyncMu.Unlock()
+	if queued {
+		h.wakeLQCSync()
+	}
 }
 
 func (h *ethHandler) takePendingLQCSyncTarget() *lqcSyncTarget {
@@ -393,11 +398,37 @@ func (h *ethHandler) wakeLQCSync() {
 	}
 }
 
+// lqcStartupRetryDelayV2419 limits retry frequency without
+// permanently abandoning recovery after transient failures.
+func lqcStartupRetryDelayV2419(attempt int) time.Duration {
+	switch {
+	case attempt <= 1:
+		return time.Second
+	case attempt == 2:
+		return 2 * time.Second
+	case attempt == 3:
+		return 4 * time.Second
+	default:
+		return 8 * time.Second
+	}
+}
+
+// lqcMayRetryExtensionV2420 prevents re-offering a rejected head on
+// every wake/tick while no blocks were imported. A different head or real
+// import progress permits another extension attempt.
+func lqcMayRetryExtensionV2420(rejected common.Hash, at uint64, head *types.Header, progress uint64) bool {
+	if head == nil {
+		return false
+	}
+	return rejected == (common.Hash{}) || head.Hash() != rejected || progress > at
+}
+
 func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 	syncEvents := make(chan downloader.SyncEvent, 16)
 	subscription := h.downloader.SubscribeSyncEvents(syncEvents)
 	defer subscription.Unsubscribe()
 	retries := 0
+	startupRetries := 0
 	for target != nil {
 		peer := target.peer
 		header := target.header
@@ -416,9 +447,40 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 		peer.Log().Info("LQC fork-recovery started", "target", header.Number, "hash", header.Hash())
 		if err := h.startLQCRecoveryAfterLiveImport(header); err != nil {
 			peer.Log().Warn("LQC fork-recovery start failed", "target", header.Number, "hash", header.Hash(), "err", err)
-			target = h.takePendingLQCSyncTarget()
+			h.lqcSyncMu.Lock()
+			next := h.lqcSyncPending
+			if next != nil {
+				h.lqcSyncPending = nil
+				h.lqcSyncCurrent = next
+			}
+			h.lqcSyncMu.Unlock()
+
+			if next != nil {
+				target = next
+				startupRetries = 0
+				continue
+			}
+
+			// Retry while this target remains eligible. The outer loop
+			// rechecks the head and peer range before each new attempt.
+			startupRetries++
+			timer := time.NewTimer(lqcStartupRetryDelayV2419(startupRetries))
+			select {
+			case <-timer.C:
+			case <-h.lqcSyncWake:
+				timer.Stop()
+			case <-h.quitSync:
+				timer.Stop()
+				h.lqcSyncMu.Lock()
+				h.lqcSyncRunning = false
+				h.lqcSyncCurrent = nil
+				h.lqcSyncPending = nil
+				h.lqcSyncMu.Unlock()
+				return
+			}
 			continue
 		}
+		startupRetries = 0
 
 		deadline := time.Now().Add(2 * time.Minute)
 		var progressNumber uint64
@@ -427,6 +489,11 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 		}
 		ticker := time.NewTicker(250 * time.Millisecond)
 		failed := false
+		// A rejected extension must not force another BeaconSync while the
+		// current backfill is still advancing. Reconsider it on progress, a
+		// different target, or after the existing stall deadline expires.
+		var deferredExtendHash common.Hash
+		var deferredExtendAt uint64
 	waitRecovery:
 		for {
 			// Direct block import can resolve the fork after BeaconSync starts.
@@ -437,21 +504,37 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 				h.chain.GetCanonicalHash(header.Number.Uint64())) {
 				break
 			}
+			// Keep an advancing import alive. Only a stalled import times out.
+			if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
+				if number := local.Number.Uint64(); number > progressNumber {
+					progressNumber = number
+					retries = 0
+					deadline = time.Now().Add(2 * time.Minute)
+				}
+			}
 			// Keep the current backfill alive for direct descendants. BeaconExtend
 			// integrates them without cancelling downloads. If the newest queued
 			// target requires a fork or gap repair, let the outer loop force that
 			// target now instead of ignoring it until the two-minute deadline.
 			if next := h.takeBetterPendingLQCSyncTargetV1(target); next != nil {
-				if err := h.downloader.BeaconExtend(next.header); err != nil {
+				if !lqcMayRetryExtensionV2420(deferredExtendHash, deferredExtendAt, next.header, progressNumber) {
+					// This exact extension already failed without intervening chain
+					// progress. Preserve the queued target but let the running
+					// backfill continue until it advances or stalls.
 					h.restorePendingLQCSyncTargetV1(next)
-					peer.Log().Info("LQC fork-recovery switching queued target", "from", header.Number, "to", next.header.Number, "reason", err)
-					break
+				} else if err := h.downloader.BeaconExtend(next.header); err != nil {
+					deferredExtendHash = next.header.Hash()
+					deferredExtendAt = progressNumber
+					h.restorePendingLQCSyncTargetV1(next)
+					peer.Log().Info("LQC fork-recovery deferring rejected extension while backfill remains active", "from", header.Number, "to", next.header.Number, "reason", err)
+				} else {
+					deferredExtendHash = common.Hash{}
+					target = next
+					peer, header = next.peer, next.header
+					h.lqcSyncMu.Lock()
+					h.lqcSyncCurrent = next
+					h.lqcSyncMu.Unlock()
 				}
-				target = next
-				peer, header = next.peer, next.header
-				h.lqcSyncMu.Lock()
-				h.lqcSyncCurrent = next
-				h.lqcSyncMu.Unlock()
 			}
 			peerRange := peer.BlockRange()
 			if !lqcPeerRangeContainsTarget(peerRange, header.Number.Uint64(), header.Hash()) {
@@ -461,13 +544,6 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 					}
 				}
 				break
-			}
-			// Keep an advancing import alive. Only a stalled import times out.
-			if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
-				if number := local.Number.Uint64(); number > progressNumber {
-					progressNumber = number
-					deadline = time.Now().Add(2 * time.Minute)
-				}
 			}
 			if time.Now().After(deadline) {
 				peer.Log().Warn("LQC fork-recovery stalled",
@@ -493,7 +569,7 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 		ticker.Stop()
 		if failed && retries < 3 {
 			retries++
-			pause := time.NewTimer(time.Second)
+			pause := time.NewTimer(lqcStartupRetryDelayV2419(retries))
 			select {
 			case <-pause.C:
 			case <-h.quitSync:
