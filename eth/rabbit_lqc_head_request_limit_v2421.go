@@ -66,6 +66,14 @@ func (l *lqcHeadProbeLimiter) next(peer *ethproto.Peer) (
 	return target, ok
 }
 
+// Drop pending work for a disconnected peer.
+// Keep busy until its existing worker exits.
+func (l *lqcHeadProbeLimiter) drop(peer *ethproto.Peer) {
+	l.mu.Lock()
+	delete(l.pending, peer)
+	l.mu.Unlock()
+}
+
 var rabbitLQCHeadProbesV2421 = newLQCHeadProbeLimiter(8)
 
 func (h *ethHandler) requestLQCHeadBounded(
@@ -79,7 +87,13 @@ func (h *ethHandler) requestLQCHeadBounded(
 		for {
 			// Every submitted target remains pending until this worker
 			// can process it. Only one worker exists per peer.
-			l.slots <- struct{}{}
+			select {
+			case l.slots <- struct{}{}:
+			case <-h.quitSync:
+				l.drop(peer)
+				l.next(peer)
+				return
+			}
 			target, ok := l.next(peer)
 			if !ok {
 				<-l.slots

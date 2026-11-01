@@ -60,3 +60,24 @@ func TestLQCHeadProbeConcurrencyV2421(t *testing.T) {
 		t.Fatalf("too many concurrent probes: %d", peak)
 	}
 }
+
+func TestLQCHeadProbeDropDisconnectedPeerV2421(t *testing.T) {
+	l := newLQCHeadProbeLimiter(8)
+	peer := new(ethproto.Peer)
+
+	if !l.submit(peer, 359613, common.HexToHash("0x01")) {
+		t.Fatal("worker inicial nao criado")
+	}
+	if l.submit(peer, 359633, common.HexToHash("0x02")) {
+		t.Fatal("worker duplicado")
+	}
+
+	l.drop(peer)
+
+	if _, ok := l.next(peer); ok {
+		t.Fatal("pedido pendente sobreviveu a desconexao")
+	}
+	if !l.submit(peer, 359634, common.HexToHash("0x03")) {
+		t.Fatal("worker nao foi liberado")
+	}
+}

@@ -481,6 +481,8 @@ func (h *handler) unregisterPeer(id string) {
 		logger.Warn("Ethereum peer removal failed", "err", errPeerNotRegistered)
 		return
 	}
+	// Cancel pending LQC probes for disconnected peer.
+	rabbitLQCHeadProbesV2421.drop(peer.Peer)
 	// Remove the `eth` peer if it exists
 	logger.Debug("Removing Ethereum peer", "snap", peer.snapExt != nil)
 
