@@ -195,7 +195,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 			if !shouldStartLQCSync(localHead, packet.LatestBlock, packet.LatestBlockHash) {
 				return nil
 			}
-			go h.requestAndSyncLQCHead(peer, packet.LatestBlock, packet.LatestBlockHash)
+			h.requestLQCHeadBounded(peer, packet.LatestBlock, packet.LatestBlockHash)
 		}
 		return nil
 
