@@ -7,55 +7,92 @@ import (
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
 )
 
-// Limits concurrent LQC header probes. A peer can have only one active
-// probe, preventing duplicate requests during repeated range announcements.
-type lqcHeadProbeLimiter struct {
-	mu       sync.Mutex
-	active   map[*ethproto.Peer]struct{}
-	capacity int
+type lqcHeadProbeTarget struct {
+	number uint64
+	hash   common.Hash
 }
 
-func (l *lqcHeadProbeLimiter) acquire(peer *ethproto.Peer) bool {
-	if peer == nil {
+type lqcHeadProbeLimiter struct {
+	mu      sync.Mutex
+	busy    map[*ethproto.Peer]bool
+	pending map[*ethproto.Peer]lqcHeadProbeTarget
+	slots   chan struct{}
+}
+
+func newLQCHeadProbeLimiter(capacity int) *lqcHeadProbeLimiter {
+	if capacity < 1 {
+		capacity = 1
+	}
+	return &lqcHeadProbeLimiter{
+		busy:    make(map[*ethproto.Peer]bool),
+		pending: make(map[*ethproto.Peer]lqcHeadProbeTarget),
+		slots:   make(chan struct{}, capacity),
+	}
+}
+
+func (l *lqcHeadProbeLimiter) submit(
+	peer *ethproto.Peer, number uint64, hash common.Hash,
+) bool {
+	if peer == nil || hash == (common.Hash{}) {
 		return false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.active == nil {
-		l.active = make(map[*ethproto.Peer]struct{})
+	old, exists := l.pending[peer]
+	if !exists || number > old.number ||
+		(number == old.number && hash != old.hash) {
+		l.pending[peer] = lqcHeadProbeTarget{number, hash}
 	}
-	if _, exists := l.active[peer]; exists {
+	if l.busy[peer] {
 		return false
 	}
-	if len(l.active) >= l.capacity {
-		return false
-	}
-	l.active[peer] = struct{}{}
+	l.busy[peer] = true
 	return true
 }
 
-func (l *lqcHeadProbeLimiter) release(peer *ethproto.Peer) {
+func (l *lqcHeadProbeLimiter) next(peer *ethproto.Peer) (
+	lqcHeadProbeTarget, bool,
+) {
 	l.mu.Lock()
-	delete(l.active, peer)
-	l.mu.Unlock()
+	defer l.mu.Unlock()
+
+	target, ok := l.pending[peer]
+	if ok {
+		delete(l.pending, peer)
+	} else {
+		delete(l.busy, peer)
+	}
+	return target, ok
 }
 
-var rabbitLQCHeadProbesV2421 = lqcHeadProbeLimiter{
-	capacity: 8,
-}
+var rabbitLQCHeadProbesV2421 = newLQCHeadProbeLimiter(8)
 
 func (h *ethHandler) requestLQCHeadBounded(
-	peer *ethproto.Peer,
-	number uint64,
-	hash common.Hash,
+	peer *ethproto.Peer, number uint64, hash common.Hash,
 ) {
-	if !rabbitLQCHeadProbesV2421.acquire(peer) {
+	l := rabbitLQCHeadProbesV2421
+	if !l.submit(peer, number, hash) {
 		return
 	}
-
 	go func() {
-		defer rabbitLQCHeadProbesV2421.release(peer)
-		h.requestAndSyncLQCHead(peer, number, hash)
+		for {
+			// Every submitted target remains pending until this worker
+			// can process it. Only one worker exists per peer.
+			l.slots <- struct{}{}
+			target, ok := l.next(peer)
+			if !ok {
+				<-l.slots
+				return
+			}
+			if shouldStartLQCSync(
+				h.chain.CurrentBlock(), target.number, target.hash,
+			) {
+				h.requestAndSyncLQCHead(
+					peer, target.number, target.hash,
+				)
+			}
+			<-l.slots
+		}
 	}()
 }

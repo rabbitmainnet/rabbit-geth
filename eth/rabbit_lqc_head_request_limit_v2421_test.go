@@ -1,35 +1,62 @@
 package eth
 
 import (
+	"sync"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
 )
 
-func TestLQCHeadProbeLimiterV2421(t *testing.T) {
-	l := &lqcHeadProbeLimiter{capacity: 8}
-	peers := make([]*ethproto.Peer, 9)
+func TestLQCHeadProbeQueueV2421(t *testing.T) {
+	l := newLQCHeadProbeLimiter(8)
+	p := new(ethproto.Peer)
+	h1 := common.HexToHash("0x01")
+	h2 := common.HexToHash("0x02")
 
-	for i := range peers {
-		peers[i] = new(ethproto.Peer)
+	if !l.submit(p, 359613, h1) {
+		t.Fatal("first worker not created")
 	}
-
-	for i := 0; i < 8; i++ {
-		if !l.acquire(peers[i]) {
-			t.Fatalf("peer %d should acquire slot", i)
-		}
-		if l.acquire(peers[i]) {
-			t.Fatalf("peer %d acquired duplicate slot", i)
-		}
+	if l.submit(p, 359633, h2) {
+		t.Fatal("duplicate worker created")
 	}
-
-	if l.acquire(peers[8]) {
-		t.Fatal("concurrency limit exceeded")
+	target, ok := l.next(p)
+	if !ok || target.number != 359633 || target.hash != h2 {
+		t.Fatal("latest announced target was lost")
 	}
+	if _, ok := l.next(p); ok {
+		t.Fatal("unexpected pending target")
+	}
+	if !l.submit(p, 359634, h1) {
+		t.Fatal("peer failed to restart after draining")
+	}
+}
 
-	l.release(peers[0])
+func TestLQCHeadProbeConcurrencyV2421(t *testing.T) {
+	l := newLQCHeadProbeLimiter(8)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	active, peak := 0, 0
 
-	if !l.acquire(peers[8]) {
-		t.Fatal("released slot was not reusable")
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l.slots <- struct{}{}
+			mu.Lock()
+			active++
+			if active > peak {
+				peak = active
+			}
+			mu.Unlock()
+			mu.Lock()
+			active--
+			mu.Unlock()
+			<-l.slots
+		}()
+	}
+	wg.Wait()
+	if peak > 8 {
+		t.Fatalf("too many concurrent probes: %d", peak)
 	}
 }
