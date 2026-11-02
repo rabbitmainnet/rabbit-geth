@@ -213,6 +213,8 @@ type skeleton struct {
 	chain                  chainReader    // Underlying block chain
 	lqcHashAnchored        bool
 	rabbitLCQPreferredPeer string // Preferred replacement peer for LCQ recovery
+	rabbitLCQAttemptHash   common.Hash
+	rabbitLCQAttempted     map[string]bool
 
 	peers *peerSet                   // Set of peers we can sync from
 	idles map[string]*peerConnection // Set of idle peers in the current sync cycle
@@ -412,6 +414,8 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 	}
 	// Create the scratch space to fill with concurrently downloaded headers
 	s.rabbitLCQPreferredPeer = ""
+	s.rabbitLCQAttemptHash = common.Hash{}
+	s.rabbitLCQAttempted = make(map[string]bool)
 	s.scratchSpace = make([]*types.Header, scratchHeaders)
 	defer func() { s.scratchSpace = nil }() // don't hold on to references after sync
 
@@ -518,6 +522,7 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 					var replacement string
 					for id, candidate := range s.idles {
 						if id != pending.peer &&
+							!s.rabbitLCQAttempted[id] &&
 							skeletonPeerCanServeHeader(candidate.peer, pending.head) {
 							replacement = id
 							break
@@ -552,6 +557,7 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 						if pending.peer == peerid ||
 							pending.anchor == (common.Hash{}) ||
 							time.Since(pending.started) < rabbitLCQHandoffGrace ||
+							s.rabbitLCQAttempted[peerid] ||
 							!skeletonPeerCanServeHeader(event.peer.peer, pending.head) {
 							continue
 						}
@@ -844,11 +850,19 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 		}
 		// Found a task and have peers available, assign it
 		requestedHead := s.scratchHead - uint64(task*requestHeaders)
+		if s.lqcHashAnchored {
+			anchor := s.progress.Subchains[0].Next
+			if anchor != s.rabbitLCQAttemptHash {
+				s.rabbitLCQAttemptHash = anchor
+				s.rabbitLCQAttempted = make(map[string]bool)
+			}
+		}
 		eligible := -1
 
 		if s.lqcHashAnchored && s.rabbitLCQPreferredPeer != "" {
 			for i, candidate := range idlers.peers {
 				if candidate.id == s.rabbitLCQPreferredPeer &&
+					!s.rabbitLCQAttempted[candidate.id] &&
 					skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
 					eligible = i
 					break
@@ -858,16 +872,29 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 
 		if eligible < 0 {
 			for index, candidate := range idlers.peers {
+				if (!s.lqcHashAnchored || !s.rabbitLCQAttempted[candidate.id]) &&
+					skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
+					eligible = index
+					break
+				}
+			}
+		}
+		if eligible < 0 && s.lqcHashAnchored {
+			for index, candidate := range idlers.peers {
 				if skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
 					eligible = index
 					break
 				}
 			}
 		}
+
 		if eligible < 0 {
 			continue
 		}
 		idle := idlers.peers[eligible]
+		if s.lqcHashAnchored {
+			s.rabbitLCQAttempted[idle.id] = true
+		}
 		if s.lqcHashAnchored {
 			s.rabbitLCQPreferredPeer = ""
 		}
