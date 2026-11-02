@@ -128,6 +128,10 @@ func (dl *downloadTester) dropPeer(id string) {
 }
 
 type downloadTesterPeer struct {
+	headerRequests atomic.Int64
+	numberRequests atomic.Int64
+	headerDelay    time.Duration
+	dropHeaders    bool
 	dl             *downloadTester
 	withholdBodies map[common.Hash]struct{}
 	corruptBodies  bool // if set, the peer serves incorrect blocks
@@ -153,6 +157,7 @@ func unmarshalRlpHeaders(rlpdata []rlp.RawValue) []*types.Header {
 // origin; associated with a particular peer in the download tester. The returned
 // function can be used to retrieve batches of headers from the particular peer.
 func (dlp *downloadTesterPeer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
+	dlp.headerRequests.Add(1)
 	// Service the header query via the live handler code
 	rlpHeaders := eth.ServiceGetBlockHeadersQuery(dlp.chain, &eth.GetBlockHeadersRequest{
 		Origin: eth.HashOrNumber{
@@ -179,6 +184,12 @@ func (dlp *downloadTesterPeer) RequestHeadersByHash(origin common.Hash, amount i
 		Done: make(chan error, 1), // Ignore the returned status
 	}
 	go func() {
+		if dlp.dropHeaders {
+			return
+		}
+		if dlp.headerDelay > 0 {
+			time.Sleep(dlp.headerDelay)
+		}
 		sink <- res
 	}()
 	return req, nil
@@ -188,6 +199,7 @@ func (dlp *downloadTesterPeer) RequestHeadersByHash(origin common.Hash, amount i
 // origin; associated with a particular peer in the download tester. The returned
 // function can be used to retrieve batches of headers from the particular peer.
 func (dlp *downloadTesterPeer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
+	dlp.numberRequests.Add(1)
 	// Service the header query via the live handler code
 	rlpHeaders := eth.ServiceGetBlockHeadersQuery(dlp.chain, &eth.GetBlockHeadersRequest{
 		Origin: eth.HashOrNumber{
@@ -214,6 +226,13 @@ func (dlp *downloadTesterPeer) RequestHeadersByNumber(origin uint64, amount int,
 		Done: make(chan error, 1), // Ignore the returned status
 	}
 	go func() {
+		if dlp.dropHeaders {
+			return
+		}
+		if dlp.headerDelay > 0 {
+			time.Sleep(dlp.headerDelay)
+		}
+
 		sink <- res
 	}()
 	return req, nil
