@@ -139,8 +139,9 @@ type headUpdate struct {
 // That is only included to allow the runloop to match a response to the task being
 // synced without having yet another set of maps.
 type headerRequest struct {
-	peer string // Peer to which this request is assigned
-	id   uint64 // Request ID of this request
+	started time.Time // Inicio da atribuicao
+	peer    string    // Peer to which this request is assigned
+	id      uint64    // Request ID of this request
 
 	deliver chan *headerResponse // Channel to deliver successful response on
 	revert  chan *headerRequest  // Channel to deliver request failure on
@@ -207,10 +208,13 @@ type backfiller interface {
 // is wasted disk IO, but it's a price we're going to pay to keep things simple
 // for now.
 type skeleton struct {
-	db              ethdb.Database // Database backing the skeleton
-	filler          backfiller     // Chain syncer suspended/resumed by head events
-	chain           chainReader    // Underlying block chain
-	lqcHashAnchored bool           // LCQ recovery follows a selected hash, not arbitrary canonical heights
+	db                     ethdb.Database // Database backing the skeleton
+	filler                 backfiller     // Chain syncer suspended/resumed by head events
+	chain                  chainReader    // Underlying block chain
+	lqcHashAnchored        bool
+	rabbitLCQPreferredPeer string // Preferred replacement peer for LCQ recovery
+	rabbitLCQAttemptHash   common.Hash
+	rabbitLCQAttempted     map[string]bool
 
 	peers *peerSet                   // Set of peers we can sync from
 	idles map[string]*peerConnection // Set of idle peers in the current sync cycle
@@ -409,6 +413,9 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 		s.initSync(head)
 	}
 	// Create the scratch space to fill with concurrently downloaded headers
+	s.rabbitLCQPreferredPeer = ""
+	s.rabbitLCQAttemptHash = common.Hash{}
+	s.rabbitLCQAttempted = make(map[string]bool)
 	s.scratchSpace = make([]*types.Header, scratchHeaders)
 	defer func() { s.scratchSpace = nil }() // don't hold on to references after sync
 
@@ -487,6 +494,15 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 	if s.syncStarting != nil {
 		s.syncStarting()
 	}
+	// Rabbit LCQ: acordar o agendador mesmo sem eventos P2P.
+	// Desativado nas redes que nao utilizam LCQ.
+	var rabbitLCQRecoveryTicker *time.Ticker
+	var rabbitLCQRecoveryTick <-chan time.Time
+	if s.lqcHashAnchored {
+		rabbitLCQRecoveryTicker = time.NewTicker(500 * time.Millisecond)
+		rabbitLCQRecoveryTick = rabbitLCQRecoveryTicker.C
+		defer rabbitLCQRecoveryTicker.Stop()
+	}
 	for {
 		// Something happened, try to assign new tasks to any idle peers
 		if !linked {
@@ -494,6 +510,38 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 		}
 		// Wait for something to happen
 		select {
+		case <-rabbitLCQRecoveryTick:
+			// So reatribuir se houver outro peer ocioso
+			// capaz de fornecer o mesmo limite da cadeia.
+			if !linked {
+				for _, pending := range s.requests {
+					if pending.anchor == (common.Hash{}) ||
+						time.Since(pending.started) < rabbitLCQHandoffGrace {
+						continue
+					}
+					var replacement string
+					for id, candidate := range s.idles {
+						if id != pending.peer &&
+							!s.rabbitLCQAttempted[id] &&
+							skeletonPeerCanServeHeader(candidate.peer, pending.head) {
+							replacement = id
+							break
+						}
+					}
+					if replacement == "" {
+						continue
+					}
+					log.Debug("LCQ periodic recovery: reassigning stalled request",
+						"from", pending.peer,
+						"to", replacement,
+						"head", pending.head,
+						"anchor", pending.anchor)
+					s.rabbitLCQPreferredPeer = replacement
+					s.revertRequest(pending)
+					break
+				}
+			}
+
 		case event := <-peering:
 			// A peer joined or left, the tasks queue and allocations need to be
 			// checked for potential assignment or reassignment
@@ -501,6 +549,25 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 			if event.join {
 				log.Debug("Joining skeleton peer", "id", peerid)
 				s.idles[peerid] = event.peer
+
+				// LCQ: uma nova fonte elegivel pode assumir uma
+				// requisicao ancorada que ficou sem resposta.
+				if s.lqcHashAnchored {
+					for _, pending := range s.requests {
+						if pending.peer == peerid ||
+							pending.anchor == (common.Hash{}) ||
+							time.Since(pending.started) < rabbitLCQHandoffGrace ||
+							s.rabbitLCQAttempted[peerid] ||
+							!skeletonPeerCanServeHeader(event.peer.peer, pending.head) {
+							continue
+						}
+						log.Debug("LCQ reassigning delayed hash request",
+							"from", pending.peer, "to", peerid,
+							"head", pending.head, "anchor", pending.anchor)
+						s.revertRequest(pending)
+						break
+					}
+				}
 			} else {
 				log.Debug("Leaving skeleton peer", "id", peerid)
 				s.revertRequests(peerid)
@@ -742,6 +809,8 @@ func (s *skeleton) processNewHead(head *types.Header, final *types.Header) error
 	return nil
 }
 
+const rabbitLCQHandoffGrace = 2 * time.Second
+
 // assignTasks attempts to match idle peers to pending header retrievals.
 func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRequest, cancel chan struct{}) {
 	// Sort the peers by download capacity to use faster ones if many available
@@ -781,17 +850,54 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 		}
 		// Found a task and have peers available, assign it
 		requestedHead := s.scratchHead - uint64(task*requestHeaders)
-		eligible := -1
-		for index, candidate := range idlers.peers {
-			if skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
-				eligible = index
-				break
+		if s.lqcHashAnchored {
+			anchor := s.progress.Subchains[0].Next
+			if anchor != s.rabbitLCQAttemptHash {
+				s.rabbitLCQAttemptHash = anchor
+				s.rabbitLCQAttempted = make(map[string]bool)
 			}
 		}
+		eligible := -1
+
+		if s.lqcHashAnchored && s.rabbitLCQPreferredPeer != "" {
+			for i, candidate := range idlers.peers {
+				if candidate.id == s.rabbitLCQPreferredPeer &&
+					!s.rabbitLCQAttempted[candidate.id] &&
+					skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
+					eligible = i
+					break
+				}
+			}
+		}
+
+		if eligible < 0 {
+			for index, candidate := range idlers.peers {
+				if (!s.lqcHashAnchored || !s.rabbitLCQAttempted[candidate.id]) &&
+					skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
+					eligible = index
+					break
+				}
+			}
+		}
+		if eligible < 0 && s.lqcHashAnchored {
+			for index, candidate := range idlers.peers {
+				if skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
+					eligible = index
+					break
+				}
+			}
+		}
+
 		if eligible < 0 {
 			continue
 		}
 		idle := idlers.peers[eligible]
+		if s.lqcHashAnchored {
+			s.rabbitLCQAttempted[idle.id] = true
+		}
+		if s.lqcHashAnchored {
+			s.rabbitLCQPreferredPeer = ""
+		}
 		idlers.peers = append(idlers.peers[:eligible], idlers.peers[eligible+1:]...)
 		idlers.caps = append(idlers.caps[:eligible], idlers.caps[eligible+1:]...)
 
@@ -809,6 +915,7 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 		}
 		// Generate the network query and send it to the peer
 		req := &headerRequest{
+			started: time.Now(),
 			peer:    idle.id,
 			id:      reqid,
 			deliver: success,
@@ -894,6 +1001,9 @@ func (s *skeleton) executeTask(peer *peerConnection, req *headerRequest) {
 		// a second, hard-timeout mechanism.
 		s.drop(peer.id)
 
+	case <-req.stale:
+		// Reatribuida: descartar qualquer resposta posterior.
+
 	case res := <-resCh:
 		// Headers successfully retrieved, update the metrics
 		headers := *res.Res.(*eth.BlockHeadersRequest)
@@ -962,6 +1072,8 @@ func (s *skeleton) executeTask(peer *peerConnection, req *headerRequest) {
 				headers: headers,
 			}:
 			case <-req.cancel:
+			case <-req.stale:
+				// Request superseded by LCQ recovery.
 			}
 		}
 	}
@@ -1002,6 +1114,12 @@ func (s *skeleton) scheduleRevertRequest(req *headerRequest) {
 // Note, this needs to run on the event runloop thread to reschedule to idle peers.
 // On peer threads, use scheduleRevertRequest.
 func (s *skeleton) revertRequest(req *headerRequest) {
+	// A failed or delayed request must never release a task
+	// that has already been reassigned to another request.
+	current, ok := s.requests[req.id]
+	if !ok || current != req {
+		return
+	}
 	log.Trace("Reverting header request", "peer", req.peer, "reqid", req.id)
 	select {
 	case <-req.stale:
@@ -1064,8 +1182,6 @@ func (s *skeleton) processResponse(res *headerResponse) (linked bool, merged boo
 	// Whether the response is valid, we can mark the peer as idle and notify
 	// the scheduler to assign a new task. If the response is invalid, we'll
 	// drop the peer in a bit.
-	s.idles[res.peer.id] = res.peer
-
 	// Ensure the response is for a valid request
 	if _, ok := s.requests[res.reqid]; !ok {
 		// Some internal accounting is broken. A request either times out or it
@@ -1075,6 +1191,7 @@ func (s *skeleton) processResponse(res *headerResponse) (linked bool, merged boo
 		return false, false
 	}
 	delete(s.requests, res.reqid)
+	s.idles[res.peer.id] = res.peer
 
 	// Insert the delivered headers into the scratch space independent of the
 	// content or continuation; those will be validated in a moment
