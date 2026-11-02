@@ -1,0 +1,15 @@
+RABBIT_RELEASE=v2.4.22-rc2
+STATUS=RELEASE_CANDIDATE
+CHAIN_ID=9280
+NETWORK_ID=9280
+SOURCE_COMMIT=d1c8598ff92608fb4400b2f338d820f67c14060c
+BUILD_TAGS=rabbit_workv1 rabbit_randomx
+PLATFORM=linux-amd64
+PACKAGE=rabbit-core-testnet-v2.4.22-rc2-linux-amd64.tar.gz
+PACKAGE_SHA256=a6a344d4b3026e6d2cf9fc67bf5ab417f55df5744bf7db4124aee8d65eeb811b
+RABBIT_NODE_SHA256=3126e03d95b3a43d8815eeb074344760e9505b1b8efd7c433005bfe60fa4b1e0
+VALIDATION=package-check-passed
+STARTUP=isolated-public-testnet-genesis-passed
+SYNC=151552-headers-observed
+LIVE_PEER_RECOVERY=not-yet-validated
+DEPLOYMENT=not-approved
