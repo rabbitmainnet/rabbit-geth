@@ -152,6 +152,50 @@ func TestLQCLocalStateRecoveryAfterCrashV1(t *testing.T) {
 				if pending {
 					t.Fatal("completed recovery retained pending target")
 				}
+
+				// LQC missing-target safety regression:
+				// Never discard an unknown, equal-height or future recovery marker.
+				missing := common.HexToHash("0xfc51711299588c311d31133e1d661830cb9d8497581580f3ed01b344e4c15ea6")
+				for _, tc := range []struct {
+					name    string
+					known   bool
+					number  uint64
+					allowed bool
+				}{
+					{"unknown", false, 0, false},
+					{"future", true, 71, false},
+					{"equal", true, 70, false},
+					{"older-noncanonical", true, 5, false},
+				} {
+					t.Run("missing-target-"+tc.name, func(t *testing.T) {
+						if tc.known {
+							rawdb.WriteHeaderNumber(db, missing, tc.number)
+						} else {
+							rawdb.DeleteHeaderNumber(db, missing)
+						}
+						if err := db.Put(lqcLocalRecoveryKeyV1, missing.Bytes()); err != nil {
+							t.Fatal(err)
+						}
+						err := restarted.RecoverLQCLocalStateV1(missing)
+						if (err == nil) != tc.allowed {
+							t.Fatalf("allowed=%v err=%v", tc.allowed, err)
+						}
+						pending, err := ReadLQCLocalStateRecoveryV1(db)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if tc.allowed && pending != (common.Hash{}) {
+							t.Fatal("obsolete marker retained")
+						}
+						if !tc.allowed && pending != missing {
+							t.Fatal("unresolved recovery marker discarded")
+						}
+					})
+				}
+				rawdb.DeleteHeaderNumber(db, missing)
+				if err := db.Delete(lqcLocalRecoveryKeyV1); err != nil {
+					t.Fatal(err)
+				}
 				if err := restarted.RecoverLQCLocalStateV1(target); err != nil {
 					t.Fatalf("idempotent recovery: %v", err)
 				}
