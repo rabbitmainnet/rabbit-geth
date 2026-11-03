@@ -470,11 +470,8 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 			}
 			peerRange := peer.BlockRange()
 			if !lqcPeerRangeContainsTarget(peerRange, header.Number.Uint64(), header.Hash()) {
-				if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
-					if err := h.downloader.BeaconSync(local, nil); err != nil {
-						peer.Log().Warn("LQC fork-recovery canonical reanchor failed", "number", local.Number, "hash", local.Hash(), "err", err)
-					}
-				}
+				peer.Log().Info("LQC recovery target no longer advertised; ending current wait",
+					"target", header.Number, "hash", header.Hash())
 				break
 			}
 			// Keep an advancing import alive. Only a stalled import times out.
