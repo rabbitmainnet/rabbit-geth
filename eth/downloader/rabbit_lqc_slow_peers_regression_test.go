@@ -18,6 +18,7 @@ func TestRabbitLQCSlowPeersRecovery(t *testing.T) {
 		}
 	})
 	defer tester.terminate()
+	tester.downloader.skeleton.lqcHashAnchored = true
 
 	chain := testChainBase.shorten(blockCacheMaxItems - 15)
 	blocks := chain.blocks[1:]
