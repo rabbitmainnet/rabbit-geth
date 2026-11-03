@@ -1,6 +1,8 @@
 name: Rabbit Core Testnet V2.4.22 Release
 
 on:
+  pull_request:
+    types: [synchronize]
   workflow_dispatch:
     inputs:
       publish_run_id:
