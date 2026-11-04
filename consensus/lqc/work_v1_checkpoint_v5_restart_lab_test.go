@@ -80,5 +80,42 @@ func TestWorkV1CheckpointV5Restart(t *testing.T) {
 		}
 		wg.Wait()
 	})
+	// A locally persisted, internally valid registry snapshot must still match
+	// the canonical header root. An invalid pair must not populate Work caches.
+	t.Run("reject-mismatched-registry-without-poisoning-cache", func(t *testing.T) {
+		original, err := LoadRegistrySnapshot(db, parent.Hash())
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err := original.Registry()
+		if err != nil {
+			t.Fatal(err)
+		}
+		participants := registry.Participants()
+		if len(participants) == 0 {
+			t.Fatal("no participants")
+		}
+		participant := participants[0]
+		participant.LastHeartbeat++
+		registry.entries[participant.Address] = participant
+		altered := newRegistrySnapshot(original.Number, original.Hash, registry)
+		if altered.RegistryRoot == original.RegistryRoot {
+			t.Fatal("test did not change root")
+		}
+		if err := StoreRegistrySnapshot(db, altered); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = StoreRegistrySnapshot(db, original) })
+
+		cold := New(config, db)
+		restored, err := cold.workV1EngineLabRestoreCheckpoint(chain, 512, parent.Hash())
+		if err != nil || restored {
+			t.Fatalf("unexpected restore: restored=%v err=%v", restored, err)
+		}
+		_, cached, err := cold.workV1EngineLabCached(parent.Hash())
+		if err != nil || cached {
+			t.Fatalf("invalid checkpoint polluted Work runtime cache: cached=%v err=%v", cached, err)
+		}
+	})
 	t.Log("Checkpoint V5 do bloco 512 restaurado sem replay desde o bloco 384.")
 }
