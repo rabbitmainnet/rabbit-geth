@@ -143,6 +143,7 @@ func (l *LQC) workV1EngineLabRestoreCheckpoint(
 		return false, nil
 	}
 
+	var expectedRegistryRoot common.Hash
 	if l.consensusLivenessV3Active(number) {
 		var envelope LQCHeaderEnvelopeV4
 		var err error
@@ -153,10 +154,12 @@ func (l *LQC) workV1EngineLabRestoreCheckpoint(
 			)
 			envelope.WorkStateRoot = v5.WorkStateRoot
 			envelope.CommitteeClaimRoot = v5.CommitteeClaimRoot
+			expectedRegistryRoot = v5.RegistryRoot
 		} else {
 			envelope, err = ValidateLQCHeaderExtraV4(
 				number, MaxWorkTicketsPerBlockV1, header.Extra,
 			)
+			expectedRegistryRoot = envelope.RegistryRoot
 		}
 		if err != nil {
 			return false, nil
@@ -182,27 +185,32 @@ func (l *LQC) workV1EngineLabRestoreCheckpoint(
 			envelope.WorkStateRoot != checkpoint.Runtime.StateRoot {
 			return false, nil
 		}
+		expectedRegistryRoot = envelope.RegistryRoot
 	}
 
 	state, err := workV1EngineLabRuntimeFor(l)
 	if err != nil {
 		return false, err
 	}
+	// Validate the registry checkpoint before exposing any restored runtime.
+	// Otherwise a failed registry restore leaves a Work runtime cached under
+	// the canonical block hash and contaminates subsequent replay attempts.
+	registrySnapshot, registryErr := LoadRegistrySnapshot(l.db, hash)
+	if registryErr != nil || registrySnapshot == nil ||
+		registrySnapshot.Number != number || registrySnapshot.Hash != hash ||
+		registrySnapshot.RegistryRoot != expectedRegistryRoot {
+		return false, nil
+	}
+	if _, registryErr = registrySnapshot.Registry(); registryErr != nil {
+		return false, nil
+	}
+
 	state.mu.Lock()
 	state.runtimes[hash] = checkpoint.Runtime
 	if checkpoint.HasClaimLedger && checkpoint.ClaimLedger != nil {
 		state.claimLedgers[hash] = checkpoint.ClaimLedger.clone()
 	}
 	state.mu.Unlock()
-
-	registrySnapshot, registryErr := LoadRegistrySnapshot(l.db, hash)
-	if registryErr != nil || registrySnapshot == nil ||
-		registrySnapshot.Number != number || registrySnapshot.Hash != hash {
-		return false, nil
-	}
-	if _, registryErr = registrySnapshot.Registry(); registryErr != nil {
-		return false, nil
-	}
 	l.rememberRegistrySnapshot(registrySnapshot)
 
 	log.Info("Restored canonical LQC recovery checkpoint",
