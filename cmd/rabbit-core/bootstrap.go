@@ -21,7 +21,7 @@ import (
 // Never publish a release with an unverified URL. The URL identifies immutable bytes.
 var rabbitBootstrapURL string
 
-const rabbitBootstrapSHA256 = "a3d79f8924bd019cac2d7d8ee1c3674a1db2b7b5e176a227a16b26c5d5193825"
+const rabbitBootstrapSHA256 = "4b51521255b44226c13900160f8009dc740645a49e252d60f821497f5ad0ff46"
 const maxBootstrapDownload int64 = 16 << 30
 const maxBootstrapExpanded int64 = 40 << 30
 

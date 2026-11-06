@@ -65,6 +65,11 @@ func TestRabbitFork320000StartupExistingDatabase(t *testing.T) {
 				t.Fatal("schedule not persisted")
 			}
 
+			if persisted.LQC.WorkSeatLivenessV2Block != RabbitTestnetWorkSeatLivenessV2Block {
+				t.Fatalf("startup omitted or changed WorkSeat liveness schedule: got %d, want %d",
+					persisted.LQC.WorkSeatLivenessV2Block, RabbitTestnetWorkSeatLivenessV2Block)
+			}
+			persisted.LQC.WorkSeatLivenessV2Block = g.Config.LQC.WorkSeatLivenessV2Block
 			persisted.LQC.VRFEconomicsV2Block = 0
 			persisted.LQC.WorkSeatAdmissionV2Block = 0
 			after, err := json.Marshal(persisted)

@@ -16,10 +16,14 @@ import (
 var rabbitBootstrapPartsBaseURL string
 
 var rabbitBootstrapPartHashes = [...]string{
-	"430adeda090d1c86fdbf7069456265a6ea8f043052dff010d84b9a3a7dacb2ac",
-	"3a39e31443d1045f8f6e962bbed7d25fbd4a9338b13c99b30ddfa88ee717e97c",
-	"9d89ac83b77595ef4d546499fc88b18ee0f102ceef9bee92bbc6d917423cb0cd",
-	"273840520288096bd0a4ac3478fe156d65ad17080ed63607b26bbc1e9adaa51a",
+	"cda78f76a3e834bc108403597d5123f41975486d083adcdb7cd357e983b0500c",
+	"5dd4334127dedc5e43f255d388f75e8578e897c4206beac75767ef77960ae5ba",
+	"41d8766a07c54a3913d0a74ae060a02b7b2437cad664ec74a490ef043946e92d",
+	"498abc86ba3bb2c10aeff681c5656255dd9d6932e9268248838a8e96209d624a",
+	"cf3d9be982c0bbe9ecc0aae1979bac820592fe4cbd01c5c41758f7ed9c3676cc",
+	"f9979b44bdb53e87750838b7959b7389b2af6d5e7f8fa2a906f8efb2b80594ee",
+	"ad6229db7d95267ac269ae53ebb2d167f798fd451e05b012175c3712cee53c9a",
+	"3d02a3b5d7b1ee8e9511d35a5c751f0295cc39b5b28170937d20d7ecd78c51b0",
 }
 
 func bootstrapMultipartFrom(ctx context.Context, dataDir, baseURL string) error {
@@ -60,7 +64,7 @@ func bootstrapMultipartFrom(ctx context.Context, dataDir, baseURL string) error 
 	fmt.Println("Rabbit Bootstrap: preparing verified blockchain snapshot...")
 	for i, expected := range rabbitBootstrapPartHashes {
 		fmt.Printf("Rabbit Bootstrap: checking/downloading part %d of %d...\n", i+1, len(rabbitBootstrapPartHashes))
-		name := fmt.Sprintf("rabbit-testnet-bootstrap-v2411.part-%03d", i)
+		name := fmt.Sprintf("rabbit-testnet-bootstrap-385509.part-%03d", i)
 		part := filepath.Join(dataDir, ".rabbit-bootstrap-"+name)
 
 		if err := downloadPartIfNeeded(ctx, client,

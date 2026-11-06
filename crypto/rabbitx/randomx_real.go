@@ -78,10 +78,16 @@ type FullHasher struct {
 }
 
 func NewLightHasher() (*LightHasher, error) {
+	if err := verifyRuntimeProfile(); err != nil {
+		return nil, err
+	}
 	return &LightHasher{}, nil
 }
 
 func NewFullHasher() (*FullHasher, error) {
+	if err := verifyRuntimeProfile(); err != nil {
+		return nil, err
+	}
 	return &FullHasher{}, nil
 }
 

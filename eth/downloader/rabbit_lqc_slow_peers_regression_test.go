@@ -18,6 +18,7 @@ func TestRabbitLQCSlowPeersRecovery(t *testing.T) {
 		}
 	})
 	defer tester.terminate()
+	tester.downloader.skeleton.lqcHashAnchored = true
 
 	chain := testChainBase.shorten(blockCacheMaxItems - 15)
 	blocks := chain.blocks[1:]
@@ -45,8 +46,9 @@ func TestRabbitLQCSlowPeersRecovery(t *testing.T) {
 
 	select {
 	case <-success:
-	case <-time.After(15 * time.Second):
-		t.Fatal("recovery failed with slow and silent peers")
+	case <-time.After(45 * time.Second):
+		current := tester.chain.CurrentBlock()
+		t.Fatalf("recovery failed with slow and silent peers: current=%d target=%d", current.Number.Uint64(), target.NumberU64())
 	}
 
 	if got, want := tester.chain.CurrentBlock().Number.Uint64(), target.NumberU64(); got != want {

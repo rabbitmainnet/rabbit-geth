@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -35,11 +36,12 @@ const (
 )
 
 type LQC struct {
-	config        *params.LQCConfig
-	chainID       *big.Int
-	db            ethdb.Database
-	registryCache *registrySnapshotCache
-	registryPool  *RegistryOperationPool
+	recoveryStopping atomic.Bool
+	config           *params.LQCConfig
+	chainID          *big.Int
+	db               ethdb.Database
+	registryCache    *registrySnapshotCache
+	registryPool     *RegistryOperationPool
 }
 
 // verifiedHeaderChain exposes headers which have already passed verification in
@@ -1107,4 +1109,9 @@ func (l *LQC) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, par
 
 func (l *LQC) Close() error {
 	return nil
+}
+
+// StopLocalReconstruction cancels replay before service workers join.
+func (l *LQC) StopLocalReconstruction() {
+	l.recoveryStopping.Store(true)
 }

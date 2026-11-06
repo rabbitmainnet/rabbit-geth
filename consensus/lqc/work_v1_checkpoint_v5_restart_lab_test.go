@@ -80,5 +80,63 @@ func TestWorkV1CheckpointV5Restart(t *testing.T) {
 		}
 		wg.Wait()
 	})
+
+	t.Run("pre-close-selection-carrier-restart", func(t *testing.T) {
+		carrier := workV1EngineLabAncestorHeader(chain, 512, parent.Hash(), 511)
+		if carrier == nil {
+			t.Fatal("missing pre-close header")
+		}
+		present, err := db.Has(workV1EngineCheckpointKeyV1(carrier.Hash()))
+		if err != nil || !present {
+			t.Fatalf("pre-close checkpoint not persisted: present=%v err=%v", present, err)
+		}
+		cold := New(config, db)
+		restored, err := cold.workV1EngineLabRestoreCheckpoint(chain, 511, carrier.Hash())
+		if err != nil || !restored {
+			t.Fatalf("pre-close checkpoint not restored: restored=%v err=%v", restored, err)
+		}
+		runtime, err := cold.workV1EngineLabRuntimeAt(chain, 511, carrier.Hash())
+		if err != nil || runtime == nil || runtime.Work.Number != 511 ||
+			runtime.Work.Hash != carrier.Hash() {
+			t.Fatalf("incorrect pre-close runtime: err=%v", err)
+		}
+	})
+	// A locally persisted, internally valid registry snapshot must still match
+	// the canonical header root. An invalid pair must not populate Work caches.
+	t.Run("reject-mismatched-registry-without-poisoning-cache", func(t *testing.T) {
+		original, err := LoadRegistrySnapshot(db, parent.Hash())
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err := original.Registry()
+		if err != nil {
+			t.Fatal(err)
+		}
+		participants := registry.Participants()
+		if len(participants) == 0 {
+			t.Fatal("no participants")
+		}
+		participant := participants[0]
+		participant.LastHeartbeat++
+		registry.entries[participant.Address] = participant
+		altered := newRegistrySnapshot(original.Number, original.Hash, registry)
+		if altered.RegistryRoot == original.RegistryRoot {
+			t.Fatal("test did not change root")
+		}
+		if err := StoreRegistrySnapshot(db, altered); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = StoreRegistrySnapshot(db, original) })
+
+		cold := New(config, db)
+		restored, err := cold.workV1EngineLabRestoreCheckpoint(chain, 512, parent.Hash())
+		if err != nil || restored {
+			t.Fatalf("unexpected restore: restored=%v err=%v", restored, err)
+		}
+		_, cached, err := cold.workV1EngineLabCached(parent.Hash())
+		if err != nil || cached {
+			t.Fatalf("invalid checkpoint polluted Work runtime cache: cached=%v err=%v", cached, err)
+		}
+	})
 	t.Log("Checkpoint V5 do bloco 512 restaurado sem replay desde o bloco 384.")
 }
