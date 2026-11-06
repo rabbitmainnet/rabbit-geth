@@ -80,6 +80,27 @@ func TestWorkV1CheckpointV5Restart(t *testing.T) {
 		}
 		wg.Wait()
 	})
+
+	t.Run("pre-close-selection-carrier-restart", func(t *testing.T) {
+		carrier := workV1EngineLabAncestorHeader(chain, 512, parent.Hash(), 511)
+		if carrier == nil {
+			t.Fatal("missing pre-close header")
+		}
+		present, err := db.Has(workV1EngineCheckpointKeyV1(carrier.Hash()))
+		if err != nil || !present {
+			t.Fatalf("pre-close checkpoint not persisted: present=%v err=%v", present, err)
+		}
+		cold := New(config, db)
+		restored, err := cold.workV1EngineLabRestoreCheckpoint(chain, 511, carrier.Hash())
+		if err != nil || !restored {
+			t.Fatalf("pre-close checkpoint not restored: restored=%v err=%v", restored, err)
+		}
+		runtime, err := cold.workV1EngineLabRuntimeAt(chain, 511, carrier.Hash())
+		if err != nil || runtime == nil || runtime.Work.Number != 511 ||
+			runtime.Work.Hash != carrier.Hash() {
+			t.Fatalf("incorrect pre-close runtime: err=%v", err)
+		}
+	})
 	// A locally persisted, internally valid registry snapshot must still match
 	// the canonical header root. An invalid pair must not populate Work caches.
 	t.Run("reject-mismatched-registry-without-poisoning-cache", func(t *testing.T) {

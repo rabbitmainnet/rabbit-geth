@@ -166,14 +166,14 @@ func (bc *BlockChain) RecoverLQCLocalStateV1(target common.Hash) error {
 	}
 	// Collect hashes first, so a missing body or a disconnected branch is
 	// detected before execution. Bound memory and reject unexpected deep gaps.
-	const maxBlocks = 4096
+	// Bound recovery by the repaired head, not an arbitrary block count.
 	var reverse []common.Hash
 	for block := tip; ; {
 		if bc.GetCanonicalHash(block.NumberU64()) == block.Hash() && bc.HasState(block.Root()) {
 			break
 		}
-		if block.NumberU64() == 0 || len(reverse) == maxBlocks {
-			return fmt.Errorf("LQC recovery has no available local ancestor within %d blocks", maxBlocks)
+		if block.NumberU64() <= head.Number.Uint64() {
+			return fmt.Errorf("LQC recovery has no available canonical ancestor at repaired head %d", head.Number.Uint64())
 		}
 		reverse = append(reverse, block.Hash())
 		parent := bc.GetBlock(block.ParentHash(), block.NumberU64()-1)

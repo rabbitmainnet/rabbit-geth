@@ -1139,6 +1139,9 @@ func (s *Ethereum) setupDiscovery() error {
 // Stop implements node.Lifecycle, terminating all internal goroutines used by the
 // Ethereum protocol.
 func (s *Ethereum) Stop() error {
+	if canceler, ok := s.engine.(interface{ StopLocalReconstruction() }); ok {
+		canceler.StopLocalReconstruction()
+	}
 	// Stop all the peer-related stuff first.
 	s.discmix.Close()
 	s.dropper.Stop()

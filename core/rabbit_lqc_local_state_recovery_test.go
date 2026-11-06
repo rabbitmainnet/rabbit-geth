@@ -19,7 +19,7 @@ import (
 
 func TestLQCLocalStateRecoveryAfterCrashV1(t *testing.T) {
 	for _, scheme := range []string{rawdb.HashScheme, rawdb.PathScheme} {
-		for _, fault := range []string{"valid", "missing-body", "invalid-body"} {
+		for _, fault := range []string{"valid", "missing-body", "invalid-body", "deep"} {
 			name := scheme + "/" + fault
 			t.Run(name, func(t *testing.T) {
 				dir := t.TempDir()
@@ -49,7 +49,11 @@ func TestLQCLocalStateRecoveryAfterCrashV1(t *testing.T) {
 				engine := ethash.NewFullFaker()
 				defer engine.Close()
 				var tx *types.Transaction
-				_, blocks, _ := GenerateChainWithGenesis(genesis, engine, 70, func(i int, b *BlockGen) {
+				blockCount := 70
+				if fault == "deep" {
+					blockCount = 4101
+				}
+				_, blocks, _ := GenerateChainWithGenesis(genesis, engine, blockCount, func(i int, b *BlockGen) {
 					if i == 5 {
 						var err error
 						tx, err = types.SignTx(types.NewTransaction(0, recipient, big.NewInt(7), 21000, big.NewInt(2*params.InitialBaseFee), nil), types.LatestSigner(&config), key)
@@ -71,7 +75,17 @@ func TestLQCLocalStateRecoveryAfterCrashV1(t *testing.T) {
 				if err := chain.triedb.Commit(blocks[3].Root(), false); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := chain.InsertChain(blocks[4:]); err != nil {
+				if fault == "deep" {
+					// Persist blocks but deliberately omit their state.
+					for _, block := range blocks[4:] {
+						rawdb.WriteBlock(db, block)
+						rawdb.WriteCanonicalHash(db, block.Hash(), block.NumberU64())
+					}
+					tip := blocks[len(blocks)-1]
+					rawdb.WriteHeadBlockHash(db, tip.Hash())
+					rawdb.WriteHeadHeaderHash(db, tip.Hash())
+					rawdb.WriteHeadFastBlockHash(db, tip.Hash())
+				} else if _, err := chain.InsertChain(blocks[4:]); err != nil {
 					t.Fatal(err)
 				}
 				target := blocks[len(blocks)-1].Hash()
@@ -151,6 +165,10 @@ func TestLQCLocalStateRecoveryAfterCrashV1(t *testing.T) {
 				pending, _ := db.Has(lqcLocalRecoveryKeyV1)
 				if pending {
 					t.Fatal("completed recovery retained pending target")
+				}
+
+				if fault == "deep" {
+					return
 				}
 
 				// LQC missing-target safety regression:

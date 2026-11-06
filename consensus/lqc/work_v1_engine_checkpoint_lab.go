@@ -59,7 +59,7 @@ func (l *LQC) persistWorkV1EngineCheckpointIfReady(headerHash common.Hash) {
 	if runtime == nil || runtime.Work == nil ||
 		runtime.Work.Hash != headerHash ||
 		runtime.Work.Number == 0 ||
-		runtime.Work.Number%l.registryCheckpointInterval() != 0 {
+		!l.localRecoveryCheckpointNumber(runtime.Work.Number) {
 		state.mu.Unlock()
 		return
 	}
@@ -104,7 +104,7 @@ func (l *LQC) workV1EngineLabRestoreCheckpoint(
 	if l == nil || l.db == nil || chain == nil ||
 		chain.Config() == nil || chain.Config().ChainID == nil ||
 		hash == (common.Hash{}) || number == 0 ||
-		number%l.registryCheckpointInterval() != 0 {
+		!l.localRecoveryCheckpointNumber(number) {
 		return false, nil
 	}
 
