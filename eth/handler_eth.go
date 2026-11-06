@@ -268,13 +268,34 @@ func (h *ethHandler) requestAndSyncLQCHead(peer *eth.Peer, number uint64, hash c
 		return
 	}
 	defer req.Close()
+	// Retire an outstanding request as soon as its target is no longer needed.
+	// This also avoids logging a timeout for a block imported by another peer.
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 
 	var res *eth.Response
-	select {
-	case res = <-resCh:
-	case <-time.After(5 * time.Second):
-		peer.Log().Warn("LQC fork-recovery target request timeout", "target", number, "hash", hash)
-		return
+waitHeader:
+	for {
+		select {
+		case res = <-resCh:
+			break waitHeader
+		case <-ticker.C:
+			if !shouldStartLQCSync(h.chain.CurrentBlock(), number, hash) {
+				peer.Log().Debug("LQC target already reached while awaiting header",
+					"target", number, "hash", hash)
+				return
+			}
+		case <-timer.C:
+			if shouldStartLQCSync(h.chain.CurrentBlock(), number, hash) {
+				peer.Log().Warn("LQC fork-recovery target request timeout",
+					"target", number, "hash", hash)
+			}
+			return
+		case <-h.quitSync:
+			return
+		}
 	}
 	if res == nil {
 		return
@@ -393,6 +414,33 @@ func (h *ethHandler) wakeLQCSync() {
 	}
 }
 
+// extendOrReplaceLQCSyncV1 first attempts a compatible extension.
+// An incompatible but still-needed head may replace the skeleton target.
+// Consensus validation remains the responsibility of the downloader.
+func (h *ethHandler) extendOrReplaceLQCSyncV1(next *lqcSyncTarget) error {
+	if next == nil || next.peer == nil || next.header == nil || next.header.Number == nil {
+		return fmt.Errorf("invalid LQC replacement target")
+	}
+	err := h.downloader.BeaconExtend(next.header)
+	if err == nil {
+		return nil
+	}
+	if !downloader.IsLQCBeaconHeadConflict(err) {
+		return err
+	}
+
+	number := next.header.Number.Uint64()
+	hash := next.header.Hash()
+	if !lqcForkRecoveryTargetNeededV1(
+		h.chain.CurrentBlock(), next.header, h.chain.GetCanonicalHash(number),
+	) || !lqcPeerRangeContainsTarget(next.peer.BlockRange(), number, hash) {
+		return err
+	}
+	next.peer.Log().Info("LQC replacing incompatible recovery target",
+		"target", number, "hash", hash, "extensionError", err)
+	return h.downloader.BeaconSync(next.header, nil)
+}
+
 func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 	syncEvents := make(chan downloader.SyncEvent, 16)
 	subscription := h.downloader.SubscribeSyncEvents(syncEvents)
@@ -427,6 +475,9 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 		}
 		ticker := time.NewTicker(250 * time.Millisecond)
 		failed := false
+		failedExtension := false
+		var failedHash common.Hash
+		var failedProgress uint64
 	waitRecovery:
 		for {
 			// Direct block import can resolve the fork after BeaconSync starts.
@@ -441,25 +492,34 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 			// integrates them without cancelling downloads. If the newest queued
 			// target requires a fork or gap repair, let the outer loop force that
 			// target now instead of ignoring it until the two-minute deadline.
+
 			if next := h.takeBetterPendingLQCSyncTargetV1(target); next != nil {
-				if err := h.downloader.BeaconExtend(next.header); err != nil {
+				nextHash := next.header.Hash()
+				if lqcShouldDeferFailedExtensionV1(
+					failedExtension, failedHash, nextHash,
+					failedProgress, progressNumber,
+				) {
 					h.restorePendingLQCSyncTargetV1(next)
-					peer.Log().Info("LQC fork-recovery switching queued target", "from", header.Number, "to", next.header.Number, "reason", err)
-					break
+				} else if err := h.extendOrReplaceLQCSyncV1(next); err != nil {
+					h.restorePendingLQCSyncTargetV1(next)
+					failedExtension = true
+					failedHash = nextHash
+					failedProgress = progressNumber
+					peer.Log().Info("LQC fork-recovery deferred incompatible extension",
+						"from", header.Number, "to", next.header.Number, "reason", err)
+				} else {
+					failedExtension = false
+					target = next
+					peer, header = next.peer, next.header
+					h.lqcSyncMu.Lock()
+					h.lqcSyncCurrent = next
+					h.lqcSyncMu.Unlock()
 				}
-				target = next
-				peer, header = next.peer, next.header
-				h.lqcSyncMu.Lock()
-				h.lqcSyncCurrent = next
-				h.lqcSyncMu.Unlock()
 			}
 			peerRange := peer.BlockRange()
 			if !lqcPeerRangeContainsTarget(peerRange, header.Number.Uint64(), header.Hash()) {
-				if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
-					if err := h.downloader.BeaconSync(local, nil); err != nil {
-						peer.Log().Warn("LQC fork-recovery canonical reanchor failed", "number", local.Number, "hash", local.Hash(), "err", err)
-					}
-				}
+				peer.Log().Info("LQC recovery target no longer advertised; ending current wait",
+					"target", header.Number, "hash", header.Hash())
 				break
 			}
 			// Keep an advancing import alive. Only a stalled import times out.

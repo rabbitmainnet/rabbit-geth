@@ -3,6 +3,7 @@
 package lqc
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"golang.org/x/sync/singleflight"
@@ -855,6 +856,10 @@ func (l *LQC) workV1EngineLabReplayRegistryV3(
 // Coalesce reconstruction of the same immutable block hash. Recursive parent
 // reconstruction uses a strictly older block, hence a different flight key.
 func (l *LQC) workV1EngineLabRuntimeAt(chain consensus.ChainHeaderReader, number uint64, hash common.Hash) (*CanonicalWorkRuntimeStateV1, error) {
+	if l.recoveryStopping.Load() {
+		return nil, context.Canceled
+	}
+
 	if chain == nil || hash == (common.Hash{}) {
 		return nil, ErrWorkV1EngineLabParentMissing
 	}
@@ -912,13 +917,16 @@ func (l *LQC) workV1EngineLabRuntimeAtUnshared(
 	var runtime *CanonicalWorkRuntimeStateV1
 
 	for {
+		if l.recoveryStopping.Load() {
+			return nil, context.Canceled
+		}
 		cached, ok, err := l.workV1EngineLabCached(currentHash)
 		if err != nil {
 			return nil, err
 		}
 		if !ok &&
 			currentNumber > 0 &&
-			currentNumber%l.registryCheckpointInterval() == 0 {
+			l.localRecoveryCheckpointNumber(currentNumber) {
 			restored, restoreErr := l.workV1EngineLabRestoreCheckpoint(
 				chain,
 				currentNumber,
@@ -997,6 +1005,10 @@ func (l *LQC) workV1EngineLabRuntimeAtUnshared(
 	}
 
 	for index := len(pending) - 1; index >= 0; index-- {
+		if l.recoveryStopping.Load() {
+			return nil, context.Canceled
+		}
+
 		header := pending[index]
 		current := header.Number.Uint64()
 
@@ -1035,24 +1047,81 @@ func (l *LQC) workV1EngineLabRuntimeAtUnshared(
 				if err != nil {
 					return nil, err
 				}
-				v4ctx, err := l.workV1EngineLabV4Context(
-					chain,
-					ctx,
-					header.ParentHash,
-				)
-				if err != nil {
-					return nil, err
-				}
-				_, next, nextClaims, _, err :=
-					ValidateAndApplyLQCHeaderExtraV5WithCanonicalRuntimeV1(
-						v4ctx,
-						header.Hash(),
-						header.Extra,
+				var nextClaims *CommitteeClaimLedgerV1
+				// Reconstruct only headers already on the canonical chain.
+				canonical := chain.GetHeaderByNumber(current)
+				if canonical != nil && canonical.Hash() == header.Hash() {
+					if _, err := ValidateLQCHeaderExtraV5(
+						current, MaxWorkTicketsPerBlockV1, header.Extra,
+					); err != nil {
+						return nil, err
+					}
+					if envelopeV5.BlockNumber != current {
+						return nil, ErrLQCHeaderBlockMismatchV4
+					}
+					v3Extra, err := EncodeLQCHeaderExtraV3(
+						envelopeV5.BlockNumber,
+						envelopeV5.RegistryRoot,
+						envelopeV5.WorkStateRoot,
+						envelopeV5.RegistryOperations,
+						envelopeV5.WorkTickets,
+						MaxWorkTicketsPerBlockV1,
 					)
-				if err != nil {
-					return nil, err
+					if err != nil {
+						return nil, err
+					}
+					_, next, err :=
+						ValidateAndApplyLQCHeaderExtraV3WithCanonicalWorkV1(
+							ctx,
+							header.Hash(),
+							v3Extra,
+						)
+					if err != nil {
+						return nil, err
+					}
+					parentClaims, err := l.workV1EngineLabParentClaimLedger(
+						current,
+						header.ParentHash,
+					)
+					if err != nil {
+						return nil, err
+					}
+					nextClaims, err = parentClaims.Apply(
+						current,
+						envelopeV5.CommitteeParticipationClaims,
+					)
+					if err != nil {
+						return nil, err
+					}
+					claimRoot, err := nextClaims.Root()
+					if err != nil {
+						return nil, err
+					}
+					if claimRoot != envelopeV5.CommitteeClaimRoot {
+						return nil, ErrLQCHeaderCommitteeClaimRootMismatchV4
+					}
+					runtime = next
+				} else {
+					v4ctx, err := l.workV1EngineLabV4Context(
+						chain,
+						ctx,
+						header.ParentHash,
+					)
+					if err != nil {
+						return nil, err
+					}
+					var next *CanonicalWorkRuntimeStateV1
+					_, next, nextClaims, _, err =
+						ValidateAndApplyLQCHeaderExtraV5WithCanonicalRuntimeV1(
+							v4ctx,
+							header.Hash(),
+							header.Extra,
+						)
+					if err != nil {
+						return nil, err
+					}
+					runtime = next
 				}
-				runtime = next
 				if err := l.workV1EngineLabRememberClaimLedger(
 					header.Hash(),
 					nextClaims,

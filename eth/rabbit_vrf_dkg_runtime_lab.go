@@ -1010,10 +1010,18 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 		runRequests := processRequests
 		wakeRequests, stopRequests := rabbitVRFStartRequestLaneV1(runtime.stop, time.Second, func() {
 			started := time.Now()
+			warmStarted := time.Now()
 			if err := runtime.warmThresholdSigningKeysV1(); err != nil {
 				log.Debug("Rabbit VRF signing unlock preparation waiting", "err", err)
 			}
+			if elapsed := time.Since(warmStarted); elapsed >= time.Second {
+				log.Info("Rabbit VRF signing warmup slow", "elapsed", elapsed)
+			}
+			requestStarted := time.Now()
 			runRequests()
+			if elapsed := time.Since(requestStarted); elapsed >= time.Second {
+				log.Info("Rabbit VRF request scan slow", "elapsed", elapsed)
+			}
 			if elapsed := time.Since(started); elapsed >= time.Second {
 				log.Info("Rabbit VRF request worker cycle slow", "elapsed", elapsed)
 			}

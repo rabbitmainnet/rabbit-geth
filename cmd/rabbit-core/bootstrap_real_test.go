@@ -13,8 +13,11 @@ func TestRabbitBootstrapRealSnapshot(t *testing.T) {
 		t.Skip("real snapshot test disabled")
 	}
 
-	source := "/mnt/e/RabbitBootstrap-Release"
-	target := "/mnt/e/RabbitBootstrap-Multipart-Test"
+	source := os.Getenv("RABBIT_TEST_BOOTSTRAP_SOURCE")
+	target := os.Getenv("RABBIT_TEST_BOOTSTRAP_TARGET")
+	if source == "" || target == "" {
+		t.Fatal("explicit bootstrap source and disposable target are required")
+	}
 
 	if _, err := os.Stat(target); err == nil {
 		t.Fatal("test target already exists; refusing overwrite")
@@ -27,7 +30,7 @@ func TestRabbitBootstrapRealSnapshot(t *testing.T) {
 	}
 
 	for i, expected := range rabbitBootstrapPartHashes {
-		name := fmt.Sprintf("rabbit-testnet-bootstrap-v2411.part-%03d", i)
+		name := fmt.Sprintf("rabbit-testnet-bootstrap-385509.part-%03d", i)
 		src := filepath.Join(source, name)
 		dst := filepath.Join(target, ".rabbit-bootstrap-"+name)
 		if valid, err := bootstrapFileMatches(src, expected); err != nil || !valid {

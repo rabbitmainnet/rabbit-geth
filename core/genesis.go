@@ -389,6 +389,9 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		if err := ConfigureRabbitTestnetFork320000(db, suppliedHash, genesis.Config); err != nil {
 			return nil, common.Hash{}, nil, err
 		}
+		if err := ConfigureRabbitTestnetWorkSeatLivenessV2(db, suppliedHash, genesis.Config); err != nil {
+			return nil, common.Hash{}, nil, err
+		}
 	}
 	// Commit the genesis if the database is empty
 	ghash := rawdb.ReadCanonicalHash(db, 0)
@@ -455,6 +458,9 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		return nil, common.Hash{}, nil, err
 	}
 	if err := ConfigureRabbitTestnetFork320000(db, ghash, storedCfg); err != nil {
+		return nil, common.Hash{}, nil, err
+	}
+	if err := ConfigureRabbitTestnetWorkSeatLivenessV2(db, ghash, storedCfg); err != nil {
 		return nil, common.Hash{}, nil, err
 	}
 

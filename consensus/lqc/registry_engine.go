@@ -104,7 +104,7 @@ func (l *LQC) rememberRegistrySnapshot(snapshot *RegistrySnapshot) {
 	if l.registryCache != nil && l.registryCache.entries != nil {
 		l.registryCache.entries.Add(snapshot.Hash, snapshot)
 	}
-	if l.db != nil && snapshot.Number%l.registryCheckpointInterval() == 0 {
+	if l.db != nil && l.localRecoveryCheckpointNumber(snapshot.Number) {
 		if err := StoreRegistrySnapshot(l.db, snapshot); err != nil {
 			log.Warn("Failed to store LQC registry checkpoint", "number", snapshot.Number, "hash", snapshot.Hash, "err", err)
 		}
@@ -790,4 +790,11 @@ func (l *LQC) verifyCanonicalRegistryHeader(chain consensus.ChainHeaderReader, h
 		selection.Producer = &selection.Ordered[0]
 	}
 	return selection, child, nil
+}
+
+// Retain both the epoch-close state and its pre-close selection carrier.
+func (l *LQC) localRecoveryCheckpointNumber(number uint64) bool {
+	interval := l.registryCheckpointInterval()
+	remainder := number % interval
+	return remainder == 0 || remainder == interval-1
 }

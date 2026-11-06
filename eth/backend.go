@@ -319,7 +319,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Here we determine genesis hash and active ChainConfig.
 	// We need these to figure out the consensus parameters and to set up history pruning.
-	chainConfig, genesisHash, err := core.LoadChainConfig(chainDb, config.Genesis)
+	chainConfig, genesisHash, err := core.LoadChainConfigForConsensus(chainDb, config.Genesis)
 	if err != nil {
 		return nil, err
 	}
@@ -1139,6 +1139,9 @@ func (s *Ethereum) setupDiscovery() error {
 // Stop implements node.Lifecycle, terminating all internal goroutines used by the
 // Ethereum protocol.
 func (s *Ethereum) Stop() error {
+	if canceler, ok := s.engine.(interface{ StopLocalReconstruction() }); ok {
+		canceler.StopLocalReconstruction()
+	}
 	// Stop all the peer-related stuff first.
 	s.discmix.Close()
 	s.dropper.Stop()
