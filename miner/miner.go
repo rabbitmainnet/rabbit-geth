@@ -389,6 +389,7 @@ func (miner *Miner) lqcDevnetLoop(ctx context.Context) {
 				withdrawals = []*types.Withdrawal{}
 			}
 
+			buildStarted := time.Now()
 			ret := miner.generateWork(ctx, &generateParams{
 				timestamp:   now,
 				forceTime:   false,
@@ -399,6 +400,9 @@ func (miner *Miner) lqcDevnetLoop(ctx context.Context) {
 				beaconRoot:  nil,
 				noTxs:       false,
 			}, false)
+			if elapsed := time.Since(buildStarted); elapsed >= 5*time.Second {
+				log.Warn("LQC block construction slow", "next", head.Number.Uint64()+1, "parentHash", head.Hash(), "queuePos", queuePos, "elapsed", elapsed, "cancelled", ctx.Err() != nil)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -411,7 +415,11 @@ func (miner *Miner) lqcDevnetLoop(ctx context.Context) {
 				continue
 			}
 
+			insertStarted := time.Now()
 			inserted, err := insertLQCBlockIfParentCurrent(miner.chain, head, ret.block)
+			if elapsed := time.Since(insertStarted); elapsed >= 5*time.Second {
+				log.Warn("LQC block insertion slow", "next", head.Number.Uint64()+1, "parentHash", head.Hash(), "elapsed", elapsed)
+			}
 			if err != nil {
 				log.Warn("LQC devnet block insert failed", "number", ret.block.NumberU64(), "err", err)
 				continue

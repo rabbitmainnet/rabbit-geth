@@ -1,0 +1,116 @@
+name: Rabbit Core Testnet V2.4.24 Release
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: "1.25.13"
+  RANDOMX_REPOSITORY: https://github.com/tevador/RandomX.git
+  RANDOMX_COMMIT: 7c761cf007c758056dcb6eb438a32f780f81bdbd
+  TESTNET_GENESIS_SHA256: 4970159f077b62b7aa9bde1f81cb61ae837b42ef64861d7b23241e1af4d75c9f
+
+jobs:
+  native:
+    name: ${{ matrix.target }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+            archive: tar.gz
+          - target: windows-amd64
+            runner: windows-2022
+            archive: zip
+          - target: darwin-arm64
+            runner: macos-15
+            archive: tar.gz
+          - target: darwin-amd64
+            runner: macos-15-intel
+            archive: tar.gz
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out Rabbit Chain
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake nasm
+
+      - name: Install macOS native dependencies
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install cmake nasm
+
+      - name: Build Unix package
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        shell: bash
+        env:
+          RABBIT_TARGET: ${{ matrix.target }}
+        run: scripts/rabbit-release/build-rabbit-core-v2424-native.sh
+
+      - name: Build Windows package
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          RABBIT_TARGET: ${{ matrix.target }}
+        run: scripts/rabbit-release/build-rabbit-core-v2424-windows.ps1
+
+      - name: Upload release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rabbit-core-testnet-v2.4.24-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  manifest:
+    name: Release manifest
+    needs: native
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rabbit-core-testnet-v2.4.24-*
+          path: releases
+          merge-multiple: true
+
+      - name: Create aggregate checksums
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd releases
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' \
+            | LC_ALL=C sort \
+            | while IFS= read -r file; do sha256sum "$file"; done \
+            > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: rabbit-core-testnet-v2.4.24-release-bundle
+          path: releases/*
+          if-no-files-found: error
+          retention-days: 30
