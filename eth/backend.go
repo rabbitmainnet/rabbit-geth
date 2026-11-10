@@ -840,6 +840,19 @@ func (s *Ethereum) lqcHeadStateAvailable(header *types.Header) bool {
 	return true
 }
 
+// Only allow recent, canonical ancestors to confirm a locally advanced head.
+// The peer's advertised hash must be checked against our canonical chain;
+// knowing a peer is connected or behind is not sufficient by itself.
+const lqcPeerConfirmationMaxLag uint64 = 2
+
+func lqcPeerConfirmsRecentAncestor(localNumber, peerNumber uint64, peerHash, canonicalHash common.Hash) bool {
+	return peerNumber < localNumber &&
+		localNumber-peerNumber <= lqcPeerConfirmationMaxLag &&
+		peerHash != (common.Hash{}) &&
+		canonicalHash != (common.Hash{}) &&
+		peerHash == canonicalHash
+}
+
 // lqcPeerHeadConfirmed requires actual peer agreement before local production
 // resumes after a connectivity loss.
 func (s *Ethereum) lqcPeerHeadConfirmed(header *types.Header) bool {
@@ -878,6 +891,14 @@ func (s *Ethereum) lqcPeerHeadConfirmed(header *types.Header) bool {
 			if r.LatestBlockHash == localHash {
 				confirmed = true
 			}
+		} else if r.LatestBlock < localNumber &&
+			localNumber-r.LatestBlock <= lqcPeerConfirmationMaxLag &&
+			lqcPeerConfirmsRecentAncestor(localNumber, r.LatestBlock,
+				r.LatestBlockHash, s.blockchain.GetCanonicalHash(r.LatestBlock)) {
+			// A slightly delayed peer on our *verified canonical ancestry*
+			// confirms connectivity without requiring matching head heights.
+			// Do not relax any check for ahead or competing peers.
+			confirmed = true
 		}
 	}
 	return confirmed
@@ -899,6 +920,8 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 
 	startedAt := time.Now()
 	var syncGate lqcFailedSyncGate
+	var failedSyncRecovery lqcFailedSyncRecoveryGuard
+	var resumeGuard lqcResumeStabilityGuard
 	producerRunning := false
 	producerEnabled := s.config != nil && s.config.Miner.Enabled
 
@@ -924,6 +947,10 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 			return false
 		}
 		if !s.lqcPeerHeadConfirmed(head) || s.lqcProductionNeedsSync(head) {
+			resumeGuard.reset()
+			return false
+		}
+		if !resumeGuard.allow(head.Hash(), time.Now()) {
 			return false
 		}
 		if !s.Synced() {
@@ -946,9 +973,13 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 			}
 			switch ev.Type {
 			case downloader.SyncStarted:
+				failedSyncRecovery.reset()
+				resumeGuard.reset()
 				syncGate.started()
 				stopProducer("downloader sync started")
 			case downloader.SyncFailed:
+				failedSyncRecovery.reset()
+				resumeGuard.reset()
 				// Keep the producer blocked. Starting from a partially imported head
 				// is exactly the fresh-sync failure this gate is designed to prevent.
 				var failedNumber uint64
@@ -959,6 +990,7 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 				stopProducer("downloader sync failed")
 				log.Warn("LQC production remains paused after failed synchronization", "err", ev.Err)
 			case downloader.SyncCompleted:
+				failedSyncRecovery.reset()
 				syncGate.completed()
 				if !markReady("downloader sync completed") {
 					stopProducer("head not confirmed after downloader sync")
@@ -974,8 +1006,24 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 
 		if syncGate.required {
 			head := s.blockchain.CurrentBlock()
-			if !syncGate.failedSync || head == nil || head.Number == nil ||
+			// A falha de sync so libera producao na mesma altura apos
+			// comprovacao repetida do mesmo head canonico, sem sync pendente.
+			if syncGate.failedSync && head != nil && head.Number != nil &&
 				head.Number.Uint64() <= syncGate.failedNumber {
+				if failedSyncRecovery.observe(head.Hash(), time.Now(),
+					s.lqcHeadStateAvailable(head),
+					s.lqcPeerHeadConfirmed(head),
+					!s.lqcProductionNeedsSync(head)) {
+					syncGate.completed()
+					log.Warn("LQC failed-sync released on stable confirmed head",
+						"head", head.Number, "hash", head.Hash())
+					failedSyncRecovery.reset()
+				}
+			} else {
+				failedSyncRecovery.reset()
+			}
+			if syncGate.required && (!syncGate.failedSync || head == nil || head.Number == nil ||
+				head.Number.Uint64() <= syncGate.failedNumber) {
 				continue
 			}
 			if !syncGate.recover(head.Number.Uint64(),
@@ -988,6 +1036,7 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 
 		peers := s.handler.peers.len()
 		if peers <= 0 {
+			resumeGuard.reset()
 			stopProducer("no peers")
 			startedAt = time.Now()
 			continue
@@ -995,7 +1044,9 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 
 		if producerRunning {
 			if s.lqcProductionNeedsSync(s.blockchain.CurrentBlock()) {
+				resumeGuard.reset()
 				stopProducer("peer chain conflict or fork recovery pending")
+				continue
 				// Peer discovery grace belongs to startup or loss of all peers.
 				// Recovery still requires readable state and peer agreement.
 			} else {
@@ -1017,6 +1068,7 @@ func (s *Ethereum) enableLQCWhenReady(syncCh <-chan downloader.SyncEvent, syncSu
 		// Synced() is sticky. After reconnect, require an actual peer
 		// BlockRange agreement with the current local height and hash.
 		if !s.lqcPeerHeadConfirmed(head) {
+			resumeGuard.reset()
 			continue
 		}
 

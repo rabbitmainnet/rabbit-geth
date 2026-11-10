@@ -441,6 +441,23 @@ func (h *ethHandler) extendOrReplaceLQCSyncV1(next *lqcSyncTarget) error {
 	return h.downloader.BeaconSync(next.header, nil)
 }
 
+// lqcRecoveryStallBudget bounds a stalled near-tip fork repair. The two-minute
+// budget remains for larger gaps, where full backfill can legitimately take
+// longer. This only controls the recovery worker's wait; it never selects or
+// accepts a block without downloader and consensus validation.
+func lqcRecoveryStallBudget(local, target *types.Header) time.Duration {
+	const nearTipBudget = 30 * time.Second
+	const backfillBudget = 2 * time.Minute
+	if local == nil || local.Number == nil || target == nil || target.Number == nil {
+		return backfillBudget
+	}
+	// Equal-height forks and gaps of up to two blocks should fail over promptly.
+	if target.Number.Uint64() <= local.Number.Uint64()+2 {
+		return nearTipBudget
+	}
+	return backfillBudget
+}
+
 func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 	syncEvents := make(chan downloader.SyncEvent, 16)
 	subscription := h.downloader.SubscribeSyncEvents(syncEvents)
@@ -468,7 +485,7 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 			continue
 		}
 
-		deadline := time.Now().Add(2 * time.Minute)
+		deadline := time.Now().Add(lqcRecoveryStallBudget(h.chain.CurrentBlock(), header))
 		var progressNumber uint64
 		if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
 			progressNumber = local.Number.Uint64()
@@ -514,6 +531,9 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 					h.lqcSyncMu.Lock()
 					h.lqcSyncCurrent = next
 					h.lqcSyncMu.Unlock()
+					// A newly selected recovery target needs its own stall budget.
+					// Do not inherit an almost-expired deadline from an older fork.
+					deadline = time.Now().Add(lqcRecoveryStallBudget(h.chain.CurrentBlock(), header))
 				}
 			}
 			peerRange := peer.BlockRange()
@@ -526,7 +546,7 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 			if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
 				if number := local.Number.Uint64(); number > progressNumber {
 					progressNumber = number
-					deadline = time.Now().Add(2 * time.Minute)
+					deadline = time.Now().Add(lqcRecoveryStallBudget(local, header))
 				}
 			}
 			if time.Now().After(deadline) {

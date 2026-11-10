@@ -136,6 +136,9 @@ type generateParams struct {
 
 // generateWork generates a sealing block based on the given parameters.
 func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, witness bool) (result *newPayloadResult) {
+	if err := ctx.Err(); err != nil {
+		return &newPayloadResult{err: err}
+	}
 	ctx, span, spanEnd := telemetry.StartSpan(ctx, "miner.generateWork")
 	defer func() {
 		if result != nil && result.err == nil {
@@ -156,6 +159,9 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 		return &newPayloadResult{err: fmt.Errorf("prepare work: %w", err)}
 	}
 	defer work.discard()
+	if err := ctx.Err(); err != nil {
+		return &newPayloadResult{err: err}
+	}
 
 	// Check withdrawals fit max block size.
 	// Due to the cap on withdrawal count, this can actually never happen, but we still need to
@@ -190,6 +196,9 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 				log.Warn("Block building is interrupted", "allowance", common.PrettyDuration(miner.config.Recommit))
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return &newPayloadResult{err: err}
 	}
 	// Construct the block body, the withdrawal list should never be null
 	// if Shanghai has been activated.
@@ -247,9 +256,15 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return &newPayloadResult{err: err}
+	}
 	// Apply the consensus-specific post-transaction changes
 	miner.engine.Finalize(miner.chain, work.header, work.state, &body, uint32(work.tcount+1), work.bal)
 
+	if err := ctx.Err(); err != nil {
+		return &newPayloadResult{err: err}
+	}
 	// Assemble the block for delivery.
 	_, _, assembleSpanEnd := telemetry.StartSpan(ctx, "miner.AssembleBlock")
 	block := core.AssembleBlock(miner.chain, work.header, work.state, &body, work.receipts, work.bal)
@@ -262,6 +277,9 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 		block = block.WithSeal(sealedHeader)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return &newPayloadResult{err: err}
+	}
 	return &newPayloadResult{
 		block:    block,
 		fees:     totalFees(block, work.receipts),
@@ -472,11 +490,17 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 }
 
 func (miner *Miner) commitTransactions(ctx context.Context, env *environment, plainTxs, blobTxs *txorder.TransactionsByPriceAndNonce, interrupt *atomic.Int32) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	ctx, _, spanEnd := telemetry.StartSpan(ctx, "miner.commitTransactions")
 	defer spanEnd(nil)
 
 	isCancun := miner.chainConfig.IsCancun(env.header.Number, env.header.Time)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Check interruption signal and abort building if it's fired.
 		if interrupt != nil {
 			if signal := interrupt.Load(); signal != commitInterruptNone {
