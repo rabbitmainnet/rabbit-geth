@@ -3,17 +3,26 @@
 package eth
 
 import (
+	"errors"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
+	"golang.org/x/sync/singleflight"
 	"time"
 )
 
+// A new proof is announced immediately through finalizationWakeV2.
+// Periodic replay is only for recovery after lost messages and is intentionally
+// slower than the ordinary gossip tick: cryptographic finalization validation
+// is expensive and the old 2-second forced replay ran once per connected peer.
+const rabbitVRFFinalizationReplayIntervalV2 = 30 * time.Second
+
 // Only verified, locally eligible finalizations are gossiped to v2 peers.
 func (n *rabbitVRFDKGTransport) gossipFinalizationsToPeerV2(peer *rabbitVRFDKGPeer, stop <-chan struct{}) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(rabbitVRFFinalizationReplayIntervalV2)
 	defer ticker.Stop()
+	replay := false
 	for {
 		// Do not start another gossip round after peer shutdown.
 		select {
@@ -25,17 +34,42 @@ func (n *rabbitVRFDKGTransport) gossipFinalizationsToPeerV2(peer *rabbitVRFDKGPe
 		// Snapshot the broadcast channel before scanning. If a proof is
 		// finalized during the scan, the old channel closes and wakes us.
 		wake := n.finalizationWakeSignalV2()
-		n.sendFinalizationsToPeerV2(peer)
+		n.sendFinalizationsToPeerV2(peer, replay)
 		select {
 		case <-stop:
 			return
 		case <-wake:
+			// New finalization: send new proofs immediately, without re-sending
+			// ones already acknowledged by a successful local write.
+			replay = false
 		case <-ticker.C:
+			// Keep a bounded repair path for peers that missed an announcement.
+			replay = true
 		}
 	}
 }
 
-func (n *rabbitVRFDKGTransport) sendFinalizationsToPeerV2(peer *rabbitVRFDKGPeer) {
+// rabbitVRFCoalescedFinalizationScanV2 shares only in-flight scans. No cached
+// proofs survive after the scan finishes, so canonical-pending changes and
+// a same-head wake trigger new validation. Keys include the head hash.
+func rabbitVRFCoalescedFinalizationScanV2(
+	flights *singleflight.Group,
+	canonicalHead string,
+	scan func() ([]lqc.RabbitVRFFinalizationV1, error),
+) ([]lqc.RabbitVRFFinalizationV1, error) {
+	if flights == nil || scan == nil {
+		return nil, errors.New("invalid rabbit vrf finalization scan")
+	}
+	v, err, _ := flights.Do(canonicalHead, func() (interface{}, error) {
+		return scan()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.([]lqc.RabbitVRFFinalizationV1), nil
+}
+
+func (n *rabbitVRFDKGTransport) sendFinalizationsToPeerV2(peer *rabbitVRFDKGPeer, replay bool) {
 	if n == nil || n.runtime == nil || n.runtime.backend == nil ||
 		n.runtime.backend.blockchain == nil || peer == nil || peer.rw == nil ||
 		peer.version != rabbitVRFDKGProtocolVersionV2 {
@@ -45,12 +79,21 @@ func (n *rabbitVRFDKGTransport) sendFinalizationsToPeerV2(peer *rabbitVRFDKGPeer
 	if head == nil {
 		return
 	}
-	proofs, err := n.rabbitVRFFinalizationsForBlockV1(head.Number.Uint64() + 1)
+	// A peer burst for the same canonical head must not recompute
+	// BLS12-381 verification independently for every peer. singleflight
+	// coalesces only overlapping scans: it is NOT a persistent cache.
+	// The head hash separates reorgs, while a later wake always rescans.
+	proofs, err := rabbitVRFCoalescedFinalizationScanV2(
+		&n.finalizationScanFlightsV2, head.Hash().Hex(),
+		func() ([]lqc.RabbitVRFFinalizationV1, error) {
+			return n.rabbitVRFFinalizationsForBlockV1(head.Number.Uint64() + 1)
+		},
+	)
 	if err != nil {
 		return
 	}
 	for _, proof := range proofs {
-		if err := peer.sendVerifiedFinalizationV2(proof, true); err != nil {
+		if err := peer.sendVerifiedFinalizationV2(proof, replay); err != nil {
 			return
 		}
 	}

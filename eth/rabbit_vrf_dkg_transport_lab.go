@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/rabbitvrfstate"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -107,6 +108,8 @@ type rabbitVRFDKGTransport struct {
 	partialResults     map[common.Hash]rabbitVRFThresholdResultV1
 	finalizations      map[rabbitVRFFinalizationKeyV1]lqc.RabbitVRFFinalizationV1
 	finalizationWakeV2 chan struct{}
+	// Merge concurrent per-peer validation scans; no result retained between calls.
+	finalizationScanFlightsV2 singleflight.Group
 
 	keysetCertificateSession    common.Hash
 	keysetCertificateRoot       common.Hash
@@ -1445,12 +1448,20 @@ func (n *rabbitVRFDKGTransport) register(
 		return errRabbitVRFDKGPeerKnown
 	}
 	n.peers[id] = peer
+	log.Info("Rabbit VRF DKG peer connected",
+		"peer", id,
+		"protocolVersion", peer.version,
+		"dkgPeers", len(n.peers))
 	return nil
 }
 
 func (n *rabbitVRFDKGTransport) unregister(id string) {
 	n.mu.Lock()
 	delete(n.peers, id)
+	log.Info("Rabbit VRF DKG peer disconnected",
+		"peer", id,
+		"dkgPeers", len(n.peers))
+
 	for shareID, peerID := range n.routes {
 		if peerID == id {
 			delete(n.routes, shareID)

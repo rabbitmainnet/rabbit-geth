@@ -38,7 +38,11 @@ func (runtime *rabbitVRFDKGRuntime) progressDKGV1() error {
 		}
 		context = runtime.currentContext()
 		if len(context.CanonicalTransportBindings) != len(context.CanonicalMembers) {
-			runtime.logDKGWaitV1(context.SessionID, "transport-bindings", "have", len(context.CanonicalTransportBindings), "need", len(context.CanonicalMembers))
+			localCount, remoteCount, uniqueCount := transport.authenticatedTransportArtifactCountsV1()
+			runtime.logDKGWaitV1(context.SessionID, "transport-bindings",
+				"completeKeyset", len(context.CanonicalTransportBindings),
+				"local", localCount, "remote", remoteCount,
+				"unique", uniqueCount, "need", len(context.CanonicalMembers))
 			return nil
 		}
 	}

@@ -3,6 +3,8 @@
 package eth
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -120,24 +122,31 @@ func (n *rabbitVRFDKGTransport) sendRetainedRemotePolynomialCommitmentsV1(
 	return nil
 }
 
+// Replay stages independently. A failed local send must not starve remote
+// artifacts, polynomial commitments, or keyset signatures on this peer.
+// Each stage keeps its own session/authentication checks and send semantics.
+func rabbitVRFDKGReplayStagesV1(stages ...func() error) error {
+	var failures []error
+	for i, stage := range stages {
+		if stage == nil {
+			continue
+		}
+		if err := stage(); err != nil {
+			failures = append(failures, fmt.Errorf("DKG replay stage %d: %w", i+1, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
 func (n *rabbitVRFDKGTransport) sendPendingTransportArtifactsV1(
 	peer *rabbitVRFDKGPeer,
 	replay ...bool,
 ) error {
-	if err := n.sendLocalTransportArtifactsV1(peer, replay...); err != nil {
-		return err
-	}
-	if err := n.sendRetainedRemoteTransportArtifactsV1(peer, replay...); err != nil {
-		return err
-	}
-
-	if err := n.sendLocalPolynomialCommitmentsV1(peer, replay...); err != nil {
-		return err
-	}
-
-	if err := n.sendRetainedRemotePolynomialCommitmentsV1(peer, replay...); err != nil {
-		return err
-	}
-
-	return n.sendRetainedKeysetCertificateSignaturesV1(peer, replay...)
+	return rabbitVRFDKGReplayStagesV1(
+		func() error { return n.sendLocalTransportArtifactsV1(peer, replay...) },
+		func() error { return n.sendRetainedRemoteTransportArtifactsV1(peer, replay...) },
+		func() error { return n.sendLocalPolynomialCommitmentsV1(peer, replay...) },
+		func() error { return n.sendRetainedRemotePolynomialCommitmentsV1(peer, replay...) },
+		func() error { return n.sendRetainedKeysetCertificateSignaturesV1(peer, replay...) },
+	)
 }

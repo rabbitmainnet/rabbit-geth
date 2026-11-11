@@ -919,6 +919,7 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 			}
 		}
 
+		var lastDKGWarning time.Time
 		process := func() {
 			defer func() {
 				if err := runtime.warmPreparationSigningKeysV2(); err != nil {
@@ -931,10 +932,10 @@ func (runtime *rabbitVRFDKGRuntime) Start() error {
 				}
 			}()
 			if err := runtime.processCurrentHead(); err != nil {
-				log.Debug(
-					"Rabbit VRF DKG local runtime waiting",
-					"err", err,
-				)
+				if lastDKGWarning.IsZero() || time.Since(lastDKGWarning) >= 10*time.Second {
+					log.Warn("Rabbit VRF DKG local runtime error", "err", err)
+					lastDKGWarning = time.Now()
+				}
 			}
 		}
 
