@@ -4,6 +4,7 @@ package eth
 
 import (
 	"errors"
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/lqc"
 	"github.com/ethereum/go-ethereum/log"
@@ -52,6 +53,14 @@ func (n *rabbitVRFDKGTransport) gossipFinalizationsToPeerV2(peer *rabbitVRFDKGPe
 // rabbitVRFCoalescedFinalizationScanV2 shares only in-flight scans. No cached
 // proofs survive after the scan finishes, so canonical-pending changes and
 // a same-head wake trigger new validation. Keys include the head hash.
+// rabbitVRFFinalizationScanKeyV2 isolates in-flight BLS scans across
+// different canonical heads AND finalization-wake generations. A newly
+// stored finalization replaces finalizationWakeV2, even at the same head.
+// Never join a scan that began before a new proof was stored.
+func rabbitVRFFinalizationScanKeyV2(head common.Hash, wake <-chan struct{}) string {
+	return fmt.Sprintf("%s/%p", head.Hex(), wake)
+}
+
 func rabbitVRFCoalescedFinalizationScanV2(
 	flights *singleflight.Group,
 	canonicalHead string,
@@ -82,9 +91,10 @@ func (n *rabbitVRFDKGTransport) sendFinalizationsToPeerV2(peer *rabbitVRFDKGPeer
 	// A peer burst for the same canonical head must not recompute
 	// BLS12-381 verification independently for every peer. singleflight
 	// coalesces only overlapping scans: it is NOT a persistent cache.
-	// The head hash separates reorgs, while a later wake always rescans.
+	// Head hash isolates reorgs; wake generation isolates new proofs in the
+	// same head, including those arriving while an earlier scan is running.
 	proofs, err := rabbitVRFCoalescedFinalizationScanV2(
-		&n.finalizationScanFlightsV2, head.Hash().Hex(),
+		&n.finalizationScanFlightsV2, rabbitVRFFinalizationScanKeyV2(head.Hash(), n.finalizationWakeSignalV2()),
 		func() ([]lqc.RabbitVRFFinalizationV1, error) {
 			return n.rabbitVRFFinalizationsForBlockV1(head.Number.Uint64() + 1)
 		},
