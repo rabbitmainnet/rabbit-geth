@@ -66,19 +66,19 @@ jobs:
         shell: bash
         env:
           RABBIT_TARGET: ${{ matrix.target }}
-        run: scripts/rabbit-release/build-rabbit-core-v2424-native.sh
+        run: scripts/rabbit-release/build-rabbit-core-v2425-native.sh
 
       - name: Build Windows package
         if: runner.os == 'Windows'
         shell: powershell
         env:
           RABBIT_TARGET: ${{ matrix.target }}
-        run: scripts/rabbit-release/build-rabbit-core-v2424-windows.ps1
+        run: scripts/rabbit-release/build-rabbit-core-v2425-windows.ps1
 
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.24-${{ matrix.target }}
+          name: rabbit-core-testnet-v2.4.25-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -92,7 +92,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v4
         with:
-          pattern: rabbit-core-testnet-v2.4.24-*
+          pattern: rabbit-core-testnet-v2.4.25-*
           path: releases
           merge-multiple: true
 
@@ -110,7 +110,7 @@ jobs:
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rabbit-core-testnet-v2.4.24-release-bundle
+          name: rabbit-core-testnet-v2.4.25-release-bundle
           path: releases/*
           if-no-files-found: error
           retention-days: 30
