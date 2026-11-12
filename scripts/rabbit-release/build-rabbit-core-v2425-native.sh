@@ -51,7 +51,7 @@ work="$(mktemp -d)"
 cleanup() { rm -rf -- "$work"; }
 trap cleanup EXIT
 
-git clone --filter=blob:none "$RANDOMX_REPOSITORY" "$work/RandomX"
+git -c credential.helper= clone "$RANDOMX_REPOSITORY" "$work/RandomX"
 git -C "$work/RandomX" checkout --detach "$RANDOMX_COMMIT"
 [[ "$(git -C "$work/RandomX" rev-parse HEAD)" == "$RANDOMX_COMMIT" ]]
 git -C "$work/RandomX" apply --check "$PWD/scripts/rabbit-release/randomx/rabbit-randomx-1g-profile.patch"
