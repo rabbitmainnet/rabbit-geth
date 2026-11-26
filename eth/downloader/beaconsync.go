@@ -147,6 +147,12 @@ func (d *Downloader) BeaconExtend(head *types.Header) error {
 	return d.beaconSync(head, nil, false)
 }
 
+// PreferLQCRecoveryPeer prioritizes a verified same-head alternative in the
+// existing skeleton cycle; it does not reinitialize any download session.
+func (d *Downloader) PreferLQCRecoveryPeer(head *types.Header, peerID string) error {
+	return d.skeleton.PreferLQCRecoveryPeer(head, peerID)
+}
+
 // beaconSync is the post-merge version of the chain synchronization, where the
 // chain is not downloaded from genesis onward, rather from trusted head announces
 // backwards.

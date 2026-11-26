@@ -52,3 +52,34 @@ func TestRabbitSkeletonPeerAdvertisedRange(t *testing.T) {
 type rabbitSkeletonLegacyPeer struct {
 	Peer
 }
+
+func TestRabbitSkeletonPeerAdvertisedBatchRange(t *testing.T) {
+	const head uint64 = 2000
+	needed := head - uint64(requestHeaders) + 1
+	peer := &rabbitSkeletonRangePeer{advertised: &eth.BlockRangeUpdatePacket{EarliestBlock: needed, LatestBlock: head}}
+	if !skeletonPeerCanServeHeaderBatch(peer, head) {
+		t.Fatal("peer advertising the entire batch must be eligible")
+	}
+	peer.advertised.EarliestBlock = needed + 1
+	if skeletonPeerCanServeHeaderBatch(peer, head) {
+		t.Fatal("peer missing the oldest header in the batch must not be selected")
+	}
+	peer.advertised.EarliestBlock = 1
+	peer.advertised.LatestBlock = head - 1
+	if skeletonPeerCanServeHeaderBatch(peer, head) {
+		t.Fatal("peer missing the requested head must not be selected")
+	}
+	// Short requests above genesis are not required to cover 192 headers.
+	peer.advertised.EarliestBlock = 1
+	peer.advertised.LatestBlock = 5
+	if !skeletonPeerCanServeHeaderBatch(peer, 5) {
+		t.Fatal("short above-genesis batch must be accepted")
+	}
+	peer.advertised = nil
+	if !skeletonPeerCanServeHeaderBatch(peer, head) {
+		t.Fatal("unknown range retains original behavior")
+	}
+	if !skeletonPeerCanServeHeaderBatch(&rabbitSkeletonLegacyPeer{}, head) {
+		t.Fatal("legacy peer retains original behavior")
+	}
+}

@@ -1260,6 +1260,22 @@ func lqcPeerHeadRequiresSync(
 	return false
 }
 
+// LQCProductionReady is the final local pre-insertion gate used by the miner.
+// Consensus header verification remains unchanged; a producer simply refrains
+// from publishing while it knows its head is unconfirmed or sync is pending.
+func (s *Ethereum) LQCProductionReady() bool {
+    if s == nil || s.blockchain == nil || s.handler == nil {
+        return false
+    }
+    head := s.blockchain.CurrentBlock()
+    if head == nil || head.Number == nil {
+        return false
+    }
+    return s.lqcHeadStateAvailable(head) &&
+        s.lqcPeerHeadConfirmed(head) &&
+        !s.lqcProductionNeedsSync(head)
+}
+
 func (s *Ethereum) lqcProductionNeedsSync(header *types.Header) bool {
 	if s == nil || s.handler == nil || s.blockchain == nil ||
 		header == nil || header.Number == nil {

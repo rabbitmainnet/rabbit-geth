@@ -308,6 +308,21 @@ func insertLQCBlockIfParentCurrent(chain lqcBlockInserter, parent *types.Header,
 	return chain.InsertLQCBlockIfParentCurrent(parent.Hash(), block)
 }
 
+// lqcProductionGate is implemented by the full Ethereum backend. It provides
+// a final safety check after work generation, immediately before insertion.
+// This is a local producer policy, not a change to block validation rules.
+type lqcProductionGate interface {
+    LQCProductionReady() bool
+}
+
+func lqcProductionReady(backend any) bool {
+    gate, ok := backend.(lqcProductionGate)
+    if !ok { // Preserve compatibility with existing lightweight miner backends.
+        return true
+    }
+    return gate.LQCProductionReady()
+}
+
 type lqcPeerCounter interface {
 	PeerCount() int
 }
@@ -414,6 +429,16 @@ func (miner *Miner) lqcDevnetLoop(ctx context.Context) {
 				log.Warn("LQC devnet block build returned nil block")
 				continue
 			}
+
+            // A peer may announce a conflicting head while we execute the block.
+            // Re-check the shared sync gate before attempting local insertion.
+            // The core parent-CAS still protects against concurrent head imports.
+            if !lqcProductionReady(miner.backend) {
+                log.Info("LQC devnet discarded built block: sync gate changed",
+                    "number", ret.block.NumberU64(), "parent", head.Hash(),
+                    "queuePos", queuePos)
+                continue
+            }
 
 			insertStarted := time.Now()
 			inserted, err := insertLQCBlockIfParentCurrent(miner.chain, head, ret.block)
