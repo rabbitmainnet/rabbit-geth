@@ -917,12 +917,12 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	// Downloaded blocks are always regarded as trusted after the
 	// transition. Because the downloaded chain is guided by the
 	// consensus-layer.
-	if index, err := d.blockchain.InsertChain(blocks); err != nil {
+	if index, err := d.rabbitInsertChainRetryFuture(blocks); err != nil {
 		if index < len(results) {
 			log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 
 			// In post-merge, notify the engine API of encountered bad chains
-			if d.badBlock != nil {
+			if d.badBlock != nil && !rabbitIsFutureBlock(err) {
 				head, _, _, err := d.skeleton.Bounds()
 				if err != nil {
 					log.Error("Failed to retrieve beacon bounds for bad block reporting", "err", err)
@@ -937,7 +937,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 			// of the blocks delivered from the downloader, and the indexing will be off.
 			log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
 		}
-		return fmt.Errorf("%w: %v", errInvalidChain, err)
+		return rabbitClassifyDownloadedImportError(err)
 	}
 	return nil
 }

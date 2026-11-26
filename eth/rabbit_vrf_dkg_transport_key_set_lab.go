@@ -80,6 +80,37 @@ func (n *rabbitVRFDKGTransport) persistCanonicalTransportKeySetV1() (
 	return true, nil
 }
 
+// authenticatedTransportArtifactCountsV1 reports partial received artifacts without
+// presenting an incomplete keyset as ready. Remote packets are validated at insertion.
+// Local packets count only if their authenticated envelopes validate.
+func (n *rabbitVRFDKGTransport) authenticatedTransportArtifactCountsV1() (local, remote, unique int) {
+	if n == nil || n.runtime == nil {
+		return 0, 0, 0
+	}
+	context := n.runtime.currentContext()
+	if context.SessionID == (common.Hash{}) {
+		return 0, 0, 0
+	}
+	seen := make(map[uint64]struct{})
+	if n.runtime.transportArtifactsReadyV1(context.CanonicalSession, context.SessionID, context.Members) {
+		for _, binding := range context.TransportBindings {
+			seen[binding.ShareID] = struct{}{}
+			local++
+		}
+	}
+	n.mu.RLock()
+	if !n.closed && n.remoteSession == context.SessionID {
+		for id := range n.remoteArtifacts {
+			if _, ok := seen[id]; !ok {
+				seen[id] = struct{}{}
+				remote++
+			}
+		}
+	}
+	n.mu.RUnlock()
+	return local, remote, len(seen)
+}
+
 func (n *rabbitVRFDKGTransport) canonicalTransportKeySetV1() (
 	common.Hash,
 	[]lqc.RabbitVRFDKGTransportKeyBindingV1,

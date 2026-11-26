@@ -48,6 +48,10 @@ const scratchHeaders = 131072
 // vs. dynamic interval fillings.
 const requestHeaders = 512
 
+// ErrLQCBeaconNeedsStart means BeaconExtend found no active skeleton session.
+// Only this condition permits a forced BeaconSync for a same-head backup.
+var ErrLQCBeaconNeedsStart = errors.New("forced head needed for startup")
+
 // errSyncLinked is an internal helper error to signal that the current sync
 // cycle linked up to the genesis block, this the skeleton syncer should ping
 // the backfiller to resume. Since we already have that logic on sync start,
@@ -123,10 +127,11 @@ type skeletonProgress struct {
 // The update might request whether to forcefully change the target, or only try to
 // extend it and fail if it's not possible.
 type headUpdate struct {
-	header *types.Header // Header to update the sync target to
-	final  *types.Header // Finalized header to use as thresholds
-	force  bool          // Whether to force the update or only extend if possible
-	errc   chan error    // Channel to signal acceptance of the new head
+	header        *types.Header // Header to update the sync target to
+	final         *types.Header // Finalized header to use as thresholds
+	force         bool          // Whether to force the update or only extend if possible
+	preferredPeer string        // LCQ same-head backup hint; processed by skeleton runloop
+	errc          chan error    // Channel to signal acceptance of the new head
 }
 
 // headerRequest tracks a pending header request to ensure responses are to
@@ -287,7 +292,7 @@ func (s *skeleton) startup() {
 			// New head announced, start syncing to it, looping every time a current
 			// cycle is terminated due to a chain event (head reorg, old chain merge).
 			if !event.force {
-				event.errc <- errors.New("forced head needed for startup")
+				event.errc <- ErrLQCBeaconNeedsStart
 				continue
 			}
 			event.errc <- nil // forced head accepted for startup
@@ -358,6 +363,22 @@ func (s *skeleton) Terminate() error {
 //
 // This method does not block, rather it just waits until the syncer receives the
 // fed header. What the syncer does with it is the syncer's problem.
+// PreferLQCRecoveryPeer asks the running skeleton to prioritize a verified
+// source for the same known head without restarting its download cycle.
+// The skeleton runloop owns all request and peer-selection state.
+func (s *skeleton) PreferLQCRecoveryPeer(head *types.Header, peerID string) error {
+	if head == nil || head.Number == nil || peerID == "" {
+		return errors.New("invalid LCQ backup peer hint")
+	}
+	errc := make(chan error)
+	select {
+	case s.headEvents <- &headUpdate{header: head, preferredPeer: peerID, errc: errc}:
+		return <-errc
+	case <-s.terminated:
+		return errTerminated
+	}
+}
+
 func (s *skeleton) Sync(head *types.Header, final *types.Header, force bool) error {
 	log.Trace("New skeleton head announced", "number", head.Number, "hash", head.Hash(), "force", force)
 	errc := make(chan error)
@@ -523,7 +544,7 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 					for id, candidate := range s.idles {
 						if id != pending.peer &&
 							!s.rabbitLCQAttempted[id] &&
-							skeletonPeerCanServeHeader(candidate.peer, pending.head) {
+							skeletonPeerCanServeHeaderBatch(candidate.peer, pending.head) {
 							replacement = id
 							break
 						}
@@ -558,7 +579,7 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 							pending.anchor == (common.Hash{}) ||
 							time.Since(pending.started) < rabbitLCQHandoffGrace ||
 							s.rabbitLCQAttempted[peerid] ||
-							!skeletonPeerCanServeHeader(event.peer.peer, pending.head) {
+							!skeletonPeerCanServeHeaderBatch(event.peer.peer, pending.head) {
 							continue
 						}
 						log.Debug("LCQ reassigning delayed hash request",
@@ -579,6 +600,42 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 			return nil, errTerminated
 
 		case event := <-s.headEvents:
+			if event.preferredPeer != "" {
+				// Ignore stale hints and unrelated forks. Header identity must
+				// match the skeleton's persisted head; no consensus relaxation.
+				if !s.lqcHashAnchored || s.progress == nil || len(s.progress.Subchains) == 0 ||
+					event.header == nil || event.header.Number == nil ||
+					event.header.Number.Uint64() != s.progress.Subchains[0].Head {
+					event.errc <- errors.New("LCQ backup head is no longer active")
+					continue
+				}
+				stored := rawdb.ReadSkeletonHeader(s.db, event.header.Number.Uint64())
+				if stored == nil || stored.Hash() != event.header.Hash() {
+					event.errc <- errors.New("LCQ backup head hash mismatch")
+					continue
+				}
+				candidate := s.idles[event.preferredPeer]
+				if candidate == nil || !skeletonPeerCanServeHeaderBatch(candidate.peer, s.scratchHead) {
+					event.errc <- errors.New("LCQ backup peer is unavailable")
+					continue
+				}
+				if s.rabbitLCQAttempted[event.preferredPeer] {
+					event.errc <- errors.New("LCQ backup peer already attempted")
+					continue
+				}
+				// Schedule this peer next and revoke only a pending request
+				// for the same hash-anchored skeleton. Never reset the cycle.
+				s.rabbitLCQPreferredPeer = event.preferredPeer
+				for _, pending := range s.requests {
+					if pending.anchor != (common.Hash{}) && pending.peer != event.preferredPeer &&
+						skeletonPeerCanServeHeaderBatch(candidate.peer, pending.head) {
+						s.revertRequest(pending)
+						break
+					}
+				}
+				event.errc <- nil
+				continue
+			}
 			// New head was announced, try to integrate it. If successful, nothing
 			// needs to be done as the head simply extended the last range. For now
 			// we don't seamlessly integrate reorgs to keep things simple. If the
@@ -863,7 +920,7 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 			for i, candidate := range idlers.peers {
 				if candidate.id == s.rabbitLCQPreferredPeer &&
 					!s.rabbitLCQAttempted[candidate.id] &&
-					skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
+					skeletonPeerCanServeHeaderBatch(candidate.peer, requestedHead) {
 					eligible = i
 					break
 				}
@@ -873,7 +930,7 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 		if eligible < 0 {
 			for index, candidate := range idlers.peers {
 				if (!s.lqcHashAnchored || !s.rabbitLCQAttempted[candidate.id]) &&
-					skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
+					skeletonPeerCanServeHeaderBatch(candidate.peer, requestedHead) {
 					eligible = index
 					break
 				}
@@ -881,7 +938,7 @@ func (s *skeleton) assignTasks(success chan *headerResponse, fail chan *headerRe
 		}
 		if eligible < 0 && s.lqcHashAnchored {
 			for index, candidate := range idlers.peers {
-				if skeletonPeerCanServeHeader(candidate.peer, requestedHead) {
+				if skeletonPeerCanServeHeaderBatch(candidate.peer, requestedHead) {
 					eligible = index
 					break
 				}
@@ -1514,4 +1571,30 @@ func skeletonPeerCanServeHeader(peer Peer, number uint64) bool {
 		return true
 	}
 	return number >= advertised.EarliestBlock && number <= advertised.LatestBlock
+}
+
+// skeletonPeerCanServeHeaderBatch checks the whole reverse-header request,
+// not just its starting height. A peer that advertises only the starting
+// block cannot supply the fixed-size batch required by executeTask, so
+// assigning it repeatedly makes LCQ recovery stall without importing.
+// Peers without ranges keep the historical discovery behavior.
+func skeletonPeerCanServeHeaderBatch(peer Peer, head uint64) bool {
+	if !skeletonPeerCanServeHeader(peer, head) {
+		return false
+	}
+	ranged, ok := peer.(interface {
+		BlockRange() *eth.BlockRangeUpdatePacket
+	})
+	if !ok || ranged.BlockRange() == nil {
+		return true
+	}
+	requestedCount := uint64(requestHeaders)
+	if head < requestedCount {
+		requestedCount = head
+	}
+	if requestedCount == 0 {
+		return false
+	}
+	earliestNeeded := head - requestedCount + 1
+	return ranged.BlockRange().EarliestBlock <= earliestNeeded
 }

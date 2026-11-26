@@ -170,6 +170,9 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 				return nil
 			}
 			if _, err := h.chain.InsertChain(types.Blocks{packet.Block}); err != nil {
+				if rabbitQueueFutureLiveBlock(h, packet.Block, err) {
+					return nil
+				}
 				peer.Log().Warn("LQC live NewBlock insert failed",
 					"number", packet.Block.NumberU64(),
 					"hash", packet.Block.Hash(),
@@ -181,7 +184,6 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 
 	case *eth.BlockRangeUpdatePacket:
 		if cfg := h.chain.Config(); cfg != nil && cfg.LQC != nil {
-			h.wakeLQCSync()
 			localHead := h.chain.CurrentBlock()
 			localNumber := uint64(0)
 			if localHead != nil && localHead.Number != nil {
@@ -195,6 +197,13 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 			if !shouldStartLQCSync(localHead, packet.LatestBlock, packet.LatestBlockHash) {
 				return nil
 			}
+			// Claim synchronously, before launching the goroutine. A burst of
+			// identical range updates from one peer must not spawn multiple
+			// concurrent requests. Other peers remain available for failover.
+			if !h.claimLQCHeaderRequest(peer.ID(), packet.LatestBlock, packet.LatestBlockHash) {
+				return nil
+			}
+			h.wakeLQCSync()
 			go h.requestAndSyncLQCHead(peer, packet.LatestBlock, packet.LatestBlockHash)
 		}
 		return nil
@@ -231,6 +240,7 @@ func shouldStartLQCSync(local *types.Header, remoteNumber uint64, remoteHash com
 type lqcSyncTarget struct {
 	peer   *eth.Peer
 	header *types.Header
+	peerID string // Source of the validated header, for bounded alternate lookup.
 }
 
 func betterLQCSyncTarget(candidate, current *lqcSyncTarget) bool {
@@ -260,7 +270,102 @@ func lqcPeerRangeContainsTarget(peerRange *eth.BlockRangeUpdatePacket, targetNum
 	return peerRange.LatestBlockHash == targetHash
 }
 
+// lqcSyncAlreadyHasTarget reports whether a validated recovery target is already
+// queued or being processed. It deliberately compares the full hash and height:
+// a competing fork at the same height must never be suppressed.
+func lqcSyncAlreadyHasTarget(current, pending *lqcSyncTarget, number uint64, hash common.Hash) bool {
+	for _, target := range []*lqcSyncTarget{current, pending} {
+		if target != nil && target.header != nil && target.header.Number != nil &&
+			target.header.Number.IsUint64() && target.header.Number.Uint64() == number &&
+			target.header.Hash() == hash {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *ethHandler) lqcSyncAlreadyHasTarget(number uint64, hash common.Hash) bool {
+	h.lqcSyncMu.Lock()
+	defer h.lqcSyncMu.Unlock()
+	return lqcSyncAlreadyHasTarget(h.lqcSyncCurrent, h.lqcSyncPending, number, hash)
+}
+
+// lqcHeaderBackupNeeded permits a single independent header lookup while the
+// exact head is being recovered. Previously the generic duplicate check also
+// suppressed every other peer, so BlockRange-only peers could never become
+// pending alternatives. Do not start a backup for missing source IDs, an
+// existing pending target, another fork, or a different height.
+func lqcHeaderBackupNeeded(current, pending *lqcSyncTarget, peerID string, number uint64, hash common.Hash) bool {
+	if current == nil || pending != nil || current.peerID == "" || peerID == "" ||
+		current.peerID == peerID || current.header == nil || current.header.Number == nil ||
+		!current.header.Number.IsUint64() || current.header.Number.Uint64() != number {
+		return false
+	}
+	return current.header.Hash() == hash
+}
+
+// lqcHeaderAlreadyCoveredForPeer is used while a claimed request waits for
+// a reply. An accepted alternate must not cancel itself merely because the
+// primary is now in the sync queue.
+func (h *ethHandler) lqcHeaderAlreadyCoveredForPeer(peerID string, number uint64, hash common.Hash) bool {
+	h.lqcSyncMu.Lock()
+	defer h.lqcSyncMu.Unlock()
+	if !lqcSyncAlreadyHasTarget(h.lqcSyncCurrent, h.lqcSyncPending, number, hash) {
+		return false
+	}
+	return !lqcHeaderBackupNeeded(h.lqcSyncCurrent, h.lqcSyncPending, peerID, number, hash)
+}
+
+// lqcHeaderRequestKey identifies a single peer's in-flight hash lookup.
+// Do not deduplicate across peers: one silent peer must never block failover.
+type lqcHeaderRequestKey struct {
+	peerID string
+	number uint64
+	hash   common.Hash
+}
+
+func (h *ethHandler) claimLQCHeaderRequest(peerID string, number uint64, hash common.Hash) bool {
+	if peerID == "" || hash == (common.Hash{}) {
+		return false
+	}
+	h.lqcSyncMu.Lock()
+	defer h.lqcSyncMu.Unlock()
+	if lqcSyncAlreadyHasTarget(h.lqcSyncCurrent, h.lqcSyncPending, number, hash) {
+		if !lqcHeaderBackupNeeded(h.lqcSyncCurrent, h.lqcSyncPending, peerID, number, hash) {
+			return false
+		}
+		// Do not fan out one additional lookup per peer; exactly one
+		// backup request may be outstanding for the current head.
+		for inFlight := range h.lqcHeaderRequests {
+			if inFlight.number == number && inFlight.hash == hash && inFlight.peerID != h.lqcSyncCurrent.peerID {
+				return false
+			}
+		}
+	}
+	key := lqcHeaderRequestKey{peerID: peerID, number: number, hash: hash}
+	if h.lqcHeaderRequests == nil {
+		h.lqcHeaderRequests = make(map[lqcHeaderRequestKey]struct{})
+	}
+	if _, exists := h.lqcHeaderRequests[key]; exists {
+		return false
+	}
+	h.lqcHeaderRequests[key] = struct{}{}
+	return true
+}
+
+func (h *ethHandler) releaseLQCHeaderRequest(peerID string, number uint64, hash common.Hash) {
+	h.lqcSyncMu.Lock()
+	delete(h.lqcHeaderRequests, lqcHeaderRequestKey{peerID: peerID, number: number, hash: hash})
+	h.lqcSyncMu.Unlock()
+}
+
 func (h *ethHandler) requestAndSyncLQCHead(peer *eth.Peer, number uint64, hash common.Hash) {
+	defer h.releaseLQCHeaderRequest(peer.ID(), number, hash)
+	// A queued NewBlock makes same-peer lookups redundant, but one
+	// independent peer may still supply a backup for a stalled recovery.
+	if h.lqcHeaderAlreadyCoveredForPeer(peer.ID(), number, hash) {
+		return
+	}
 	resCh := make(chan *eth.Response, 1)
 	req, err := peer.RequestHeadersByHash(hash, 1, 0, false, resCh)
 	if err != nil {
@@ -282,12 +387,19 @@ waitHeader:
 		case res = <-resCh:
 			break waitHeader
 		case <-ticker.C:
+			// Stop this duplicate request if NewBlock already scheduled its target.
+			if h.lqcHeaderAlreadyCoveredForPeer(peer.ID(), number, hash) {
+				return
+			}
 			if !shouldStartLQCSync(h.chain.CurrentBlock(), number, hash) {
 				peer.Log().Debug("LQC target already reached while awaiting header",
 					"target", number, "hash", hash)
 				return
 			}
 		case <-timer.C:
+			if h.lqcHeaderAlreadyCoveredForPeer(peer.ID(), number, hash) {
+				return
+			}
 			if shouldStartLQCSync(h.chain.CurrentBlock(), number, hash) {
 				peer.Log().Warn("LQC fork-recovery target request timeout",
 					"target", number, "hash", hash)
@@ -360,12 +472,26 @@ func waitForLQCLiveImport(current func() *types.Header, target *types.Header, qu
 	}
 }
 
+// lqcSameHeadAlternatePeer allows a different peer to back up a stalled
+// recovery of the exact same header. It never displaces a pending higher head
+// or a competing fork, and never changes consensus validity.
+func lqcSameHeadAlternatePeer(candidate, current, pending *lqcSyncTarget) bool {
+	if candidate == nil || current == nil || pending != nil ||
+		candidate.peer == nil || current.peer == nil || candidate.peer == current.peer ||
+		candidate.header == nil || current.header == nil ||
+		candidate.header.Number == nil || current.header.Number == nil {
+		return false
+	}
+	return candidate.header.Number.Cmp(current.header.Number) == 0 &&
+		candidate.header.Hash() == current.header.Hash()
+}
+
 func (h *ethHandler) scheduleLQCSync(peer *eth.Peer, header *types.Header) {
 	if peer == nil || header == nil || header.Number == nil ||
 		!shouldStartLQCSync(h.chain.CurrentBlock(), header.Number.Uint64(), header.Hash()) {
 		return
 	}
-	candidate := &lqcSyncTarget{peer: peer, header: header}
+	candidate := &lqcSyncTarget{peer: peer, header: header, peerID: peer.ID()}
 
 	h.lqcSyncMu.Lock()
 	if !h.lqcSyncRunning {
@@ -373,6 +499,14 @@ func (h *ethHandler) scheduleLQCSync(peer *eth.Peer, header *types.Header) {
 		h.lqcSyncCurrent = candidate
 		h.lqcSyncMu.Unlock()
 		go h.runLQCSync(candidate)
+		return
+	}
+	// Preserve an independent serving peer for the same validated header.
+	// If the current peer stalls or disconnects, the worker can use this
+	// pending source rather than restarting without an alternative.
+	if lqcSameHeadAlternatePeer(candidate, h.lqcSyncCurrent, h.lqcSyncPending) {
+		h.lqcSyncPending = candidate
+		h.lqcSyncMu.Unlock()
 		return
 	}
 	if current := h.lqcSyncCurrent; current != nil && current.peer == peer &&
@@ -441,11 +575,93 @@ func (h *ethHandler) extendOrReplaceLQCSyncV1(next *lqcSyncTarget) error {
 	return h.downloader.BeaconSync(next.header, nil)
 }
 
+// lqcRecoveryStallBudget bounds a stalled near-tip fork repair. The two-minute
+// budget remains for larger gaps, where full backfill can legitimately take
+// longer. This only controls the recovery worker's wait; it never selects or
+// accepts a block without downloader and consensus validation.
+func lqcRecoveryStallBudget(local, target *types.Header) time.Duration {
+	const nearTipBudget = 30 * time.Second
+	const backfillBudget = 2 * time.Minute
+	if local == nil || local.Number == nil || target == nil || target.Number == nil {
+		return backfillBudget
+	}
+	// Equal-height forks and gaps of up to two blocks should fail over promptly.
+	if target.Number.Uint64() <= local.Number.Uint64()+2 {
+		return nearTipBudget
+	}
+	return backfillBudget
+}
+
+// lqcBackupNeedsForcedSync permits a forced downloader start only when the
+// skeleton explicitly reports that no session has started. Other failures
+// must not tear down an existing recovery cycle.
+func lqcBackupNeedsForcedSync(err error) bool {
+	return errors.Is(err, downloader.ErrLQCBeaconNeedsStart)
+}
+
+// lqcWorkerBackupAfterStall limits a same-hash worker handoff to a stalled
+// near-tip recovery. The downloader still owns peer choice and validation.
+func lqcWorkerBackupAfterStall(local, target *types.Header, stalled time.Duration) bool {
+	if local == nil || local.Number == nil || target == nil || target.Number == nil ||
+		!local.Number.IsUint64() || !target.Number.IsUint64() || stalled < 8*time.Second {
+		return false
+	}
+	localNumber, targetNumber := local.Number.Uint64(), target.Number.Uint64()
+	return targetNumber <= localNumber || targetNumber-localNumber <= 2
+}
+
+// takeSameHeadPendingLQCSyncTarget selects only a validated alternative source
+// for exactly the current header; a higher head or competing fork is retained.
+func (h *ethHandler) takeSameHeadPendingLQCSyncTarget(current *lqcSyncTarget) *lqcSyncTarget {
+	h.lqcSyncMu.Lock()
+	defer h.lqcSyncMu.Unlock()
+	pending := h.lqcSyncPending
+	if !lqcSameHeadAlternatePeer(pending, current, nil) ||
+		!lqcPeerRangeContainsTarget(pending.peer.BlockRange(), pending.header.Number.Uint64(), pending.header.Hash()) {
+		return nil
+	}
+	h.lqcSyncPending = nil
+	h.lqcSyncCurrent = pending
+	return pending
+}
+
+// trySameHeadPendingLQCSyncTarget commits a backup only after the downloader
+// accepts its peer preference. An error leaves both queue entries untouched.
+// The callback never runs while lqcSyncMu is held.
+func (h *ethHandler) trySameHeadPendingLQCSyncTarget(current *lqcSyncTarget, prefer func(*lqcSyncTarget) error) (*lqcSyncTarget, error) {
+	h.lqcSyncMu.Lock()
+	pending := h.lqcSyncPending
+	eligible := h.lqcSyncCurrent == current && lqcSameHeadAlternatePeer(pending, current, nil) &&
+		lqcPeerRangeContainsTarget(pending.peer.BlockRange(), pending.header.Number.Uint64(), pending.header.Hash())
+	h.lqcSyncMu.Unlock()
+	if !eligible {
+		return nil, nil
+	}
+	if err := prefer(pending); err != nil {
+		return nil, err
+	}
+	h.lqcSyncMu.Lock()
+	defer h.lqcSyncMu.Unlock()
+	// A concurrent higher head or fork may have replaced the pending target.
+	// Do not overwrite a newer decision, even if the old hint was accepted.
+	if h.lqcSyncCurrent != current || h.lqcSyncPending != pending ||
+		!lqcSameHeadAlternatePeer(pending, current, nil) {
+		return nil, nil
+	}
+	h.lqcSyncPending = nil
+	h.lqcSyncCurrent = pending
+	return pending, nil
+}
+
 func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 	syncEvents := make(chan downloader.SyncEvent, 16)
 	subscription := h.downloader.SubscribeSyncEvents(syncEvents)
 	defer subscription.Unsubscribe()
 	retries := 0
+	// One worker-level same-hash handoff per head. Never ping-pong peers.
+	backupTried := make(map[common.Hash]bool)
+	var backupHash common.Hash
+	var backupDeadline time.Time
 	for target != nil {
 		peer := target.peer
 		header := target.header
@@ -462,19 +678,53 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 			continue
 		}
 		peer.Log().Info("LQC fork-recovery started", "target", header.Number, "hash", header.Hash())
-		if err := h.downloader.BeaconSync(header, nil); err != nil {
+		// A same-hash alternate source does not change the download target.
+		// The skeleton already retries stalled header requests with other peers;
+		// forcing BeaconSync here can restart that in-flight recovery cycle.
+		// Keep the existing downloader session and original stall deadline.
+		if header.Hash() == backupHash && !backupDeadline.IsZero() {
+			// Pass the already-range-checked backup to the downloader's
+			// scheduler. The hint cannot authorize an invalid block or fork.
+			// Peer preference was accepted before the worker committed this backup.
+			// Do not send a duplicate hint or accidentally reset its scheduler.
+			// An identical head should not tear down an active skeleton session.
+			// However, the skeleton might have terminated since the backup was queued.
+			// BeaconExtend is non-forcing during an active session; when no session
+			// exists it fails, and a forced start is then necessary for recovery.
+			if err := h.downloader.BeaconExtend(header); err != nil {
+				if !lqcBackupNeedsForcedSync(err) {
+					// Do not force a skeleton restart for transient/reorging errors.
+					// The active session can continue its own peer handoff.
+					peer.Log().Warn("LQC backup extension deferred; preserving downloader session",
+						"target", header.Number, "hash", header.Hash(), "err", err)
+				} else {
+					peer.Log().Info("LQC backup session inactive; starting downloader",
+						"target", header.Number, "hash", header.Hash())
+					if err = h.downloader.BeaconSync(header, nil); err != nil {
+						peer.Log().Warn("LQC backup recovery restart failed", "target", header.Number, "err", err)
+						target = h.takePendingLQCSyncTarget()
+						continue
+					}
+				}
+			}
+		} else if err := h.downloader.BeaconSync(header, nil); err != nil {
 			peer.Log().Warn("LQC fork-recovery start failed", "target", header.Number, "hash", header.Hash(), "err", err)
 			target = h.takePendingLQCSyncTarget()
 			continue
 		}
 
-		deadline := time.Now().Add(2 * time.Minute)
+		deadline := time.Now().Add(lqcRecoveryStallBudget(h.chain.CurrentBlock(), header))
+		if header.Hash() == backupHash && !backupDeadline.IsZero() && backupDeadline.Before(deadline) {
+			deadline = backupDeadline
+		}
 		var progressNumber uint64
 		if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
 			progressNumber = local.Number.Uint64()
 		}
 		ticker := time.NewTicker(250 * time.Millisecond)
 		failed := false
+		handedOff := false
+		lastProgress := time.Now()
 		failedExtension := false
 		var failedHash common.Hash
 		var failedProgress uint64
@@ -514,6 +764,9 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 					h.lqcSyncMu.Lock()
 					h.lqcSyncCurrent = next
 					h.lqcSyncMu.Unlock()
+					// A newly selected recovery target needs its own stall budget.
+					// Do not inherit an almost-expired deadline from an older fork.
+					deadline = time.Now().Add(lqcRecoveryStallBudget(h.chain.CurrentBlock(), header))
 				}
 			}
 			peerRange := peer.BlockRange()
@@ -525,8 +778,37 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 			// Keep an advancing import alive. Only a stalled import times out.
 			if local := h.chain.CurrentBlock(); local != nil && local.Number != nil {
 				if number := local.Number.Uint64(); number > progressNumber {
+					lastProgress = time.Now()
 					progressNumber = number
-					deadline = time.Now().Add(2 * time.Minute)
+					deadline = time.Now().Add(lqcRecoveryStallBudget(local, header))
+				}
+			}
+			// Preserve the existing stall deadline: a same-hash backup must
+			// not double the 30s/120s maximum wait. Only one try per hash.
+			if !backupTried[header.Hash()] &&
+				lqcWorkerBackupAfterStall(h.chain.CurrentBlock(), header, time.Since(lastProgress)) {
+				alternate, hintErr := h.trySameHeadPendingLQCSyncTarget(target, func(candidate *lqcSyncTarget) error {
+					err := h.downloader.PreferLQCRecoveryPeer(header, candidate.peerID)
+					if lqcBackupNeedsForcedSync(err) {
+						// Skeleton is idle; a forced start is safe and required before preferring.
+						if err = h.downloader.BeaconSync(header, nil); err == nil {
+							err = h.downloader.PreferLQCRecoveryPeer(header, candidate.peerID)
+						}
+					}
+					return err
+				})
+				if hintErr != nil {
+					peer.Log().Debug("LQC backup peer preference rejected; leaving backup pending", "err", hintErr)
+				}
+				if alternate != nil {
+					backupTried[header.Hash()] = true
+					backupHash, backupDeadline = header.Hash(), deadline
+					peer.Log().Warn("LQC worker handing stalled target to alternate source",
+						"target", header.Number, "hash", header.Hash(),
+						"alternatePeer", alternate.peerID)
+					target = alternate
+					handedOff = true
+					break waitRecovery
 				}
 			}
 			if time.Now().After(deadline) {
@@ -551,6 +833,9 @@ func (h *ethHandler) runLQCSync(target *lqcSyncTarget) {
 			}
 		}
 		ticker.Stop()
+		if handedOff {
+			continue
+		}
 		if failed && retries < 3 {
 			retries++
 			pause := time.NewTimer(time.Second)

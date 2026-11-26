@@ -1,0 +1,175 @@
+$ErrorActionPreference = "Stop"
+
+$RandomXRepository = if ($env:RANDOMX_REPOSITORY) { $env:RANDOMX_REPOSITORY } else { "https://github.com/tevador/RandomX.git" }
+$RandomXCommit = if ($env:RANDOMX_COMMIT) { $env:RANDOMX_COMMIT } else { "7c761cf007c758056dcb6eb438a32f780f81bdbd" }
+$ExpectedGenesis = if ($env:TESTNET_GENESIS_SHA256) { $env:TESTNET_GENESIS_SHA256 } else { "4970159f077b62b7aa9bde1f81cb61ae837b42ef64861d7b23241e1af4d75c9f" }
+$Target = $env:RABBIT_TARGET
+$SourceCommit = (git rev-parse HEAD).Trim()
+
+if ($LASTEXITCODE -ne 0 -or -not $SourceCommit) {
+    throw "could not resolve source commit"
+}
+
+$TrackedStatus = git status --short --untracked-files=no
+if ($LASTEXITCODE -ne 0) {
+    throw "could not inspect tracked source state"
+}
+if ($null -ne $TrackedStatus) {
+    throw "tracked source tree is not clean"
+}
+
+if ($Target -ne "windows-amd64") { throw "unsupported Windows target: $Target" }
+if ((go version) -notmatch "go1\.25\.13 windows/amd64") { throw "Go 1.25.13 windows/amd64 is required" }
+if ((Get-FileHash networks/rabbit-testnet/genesis.json -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ExpectedGenesis) { throw "wrong testnet genesis" }
+
+$Work = Join-Path $env:RUNNER_TEMP "rabbit-native-$([guid]::NewGuid())"
+$RandomX = Join-Path $Work "RandomX"
+$Package = "rabbit-core-testnet-v2.4.25-$Target"
+$Stage = Join-Path $Work $Package
+$Dist = Join-Path $PWD "dist"
+
+New-Item -ItemType Directory -Force -Path $Work, $Stage, $Dist | Out-Null
+
+git clone --filter=blob:none $RandomXRepository $RandomX
+git -C $RandomX checkout --detach $RandomXCommit
+if ((git -C $RandomX rev-parse HEAD).Trim() -ne $RandomXCommit) { throw "wrong RandomX commit" }
+git -C $RandomX apply --check "$PWD/scripts/rabbit-release/randomx/rabbit-randomx-1g-profile.patch"
+git -C $RandomX apply "$PWD/scripts/rabbit-release/randomx/rabbit-randomx-1g-profile.patch"
+git -C $RandomX diff --check
+if (-not (Select-String -Quiet -Path "$RandomX\src\configuration.h" -Pattern '^#define RANDOMX_DATASET_BASE_SIZE  1073741824$')) { throw "Rabbit RandomX 1 GiB profile was not applied" }
+
+$Bash = "C:\msys64\usr\bin\bash.exe"
+if (-not (Test-Path $Bash)) { throw "MSYS2 is not installed on the Windows runner" }
+
+$BuildScript = @'
+set -Eeuo pipefail
+/usr/bin/pacman --noconfirm -Sy --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make nasm zip
+export PATH="/mingw64/bin:$PATH"
+export RANDOMX_POSIX="$(cygpath -u "$RANDOMX_NATIVE")"
+cd "$RANDOMX_POSIX"
+cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+cmake --build build --parallel 2
+test -s build/librandomx.a
+'@
+
+$env:RANDOMX_NATIVE = $RandomX
+$BuildScriptPath = Join-Path $Work "build-randomx.sh"
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    $BuildScriptPath,
+    $BuildScript.Replace("`r`n", "`n"),
+    $Utf8NoBom
+)
+& $Bash $BuildScriptPath
+if ($LASTEXITCODE -ne 0) { throw "RandomX Windows build failed" }
+
+$env:PATH = "C:\msys64\mingw64\bin;" + $env:PATH
+$env:CC = "C:\msys64\mingw64\bin\gcc.exe"
+$env:CXX = "C:\msys64\mingw64\bin\g++.exe"
+$env:CGO_ENABLED = "1"
+$RandomXForGcc = $RandomX.Replace("\", "/")
+if (-not $RandomXForGcc) { throw "could not prepare RandomX path for GCC" }
+$env:CGO_CFLAGS = "-O2 -D__BLST_PORTABLE__ -I$RandomXForGcc/src"
+$env:CGO_LDFLAGS = "-L$RandomXForGcc/build -lrandomx -Wl,-Bstatic -lstdc++ -lgcc -lwinpthread -Wl,-Bdynamic"
+Write-Host "RABBIT_RANDOMX_GCC_PATH=$RandomXForGcc"
+Write-Host "RABBIT_CGO_CFLAGS=$env:CGO_CFLAGS"
+Write-Host "RABBIT_CGO_LDFLAGS=$env:CGO_LDFLAGS"
+
+go test -tags "rabbit_workv1 rabbit_randomx" ./core -run "RabbitTestnetAvailabilityFork|LQCSiblingPrunedParentRecovery|LQCEqualHeight|LQCLocalStateRecoveryAfterCrashV1|LQCRecoveryMetadataV2|RabbitConsensusStartupConfigBeforeEngine" -count=1 -timeout=8m -p=1
+if ($LASTEXITCODE -ne 0) { throw "Rabbit fork and recovery tests failed" }
+go test -tags "rabbit_workv1 rabbit_randomx" ./params ./crypto/rabbitx ./cmd/rabbit-miner ./cmd/rabbit-core ./consensus/lqc ./eth ./eth/protocols/eth ./eth/downloader ./miner -count=1 -timeout=20m -p=1
+if ($LASTEXITCODE -ne 0) { throw "Rabbit Windows tests failed" }
+
+go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-node.exe" ./cmd/geth
+if ($LASTEXITCODE -ne 0) { throw "Rabbit node Windows build failed" }
+
+go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -o "$Stage\rabbit-miner.exe" ./cmd/rabbit-miner
+if ($LASTEXITCODE -ne 0) { throw "Rabbit miner Windows build failed" }
+
+go build -tags "rabbit_workv1 rabbit_randomx" -trimpath -ldflags="-X main.rabbitBootstrapPartsBaseURL=https://github.com/rabbitmainnet/rabbit-geth/releases/download/bootstrap-testnet-385509" -o "$Stage\rabbit-core.exe" ./cmd/rabbit-core
+if ($LASTEXITCODE -ne 0) { throw "Rabbit Core Windows build failed" }
+
+$Objdump = "C:\msys64\mingw64\bin\objdump.exe"
+if (-not (Test-Path $Objdump)) {
+    throw "MinGW objdump is not available"
+}
+
+foreach ($Binary in @(
+    "rabbit-node.exe",
+    "rabbit-miner.exe",
+    "rabbit-core.exe"
+)) {
+    $Executable = Join-Path $Stage $Binary
+    $Imports = & $Objdump -p $Executable
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not inspect Windows imports for $Binary"
+    }
+
+    $Forbidden = $Imports |
+        Select-String -Pattern "libstdc\+\+|libgcc|libwinpthread"
+
+    if ($Forbidden) {
+        throw "non-system MinGW runtime dependency in ${Binary}: $Forbidden"
+    }
+
+    Write-Host "WINDOWS_RUNTIME_SELF_CONTAINED=$Binary"
+}
+
+Copy-Item networks/rabbit-testnet/genesis.json "$Stage\genesis.json"
+Copy-Item docs/rabbit-core.md, docs/rabbit-miner.md $Stage
+Copy-Item scripts/rabbit-release/NOTICE-TESTNET.txt "$Stage\NOTICE-TESTNET.txt"
+
+@(
+    "RABBIT_RELEASE=rabbit-core-testnet-v2.4.25"
+    "SOURCE_REPOSITORY=https://github.com/rabbitmainnet/rabbit-geth"
+    "SOURCE_COMMIT=$SourceCommit"
+    "TARGET=$Target"
+    "CHAIN_ID=9280"
+    "NETWORK_ID=9280"
+    "CONSENSUS_STABILIZATION_BLOCK=50500"
+    "GENESIS_SHA256=$ExpectedGenesis"
+    "FORK_BLOCK=320000"
+    "VRF_ECONOMICS_V2_BLOCK=320000"
+    "WORK_SEAT_ADMISSION_V2_BLOCK=320000"
+    "CONSENSUS_FAIRNESS_BLOCK=73000"
+    "CONSENSUS_LIVENESS_V3_BLOCK=77000"
+    "CONSENSUS_LIVENESS_V4_BLOCK=97991"
+    "CONSENSUS_LIVENESS_V5_BLOCK=115000"
+    "CONSENSUS_LIVENESS_V6_BLOCK=115022"
+    "VRF_DKG_PREPARATION_BLOCK=136065"
+    "VRF_PROTOCOL_BLOCK=136193"
+    "MINING_REWARD_V5_BLOCK=153601"
+    "VRF_AVAILABILITY_V2_BLOCK=173057"
+    "GO_VERSION=go1.25.13"
+    "RANDOMX_COMMIT=$RandomXCommit"
+    "RANDOMX_DATASET_BASE_SIZE=1073741824"
+    "BUILD_TAGS=rabbit_workv1 rabbit_randomx"
+    "WINDOWS_CXX_RUNTIME=STATIC"
+) | Set-Content -Encoding ASCII "$Stage\BUILD-METADATA.txt"
+Set-Content -Encoding ASCII -NoNewline -Path "$Stage\bootnodes.txt" -Value "enode://2fac5ffabae5e2202666279e2d06f86b6f3f11977fa0818ad795889a55b32e2d4bd651bb5860fc6e88072a01cad23df475a36487cdcd496e97932909600b7791@157.245.245.16:30303,enode://d106f46d3e37a5b8487b1a4b70a11519e77cf8c4532065a3508ebf943e44840867eaff2a4fa8e525e4dea6680d1aef7cb1c2824f3613fc3482b92eb026d357d4@24.144.112.140:30303`n"
+
+@'
+@echo off
+title Rabbit Core - Rabbit Chain Testnet
+cd /d "%~dp0"
+"%~dp0rabbit-core.exe"
+pause
+'@ | Set-Content -Encoding ASCII "$Stage\Start-Rabbit-Core.cmd"
+
+Push-Location $Stage
+try {
+    Get-ChildItem -File | Where-Object Name -ne "SHA256SUMS.txt" | Sort-Object Name | ForEach-Object {
+        $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$hash  $($_.Name)"
+    } | Set-Content -Encoding ASCII SHA256SUMS.txt
+    & .\rabbit-core.exe --check
+    if ($LASTEXITCODE -ne 0) { throw "Rabbit Core --check failed" }
+} finally {
+    Pop-Location
+}
+
+$Zip = Join-Path $Dist "$Package.zip"
+Compress-Archive -Path $Stage -DestinationPath $Zip -CompressionLevel Optimal
+$ZipHash = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
+"$ZipHash  $Package.zip" | Set-Content -Encoding ASCII "$Zip.sha256"
