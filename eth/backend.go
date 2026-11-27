@@ -877,7 +877,7 @@ func (s *Ethereum) lqcPeerHeadConfirmed(header *types.Header) bool {
 		if peer == nil {
 			continue
 		}
-		r := peer.BlockRange()
+		r := peer.LQCProductionBlockRange()
 		if r == nil || r.LatestBlockHash == (common.Hash{}) {
 			continue
 		}
@@ -1293,7 +1293,7 @@ func (s *Ethereum) lqcProductionNeedsSync(header *types.Header) bool {
 		if peer == nil {
 			continue
 		}
-		r := peer.BlockRange()
+		r := peer.LQCProductionBlockRange()
 		if r == nil {
 			continue
 		}

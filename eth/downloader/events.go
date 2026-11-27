@@ -17,6 +17,8 @@
 package downloader
 
 import (
+	"errors"
+
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 )
@@ -36,4 +38,9 @@ type SyncEvent struct {
 	Mode   ethconfig.SyncMode
 	Err    error         // Set when Type is SyncFailed
 	Latest *types.Header // Set when Type is SyncCompleted
+}
+
+// RequestedCancellation reports whether the active download was explicitly canceled.
+func (e SyncEvent) RequestedCancellation() bool {
+	return e.Type == SyncFailed && errors.Is(e.Err, errCanceled)
 }

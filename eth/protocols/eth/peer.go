@@ -67,6 +67,7 @@ type Peer struct {
 	rw        p2p.MsgReadWriter // Input/output streams for snap
 	version   uint              // Protocol version negotiated
 	lastRange atomic.Pointer[BlockRangeUpdatePacket]
+	failedLQCRange atomic.Pointer[BlockRangeUpdatePacket]
 
 	txpool      TxPool // Transaction pool used by the broadcasters for liveness checks
 	blobpool    BlobPool
@@ -144,6 +145,26 @@ func (p *Peer) Version() uint {
 // This will be nil for peers below protocol version eth/69.
 func (p *Peer) BlockRange() *BlockRangeUpdatePacket {
 	return p.lastRange.Load()
+}
+
+// MarkLQCHeaderLookupFailed excludes an unserved announcement from the local
+// production gate. The downloader can still use the advertised range.
+func (p *Peer) MarkLQCHeaderLookupFailed(r *BlockRangeUpdatePacket) {
+	for r != nil {
+		previous := p.failedLQCRange.Load()
+		if p.BlockRange() != r || p.failedLQCRange.CompareAndSwap(previous, r) {
+			return
+		}
+	}
+}
+
+// LQCProductionBlockRange returns the range used by the local production gate.
+func (p *Peer) LQCProductionBlockRange() *BlockRangeUpdatePacket {
+	r := p.BlockRange()
+	if r == p.failedLQCRange.Load() {
+		return nil
+	}
+	return r
 }
 
 // KnownTransaction returns whether peer is known to already have a transaction.

@@ -366,9 +366,14 @@ func (h *ethHandler) requestAndSyncLQCHead(peer *eth.Peer, number uint64, hash c
 	if h.lqcHeaderAlreadyCoveredForPeer(peer.ID(), number, hash) {
 		return
 	}
+	announced := peer.BlockRange()
+	if announced != nil && (announced.LatestBlock != number || announced.LatestBlockHash != hash) {
+		announced = nil
+	}
 	resCh := make(chan *eth.Response, 1)
 	req, err := peer.RequestHeadersByHash(hash, 1, 0, false, resCh)
 	if err != nil {
+		peer.MarkLQCHeaderLookupFailed(announced)
 		peer.Log().Warn("LQC fork-recovery target request failed", "target", number, "hash", hash, "err", err)
 		return
 	}
@@ -401,6 +406,7 @@ waitHeader:
 				return
 			}
 			if shouldStartLQCSync(h.chain.CurrentBlock(), number, hash) {
+				peer.MarkLQCHeaderLookupFailed(announced)
 				peer.Log().Warn("LQC fork-recovery target request timeout",
 					"target", number, "hash", hash)
 			}
@@ -417,11 +423,13 @@ waitHeader:
 		res.Done <- nil
 	}
 	if !ok || headers == nil || len(*headers) != 1 || (*headers)[0] == nil {
+		peer.MarkLQCHeaderLookupFailed(announced)
 		peer.Log().Warn("LQC fork-recovery invalid target response", "target", number, "hash", hash)
 		return
 	}
 	header := (*headers)[0]
 	if header.Number == nil || header.Number.Uint64() != number || header.Hash() != hash {
+		peer.MarkLQCHeaderLookupFailed(announced)
 		peer.Log().Warn("LQC fork-recovery target mismatch", "wantNumber", number, "haveNumber", header.Number, "wantHash", hash, "haveHash", header.Hash())
 		return
 	}
@@ -914,7 +922,9 @@ func lqcWaitRecoverySignal(
 	case <-wake:
 		return 0
 	case event := <-events:
-		if event.Type == downloader.SyncFailed {
+		// Replacing a backfill can cancel the previous download. Keep
+		// watching the chosen target under its existing stall deadline.
+		if event.Type == downloader.SyncFailed && !event.RequestedCancellation() {
 			return 1
 		}
 		return 0

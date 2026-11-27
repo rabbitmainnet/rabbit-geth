@@ -430,6 +430,16 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		}(number, hash, req)
 	}
 	// Handle incoming messages until the connection is torn down
+	// The peer's initial range can already block production. Start the same
+	// header lookup used for range updates without waiting for another packet.
+	if cfg := h.chain.Config(); cfg != nil && cfg.LQC != nil {
+		lqc := (*ethHandler)(h)
+		if r := peer.BlockRange(); r != nil &&
+			shouldStartLQCSync(h.chain.CurrentBlock(), r.LatestBlock, r.LatestBlockHash) &&
+			lqc.claimLQCHeaderRequest(peer.ID(), r.LatestBlock, r.LatestBlockHash) {
+			go lqc.requestAndSyncLQCHead(peer, r.LatestBlock, r.LatestBlockHash)
+		}
+	}
 	return handler(peer)
 }
 
